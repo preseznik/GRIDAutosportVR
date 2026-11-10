@@ -65,7 +65,8 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
         regularPlay = true;
         return true;
     }
-    if (!wcsstr(cmd, L"-benchmark GASVR_")) return false;
+    // -benchmarkAttract runs the same session file through the game's attract flow (Practice/Race research).
+    if (!wcsstr(cmd, L"-benchmark GASVR_") && !wcsstr(cmd, L"-benchmarkAttract GASVR_")) return false;
     hudFollowsView = wcsstr(cmd, L" -gasvrhudfollow=1") != nullptr;
     uiComparison = wcsstr(cmd, L" -gasvruicheck=1") && !wcsstr(cmd, L"-gasvrmode=openxr");
     compareSlate = uiComparison && wcsstr(cmd, L" -gasvrcompareslate=1");

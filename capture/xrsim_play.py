@@ -33,6 +33,8 @@ XRSIM = ROOT / ".deps" / "xr-sim"
 XRSIM_DLL = XRSIM / "build" / "x86-vs" / "bin" / "RelWithDebInfo" / "xrsim.dll"
 HEADSET = XRSIM / "headsets" / "prey-quest3-vdxr.json"
 APPID = GAME / "steam_appid.txt"
+FLOW = GAME / "system" / "flow.bin"
+STOCK_FLOW = "b5f326eb2ad9ff1307c6bbf05ace2af99f21fcb9908704d66bd209882c30f20b"
 SESSIONS = Path(os.environ["LOCALAPPDATA"]) / "GRIDAutosportVR" / "sessions"
 UNFOCUSED = ["focus policy vdxr-layers", "focus frames 3", "focus norender on", "focus throttle 87"]
 
@@ -101,11 +103,13 @@ def run(args):
         tree = ET.parse(GAME / "example_benchmark.xml")
         tree.getroot().attrib.update(outputfilename=fixture.stem, cycle_camera=str(args.cycle_camera).lower(),
                                      skipreplays="true", infinite_loop="false")
+        if args.laps:
+            for track in tree.getroot().iter("track"): track.set("laps", str(args.laps))
         tree.write(folder / fixture.name, encoding="utf-8", xml_declaration=True)
         fixture_data = (folder / fixture.name).read_bytes()
         fixture_hash = sha(fixture_data)
         session = folder
-        game_args = ["-benchmark", fixture.name, "-gasvrdir=" + str(folder), "-gasvrmode=openxr",
+        game_args = ["-benchmarkAttract" if args.attract else "-benchmark", fixture.name, "-gasvrdir=" + str(folder), "-gasvrmode=openxr",
                      "-gasvrhudfollow=0", "-gasvrseconds=" + str(args.race_seconds)]
     else:
         session = SESSIONS / token
@@ -122,6 +126,8 @@ def run(args):
     exclusive(LEASE, json.dumps({"stamp": stamp, "dll": sha(dll), "fixture": fixture_hash}).encode())
     wrote_appid = False
     game = None
+    flow_backup = folder / "flow-original.bin"
+    flow_staged = False
     try:
         exclusive(DLL, dll)
         if args.benchmark:
@@ -130,6 +136,18 @@ def run(args):
         if file_sha(EXE) != STOCK or file_sha(temp) != PRIVATE:
             raise RuntimeError("Executable changed during staging")
         os.replace(temp, EXE)
+        if args.flow:
+            # Research: a modified flow graph (Practice/Race). Back up the verified stock file first.
+            if file_sha(FLOW) != STOCK_FLOW:
+                raise RuntimeError("system/flow.bin is not the stock file; nothing staged")
+            shutil.copy2(FLOW, flow_backup)
+            if file_sha(flow_backup) != STOCK_FLOW:
+                raise RuntimeError("flow.bin backup verification failed")
+            flow_staged = True
+            staged_flow = FLOW.with_name("flow.gasvr-test.tmp")
+            shutil.copy2(args.flow, staged_flow)
+            os.replace(staged_flow, FLOW)
+            report["flow"] = {"source": str(args.flow), "sha256": file_sha(FLOW)}
         if not APPID.exists():
             # Without it the Steam API restarts the game through Steam, which drops XR_RUNTIME_JSON.
             exclusive(APPID, b"255220")
@@ -233,15 +251,41 @@ def run(args):
             game.wait(30)
         raise
     finally:
-        try:
+        # Each restore step runs on its own: one failure must never skip the others (2026-11-10, a
+        # cross-drive os.replace of the flow backup once left every staged file in place).
+        problems = []
+        def restore_flow():
+            if file_sha(FLOW) == STOCK_FLOW:
+                return
+            if file_sha(flow_backup) != STOCK_FLOW:
+                raise RuntimeError("flow.bin backup failed verification: " + str(flow_backup))
+            restoring = FLOW.with_name("flow.gasvr-restore.tmp")
+            shutil.copy2(flow_backup, restoring)  # Copy into the game folder, then rename on that drive.
+            if file_sha(restoring) != STOCK_FLOW:
+                raise RuntimeError("flow.bin restore copy failed verification")
+            os.replace(restoring, FLOW)
+            if file_sha(FLOW) != STOCK_FLOW:
+                raise RuntimeError("system/flow.bin could not be restored; the backup is " + str(flow_backup))
+            report["flowRestored"] = True
+        def remove_appid():
             if wrote_appid and APPID.read_bytes() == b"255220":
                 APPID.unlink()
+        def restore_game():
             cleanup()
             report["stockRestored"] = True
-        finally:
-            if session != folder and (session / "bridge.log").is_file():
-                shutil.copy2(session / "bridge.log", folder / "bridge.log")
-            save()
+        for step in ([restore_flow] if flow_staged else []) + [remove_appid, restore_game]:
+            try:
+                step()
+            except Exception as error:
+                problems.append(f"{step.__name__}: {error}")
+        if problems:
+            report["restoreProblems"] = problems
+            print("RESTORE PROBLEMS: " + " | ".join(problems), flush=True)
+        if session != folder and (session / "bridge.log").is_file():
+            shutil.copy2(session / "bridge.log", folder / "bridge.log")
+        save()
+        if problems:
+            raise RuntimeError("Game files need manual restoration: " + " | ".join(problems))
     regained = "focusRegainedAfter" in report
     print(f"exit={report.get('exitCode')} final={report.get('final')} regained={regained}", flush=True)
     return 0 if report.get("exitCode") == 0 and (args.no_focus_loss or regained) else 1
@@ -253,6 +297,9 @@ if __name__ == "__main__":
     parser.add_argument("--seconds", type=int, default=60, help="How long to watch normal play before closing")
     parser.add_argument("--no-focus-loss", action="store_true", help="Leave xr-sim's focus model alone")
     parser.add_argument("--benchmark", action="store_true", help="Run the game's benchmark race instead of normal play")
+    parser.add_argument("--attract", action="store_true", help="Benchmark: launch with -benchmarkAttract instead of -benchmark")
+    parser.add_argument("--flow", help="Benchmark research: stage this system/flow.bin for the run, restoring the stock file after")
+    parser.add_argument("--laps", type=int, help="Benchmark: laps for the session")
     parser.add_argument("--cycle-camera", action="store_true", help="Benchmark: let the game cycle its cameras")
     parser.add_argument("--race-seconds", type=int, default=30, help="Benchmark: race second of the bridge's own eye capture")
     parser.add_argument("--script", help='JSON list of {"at": s after the race scene, "cmds": [...], "shot": "tag"}')
