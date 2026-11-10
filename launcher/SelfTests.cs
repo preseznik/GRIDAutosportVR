@@ -84,8 +84,19 @@ internal static class SelfTests
         Check(Installation.VrLaunchProblem(null, null, null)!.Contains("Steam folder"));
         Check(Installation.ProbeError(0) is null && Installation.ProbeError(2)!.Contains("headset") && Installation.ProbeError(124)!.Contains("timed out"));
         var start = Installation.VrStartInfo(@"C:\Games\GRID Autosport");
-        Check(start.ArgumentList.SequenceEqual(["--play-vr", "--game-dir", @"C:\Games\GRID Autosport"]) && start.FileName.EndsWith("GRIDAutosportVR.Launcher.exe"));
+        Check(start.ArgumentList.SequenceEqual(["--play-vr", "--game-dir", @"C:\Games\GRID Autosport"]) && start.FileName.EndsWith("GRIDAutosportVR.exe"));
         Check(Throws<FileNotFoundException>(() => Installation.ProbeStartInfo(null, false, "x.log")));
+        // Installer checks on a fake Steam library: install needs the game; a staged session blocks both.
+        var library = Path.Combine(LauncherSettings.DataDirectory, "fake-library");
+        var game = Path.Combine(library, "steamapps", "common", "GRID Autosport");
+        Directory.CreateDirectory(game);
+        File.WriteAllText(Path.Combine(library, "steamapps", "appmanifest_255220.acf"), "\"appid\" \"255220\"\n\"installdir\" \"GRID Autosport\"\n");
+        Check(Program.InstallProblem(true, library)!.Contains("not a Steam installation") && Program.InstallProblem(false, library) is null);
+        File.WriteAllBytes(Path.Combine(game, "GRIDAutosport.exe"), [0]);
+        Check(Program.InstallProblem(true, game) is null && Program.InstallProblem(false, game) is null);
+        File.WriteAllText(Path.Combine(game, Installation.PlayLease), "{}");
+        Check(Program.InstallProblem(true, game)!.Contains("Restore original files") && Program.InstallProblem(false, game)!.Contains("Restore original files"));
+        Directory.Delete(library, true);
     }
 
     private static readonly string[] QuestProbe =

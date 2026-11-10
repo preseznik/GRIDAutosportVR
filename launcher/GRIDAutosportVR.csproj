@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>GRIDAutosportVR</RootNamespace>
-    <AssemblyName>GRIDAutosportVR.Launcher</AssemblyName>
+    <AssemblyName>GRIDAutosportVR</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets\logo.ico</ApplicationIcon>
     <Version>0.1.0</Version>
@@ -27,7 +27,7 @@
     <AssemblyMetadata Include="BuildRevision" Value="$(BuildRevision)" />
     <EmbeddedResource Include="assets\logo-display.png" LogicalName="GRIDAutosportVR.logo-display.png" />
     <EmbeddedResource Include="assets\logo.ico" LogicalName="GRIDAutosportVR.logo.ico" />
-    <Content Include="..\artifacts\probe\AutosportXRProbe.exe" Link="probe\AutosportXRProbe.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
-    <Content Include="..\artifacts\bridge-build\Release\gasxr.dll" Link="renderer\gasxr.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <Content Condition="Exists('..\artifacts\probe\AutosportXRProbe.exe')" Include="..\artifacts\probe\AutosportXRProbe.exe" Link="probe\AutosportXRProbe.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <Content Condition="Exists('..\artifacts\bridge-build\Release\gasxr.dll')" Include="..\artifacts\bridge-build\Release\gasxr.dll" Link="renderer\gasxr.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

@@ -18,7 +18,7 @@ internal static partial class VrPlaySession
     private const int ImportNameOffset = 0xE0C23C;
     private const string Avx = "GRIDAutosport_avx.exe";
     private const string BridgeName = "gasxr.dll";
-    private const string SessionMutex = @"Local\GRIDAutosportVR-255220";
+    private const string SessionMutex = Installation.SessionMutex;
 
     private sealed class Lease
     {

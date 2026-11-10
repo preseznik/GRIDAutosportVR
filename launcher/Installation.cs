@@ -11,7 +11,9 @@ internal static class Installation
     public const string PlayLease = "gasvr-play-session.json";
     public const string BenchmarkLease = "gasvr-benchmark-session.json";
     private const string ProbeName = "AutosportXRProbe.exe";
-    private const string LauncherName = "GRIDAutosportVR.Launcher.exe";
+    internal const string LauncherName = "GRIDAutosportVR.exe";
+    // Held by the VR session supervisor; the installer refuses to run while it exists.
+    internal const string SessionMutex = @"Local\GRIDAutosportVR-255220";
 
     public static string LogDirectory => Path.Combine(LauncherSettings.DataDirectory, "logs");
 

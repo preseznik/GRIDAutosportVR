@@ -5,12 +5,16 @@ namespace GRIDAutosportVR;
 
 internal static class Program
 {
-    private const string Usage = "Usage: GRIDAutosportVR.Launcher.exe [--inspect] [--game-dir FOLDER] | (--play-vr | --restore-play) --game-dir FOLDER | --self-test [OUTPUT]";
+    private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | (--play-vr | --restore-play) --game-dir FOLDER | --self-test [OUTPUT]" +
+        " | --discover OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
 
     [STAThread]
     private static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : null);
+        if (args is ["--discover", var discovered]) return Discover(discovered);
+        if (args is ["--check-install" or "--check-uninstall", "--game", var game, "--error-log", var errorLog])
+            return CheckForInstaller(args[0] == "--check-install", game, errorLog);
         var inspect = args.Length > 0 && args[0] == "--inspect";
         var play = args.Length > 0 && args[0] == "--play-vr";
         var restore = args.Length > 0 && args[0] == "--restore-play";
@@ -44,6 +48,39 @@ internal static class Program
             else MessageBox.Show(error.Message, Branding.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
+    }
+
+    // Installer helpers (installer/GRIDAutosportVR.iss): suggest the Steam game folder, then
+    // refuse to install or uninstall while the game runs or a VR session's files are staged.
+    private static int Discover(string output)
+    {
+        try
+        {
+            File.WriteAllText(output, Installation.FindGame() ?? "", new System.Text.UTF8Encoding(false));
+            return 0;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return 1; }
+    }
+
+    internal static string? InstallProblem(bool install, string game)
+    {
+        var valid = Installation.GameExists(game);
+        if (install && !valid)
+            return "This folder is not a Steam installation of GRID Autosport. Choose the folder that contains GRIDAutosport.exe.";
+        if (!valid) return null; // The game was moved or removed: nothing of ours can be staged there.
+        if (Installation.SessionPending(game) || File.Exists(Path.Combine(game, "gasxr.dll")))
+            return "A GRID Autosport VR session is active or was interrupted. Close the game, open GRID Autosport VR and choose Restore original files first.";
+        try { VrPlaySession.EnsureIdle(game); }
+        catch (IOException error) { return error.Message; }
+        return null;
+    }
+
+    private static int CheckForInstaller(bool install, string game, string errorLog)
+    {
+        var problem = InstallProblem(install, Path.TrimEndingDirectorySeparator(game));
+        if (problem is null) return 0;
+        try { File.WriteAllText(errorLog, problem, new System.Text.UTF8Encoding(false)); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        return 1;
     }
 
     // The session supervisor the launcher window starts for Launch VR.

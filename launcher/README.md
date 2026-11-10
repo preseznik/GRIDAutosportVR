@@ -8,9 +8,9 @@ Build and check without a headset or game launch:
 
 ```powershell
 dotnet build launcher\GRIDAutosportVR.csproj -c Release
-launcher\bin\Release\net10.0-windows\win-x64\GRIDAutosportVR.Launcher.exe --self-test artifacts\launcher-selftest
-pwsh -File capture\verify_play_session.ps1 -LauncherAssembly launcher\bin\Release\net10.0-windows\win-x64\GRIDAutosportVR.Launcher.dll -StockAvx "<Steam>\steamapps\common\GRID Autosport\GRIDAutosport_avx.exe" -Bridge artifacts\bridge-build\Release\gasxr.dll
+launcher\bin\Release\net10.0-windows\win-x64\GRIDAutosportVR.exe --self-test artifacts\launcher-selftest
+pwsh -File capture\verify_play_session.ps1 -LauncherAssembly launcher\bin\Release\net10.0-windows\win-x64\GRIDAutosportVR.dll -StockAvx "<Steam>\steamapps\common\GRID Autosport\GRIDAutosport_avx.exe" -Bridge artifacts\bridge-build\Release\gasxr.dll
 dotnet publish launcher\GRIDAutosportVR.csproj -c Release -o artifacts\launcher
 ```
 
-The self-test uses a temporary data folder and renders every tab, Modern and Classic, at 900 and 600 px to `launcher-*.png` from an off-screen window that never takes focus. `verify_play_session.ps1` exercises staging and recovery on a copy of the stock executable in a temporary Steam library. The single-file publish places `probe\AutosportXRProbe.exe` and `renderer\gasxr.dll` beside the launcher.
+The self-test uses a temporary data folder and renders every tab, Modern and Classic, at 900 and 600 px to `launcher-*.png` from an off-screen window that never takes focus. `verify_play_session.ps1` exercises staging and recovery on a copy of the stock executable in a temporary Steam library. The single-file publish places `probe\AutosportXRProbe.exe` and `renderer\gasxr.dll` beside the launcher. Release packages come from `tools\Package.ps1` (see the root README); the installer (`installer\GRIDAutosportVR.iss`) puts the package in `<game>\GRIDAutosportVR` and uses `--discover`, `--check-install` and `--check-uninstall` to suggest the Steam folder and to refuse while the game runs or a VR session's files are staged.
