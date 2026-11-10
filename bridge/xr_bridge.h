@@ -32,3 +32,5 @@ double AutosportDisplayPeriodSeconds() noexcept;
 // True once, on the render thread, after the first FOCUSED of a session whose views were
 // already in use: the caller recenters its seated origin on the focused pose.
 bool AutosportTakeRecenterRequest() noexcept;
+// Place the seated screen again in front of the current head pose (recenter key, game recenter).
+void AutosportRecenterSeatedScreen() noexcept;

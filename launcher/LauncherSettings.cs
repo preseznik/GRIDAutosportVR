@@ -5,7 +5,9 @@ namespace GRIDAutosportVR;
 
 // Launcher choices saved by Save settings or a launch. Unknown keys are kept, so tools such as
 // bridge/run.py can read hudFollowView from the same settings.json.
-internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true, int VrRenderScale = 100);
+// RecenterKey is a Windows virtual-key code (121 = F10, as GRID2VR); RecenterModifiers: 1 Ctrl, 2 Alt, 4 Shift.
+internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true, int VrRenderScale = 100,
+    int RecenterKey = 121, int RecenterModifiers = 0, bool KeepHorizonLevel = true);
 
 internal static class LauncherSettings
 {
@@ -54,14 +56,28 @@ internal static class LauncherSettings
         throw new JsonException($"{key} must be a whole number from {RenderScaleSlider.MinimumScale} to {RenderScaleSlider.MaximumScale} in {fileName}");
     }
 
+    private static (int Key, int Modifiers) ReadShortcut(JsonObject document, string fileName)
+    {
+        int Read(string key, int fallback)
+        {
+            if (!document.TryGetPropertyValue(key, out var node)) return fallback;
+            if (node is JsonValue value && value.TryGetValue(out int number)) return number;
+            throw new JsonException(key + " must be a whole number in " + fileName);
+        }
+        var shortcut = (Read("recenterKey", 121), Read("recenterModifiers", 0));
+        if (!RecenterShortcut.Valid(shortcut.Item1, shortcut.Item2)) throw new JsonException("recenterKey/recenterModifiers is not an allowed recenter shortcut in " + fileName);
+        return shortcut;
+    }
+
     public static Choices Load(string? fileName = null)
     {
         fileName ??= SettingsPath;
         var document = ReadDocument(fileName);
         // Settings saved before the Modern interface existed keep the look their users chose.
         var modernFallback = !File.Exists(fileName);
+        var (key, modifiers) = ReadShortcut(document, fileName);
         return new Choices(ReadFlag(document, "hudFollowView", false, fileName), ReadFlag(document, "modernInterface", modernFallback, fileName),
-            ReadScale(document, "vrRenderScale", 100, fileName));
+            ReadScale(document, "vrRenderScale", 100, fileName), key, modifiers, ReadFlag(document, "keepHorizonLevel", true, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -71,6 +87,9 @@ internal static class LauncherSettings
         document["hudFollowView"] = choices.HudFollowView;
         document["modernInterface"] = choices.ModernInterface;
         document["vrRenderScale"] = choices.VrRenderScale;
+        document["recenterKey"] = choices.RecenterKey;
+        document["recenterModifiers"] = choices.RecenterModifiers;
+        document["keepHorizonLevel"] = choices.KeepHorizonLevel;
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
     }
 

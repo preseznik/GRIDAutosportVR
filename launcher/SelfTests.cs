@@ -41,7 +41,11 @@ internal static class SelfTests
     private static void Settings(string data)
     {
         var file = Path.Combine(data, "settings-test.json");
-        Check(LauncherSettings.Load(file) == new Choices(false, true, 100)); // New installs: Modern interface, 100% VR scale.
+        Check(LauncherSettings.Load(file) == new Choices(false, true, 100, 121, 0, true)); // New installs: Modern, 100% VR scale, F10, level horizon.
+        LauncherSettings.Save(new Choices(RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false), file);
+        Check(LauncherSettings.Load(file) is { RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false });
+        File.WriteAllText(file, "{\"recenterKey\": 115, \"recenterModifiers\": 2}"); // Alt+F4 stays the system's.
+        Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
         LauncherSettings.Save(new Choices(false, true, 175), file);
         Check(LauncherSettings.Load(file).VrRenderScale == 175);
         File.WriteAllText(file, "{\"vrRenderScale\": 40}");
@@ -107,21 +111,25 @@ internal static class SelfTests
         File.WriteAllText(HeadsetResolution.StorePath, "{}");
         Check(HeadsetResolution.Load() is null);
         File.Delete(HeadsetResolution.StorePath);
-        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", true, (3072, 3264)).SequenceEqual(
-            ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1", "-gasvreyesize=3072x3264"]));
-        Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", false, null).Any(a => a.StartsWith("-gasvreyesize")));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
+            ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
+             "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264"]));
+        var shortcut = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(RecenterKey: 120, RecenterModifiers: 5, KeepHorizonLevel: false), null);
+        Check(shortcut.Contains("-gasvrrecenterkey=120") && shortcut.Contains("-gasvrrecentermods=5") && shortcut.Contains("-gasvrkeephorizon=0") && !shortcut.Any(a => a.StartsWith("-gasvreyesize")));
+        Check(RecenterShortcut.Label(121, 0) == "F10" && RecenterShortcut.Label(120, 5) == "Ctrl+Shift+F9" && !RecenterShortcut.Valid(115, 2) && !RecenterShortcut.Valid(9, 2));
     }
 
     private static void Form(string output)
     {
         using var form = new MainForm(null, null, null) { ShowInactive = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) };
-        Check(form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Settings"]));
+        Check(form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Controls", "Settings"]));
         foreach (var name in new[] { "LaunchDesktop", "LaunchVR", "SaveSettings", "RestoreOriginalFiles", "OpenLogs", "HelpAbout", "SessionStatus", "SessionNotice" })
             Check(form.Controls.Find(name, true).Length == 1, name);
         Check(!Find<Button>(form, "LaunchVR").Enabled && !Find<Button>(form, "LaunchDesktop").Enabled && !Find<Button>(form, "SaveSettings").Enabled);
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "Keyboard shortcuts", "Recenter alignment", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Meta Quest 3"));
@@ -139,6 +147,17 @@ internal static class SelfTests
             Check(Find<Button>(form, "SaveSettings").Enabled && Find<Label>(form, "VrResolutionSummary").Text.Contains("4608 × 4896 per eye at 150%"));
             Find<Button>(form, "SaveSettings").PerformClick();
             Check(LauncherSettings.Load().VrRenderScale == 150);
+            // Changing the recenter key: click, then press it. System shortcuts are refused.
+            var key = Find<Button>(form, "RecenterKey");
+            form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Controls");
+            Application.DoEvents();
+            key.PerformClick();
+            Check(key.Text.StartsWith("Press") && !Find<Button>(form, "LaunchVR").Enabled);
+            Check(form.CaptureRecenterKey(Keys.F4 | Keys.Alt) && key.Text.StartsWith("Press") && Find<SelectableStatusText>(form, "SessionNotice").Text.Contains("reserved"));
+            Check(form.CaptureRecenterKey(Keys.F9 | Keys.Control) && key.Text == "Ctrl+F9" && Find<Button>(form, "SaveSettings").Enabled);
+            Find<CheckBox>(form, "KeepHorizonLevel").Checked = false;
+            Find<Button>(form, "SaveSettings").PerformClick();
+            Check(LauncherSettings.Load() is { RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false });
             // Collapsing a section is remembered by title and restored.
             var headset = form.SectionHeaders.Single(h => h.Title == "Headset check");
             form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Settings");

@@ -71,7 +71,8 @@ Pose poses[2]{};
 uint64_t frame = 0;
 unsigned requestedEyes = 0;
 bool frameOpen = false, recenter = true;
-Rotation originYaw{0, 0, 0, 1};
+Rotation originYaw{0, 0, 0, 1}; // Seat reference: heading only, or the whole head pose without Keep horizon level.
+std::atomic<bool> recenterKeyPending{};
 Vec originPosition{};
 double previousBegin = 0;
 using NativeEyeDesc = EyeDesc* (__thiscall*)(void*, int);
@@ -249,6 +250,27 @@ LRESULT CALLBACK gameWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     case WM_KILLFOCUS:
         if (keep) return 0; // Keyboard focus moves regardless; the game is not told.
         break;
+    case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: {
+        // The launcher's recenter shortcut, matched with exactly its modifiers. It is consumed so
+        // the game and Windows do not also act on it (F10 would open the system menu).
+        unsigned key{}, modifiers{};
+        if (!AutosportUseHeadset() || !AutosportRecenterShortcut(key, modifiers) || wParam != key) break;
+        // Physical modifier state: the window thread's GetKeyState snapshot goes stale when the
+        // game loses focus mid-keystroke (e.g. Alt+Tab leaves Alt "held"). Alt also sets bit 29.
+        auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+        const unsigned held = (down(VK_CONTROL) ? 1u : 0u) | (down(VK_MENU) || (lParam & (1L << 29)) ? 2u : 0u) | (down(VK_SHIFT) ? 4u : 0u);
+        if (held != modifiers) {
+            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+                AutosportLog("Recenter key ignored: modifiers held=%u expected=%u frame=%llu", held, modifiers, frame);
+            break;
+        }
+        const bool pressed = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        if (pressed && !(lParam & (1L << 30))) {
+            recenterKeyPending = true;
+            AutosportLog("Recenter shortcut pressed key=%u modifiers=%u frame=%llu", key, modifiers, frame);
+        }
+        return 0;
+    }
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED || wParam == SIZE_RESTORED)
             AutosportLog("Window WM_SIZE %s frame=%llu", wParam == SIZE_MINIMIZED ? "minimized" : "restored", frame);
@@ -349,6 +371,7 @@ void __cdecl setCaps(Hmd*, unsigned) {}
 char __cdecl configureTracking(Hmd* target, unsigned, unsigned) { return target == &hmd; }
 void __cdecl recenterTracking(Hmd*) {
     recenter = true;
+    AutosportRecenterSeatedScreen();
     AutosportLog("Native recenter requested frame=%llu", frame);
 }
 
@@ -419,6 +442,14 @@ void applyViews(const BridgeView (&views)[2], bool flat) {
         }
         float yaw = -.5f * std::atan2(x, z);
         originYaw = {0, std::sin(yaw), 0, std::cos(yaw)};
+        if (!AutosportKeepHorizonLevel()) {
+            // Align pitch and roll too: the reference becomes the inverse of the head pose.
+            const auto& a = views[0].orientation; const auto& b = views[1].orientation;
+            const float sign = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3] < 0 ? -1.f : 1.f;
+            Rotation head{a[0] + sign*b[0], a[1] + sign*b[1], a[2] + sign*b[2], a[3] + sign*b[3]};
+            const float length = std::sqrt(head.x*head.x + head.y*head.y + head.z*head.z + head.w*head.w);
+            if (length > 1e-6f) originYaw = conjugate({head.x/length, head.y/length, head.z/length, head.w/length});
+        }
         originPosition = center;
         recenter = false;
     }
@@ -448,6 +479,11 @@ Timing* __cdecl beginFrame(Timing* timing, Hmd* target, unsigned) {
     frameOpen = AutosportBeginViews(config.device, config.context, AutosportUseHeadset(), frame, views);
     if (frameOpen) {
         if (AutosportTakeRecenterRequest()) recenter = true;
+        if (recenterKeyPending.exchange(false)) {
+            recenter = true;
+            AutosportRecenterSeatedScreen();
+            AutosportLog("Recentered by the shortcut at frame=%llu keepHorizonLevel=%d", frame, AutosportKeepHorizonLevel());
+        }
         applyViews(views, AutosportFlatScreen());
         if (frame == 1) AutosportLog("Native BeginFrame: %s", AutosportBridgeStatus());
     }

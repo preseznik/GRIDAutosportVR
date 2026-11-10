@@ -87,8 +87,9 @@ internal static partial class VrPlaySession
     }
 
     // Steam arguments for the game process. eyeSize is the per-eye render size reported to the game.
-    internal static string[] SteamArguments(string id, bool hudFollow, (int Width, int Height)? eyeSize) =>
-        ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (hudFollow ? "1" : "0"),
+    internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize) =>
+        ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (choices.HudFollowView ? "1" : "0"),
+         "-gasvrrecenterkey=" + choices.RecenterKey, "-gasvrrecentermods=" + choices.RecenterModifiers, "-gasvrkeephorizon=" + (choices.KeepHorizonLevel ? "1" : "0"),
          .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : []];
 
     public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null)
@@ -98,7 +99,7 @@ internal static partial class VrPlaySession
         var library = Directory.GetParent(folder)!.Parent!.Parent!.FullName;
         if (!SteamLibrary.SteamLibraries().Any(root => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), library, StringComparison.OrdinalIgnoreCase)))
             throw new IOException("The selected installation is outside Steam's registered libraries.");
-        var hudFollow = LauncherSettings.Load().HudFollowView;
+        var choices = LauncherSettings.Load();
         return UnderLock(() =>
         {
             if (File.Exists(Path.Combine(folder, Installation.BenchmarkLease))) throw new IOException("Restore the outstanding benchmark session first.");
@@ -109,7 +110,7 @@ internal static partial class VrPlaySession
             {
                 Stage(folder, bridgePath, id);
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
-                foreach (var arg in SteamArguments(id, hudFollow, eyeSize)) start.ArgumentList.Add(arg);
+                foreach (var arg in SteamArguments(id, choices, eyeSize)) start.ArgumentList.Add(arg);
                 if (renderNote is not null) Record(id, renderNote);
                 Record(id, "Requesting normal play through Steam.");
                 var requested = DateTime.UtcNow;

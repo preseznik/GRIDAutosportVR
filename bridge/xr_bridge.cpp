@@ -582,6 +582,10 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
 } // namespace
 
 const char* AutosportBridgeStatus() noexcept { return status; }
+void AutosportRecenterSeatedScreen() noexcept {
+    std::lock_guard<std::mutex> lock(guard);
+    if (bridge) bridge->screenAnchored = false;
+}
 bool AutosportTakeRecenterRequest() noexcept {
     std::lock_guard<std::mutex> lock(guard);
     if (!bridge || bridge->owner != GetCurrentThreadId() || !bridge->recenterPending) return false;

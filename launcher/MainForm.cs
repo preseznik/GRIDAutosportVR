@@ -20,6 +20,11 @@ internal sealed class MainForm : LauncherForm
     private readonly Button refreshHeadset = Button("Refresh headset", "RefreshHeadset");
     private readonly Label vrSummary = TextLabel("");
     private HeadsetResolution? headsetResolution = HeadsetResolution.Load();
+    private readonly Button recenter = Button("F10", "RecenterKey");
+    private readonly Label recenterHint = TextLabel("");
+    private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
+    private int recenterKey = 121, recenterModifiers;
+    private bool capturingRecenter;
     private readonly Button desktop = Button("Launch", "LaunchDesktop"), vr = Button("Launch VR", "LaunchVR"),
         save = Button("Save settings", "SaveSettings"), recover = Button("Restore original files", "RestoreOriginalFiles"),
         logs = Button("Open logs", "OpenLogs");
@@ -77,6 +82,19 @@ internal sealed class MainForm : LauncherForm
         Field(graphics, "Follow view", hudFollow);
         graphics.Controls.Add(TextLabel(HudHelp));
 
+        // GRID2VR's Controls tab: VR now; Seat and Driving join it with their own launcher items.
+        var controlPage = new TabPage("Controls") { Name = "ControlsPage", Padding = new Padding(8) };
+        var controlTabs = new ModernTabs { Name = "ControlTabs", Dock = DockStyle.Fill };
+        controlPage.Controls.Add(controlTabs); Tabs.TabPages.Add(controlPage);
+        var controls = Page(controlTabs, "VR");
+        Section(controls, "Keyboard shortcuts");
+        Field(controls, "Recenter", recenter);
+        recenterHint.Name = "RecenterHint"; controls.Controls.Add(recenterHint);
+        controls.Controls.Add(TextLabel("Click the key above to change it before launching, then press the new key with any Ctrl, Alt or Shift. Press Escape to cancel. Save settings or launch to keep it; it applies to the next VR session. The game's own F11 recenter keeps working."));
+        Section(controls, "Recenter alignment");
+        controls.Controls.Add(keepHorizonLevel);
+        controls.Controls.Add(TextLabel("Reset your position and forward direction without changing the horizon. Untick to align pitch and roll to your current head pose too. Applies on the next VR launch."));
+
         var settingColumns = Columns(Page(Tabs, "Settings")); var settings = settingColumns.First;
         Section(settings, "Paths and runtime");
         Field(settings, "Game folder", gamePath);
@@ -117,6 +135,9 @@ internal sealed class MainForm : LauncherForm
         hudFollow.CheckedChanged += (_, _) => ChoiceEdited();
         renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); ChoiceEdited(); };
         refreshHeadset.Click += async (_, _) => await RunProbeAsync(false);
+        recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
+        recenter.LostFocus += (_, _) => { if (capturingRecenter) { capturingRecenter = false; UpdateRecenterLabel(); EnableActions(); } };
+        keepHorizonLevel.CheckedChanged += (_, _) => ChoiceEdited();
         modernInterface.CheckedChanged += (_, _) =>
         {
             LauncherAppearance.Modern = modernInterface.Checked;
@@ -128,7 +149,7 @@ internal sealed class MainForm : LauncherForm
         RefreshInstallation();
     }
 
-    private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value);
+    private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked);
 
     private void LoadChoices()
     {
@@ -146,6 +167,8 @@ internal sealed class MainForm : LauncherForm
         hudFollow.Checked = choices.HudFollowView;
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
+        recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
+        keepHorizonLevel.Checked = choices.KeepHorizonLevel;
         LauncherAppearance.Modern = choices.ModernInterface;
         UpdateVrSummary();
         EnableActions();
@@ -222,7 +245,7 @@ internal sealed class MainForm : LauncherForm
     private void EnableActions()
     {
         gamePath.Text = gameFolder ?? "";
-        var idle = !testing && !supervising && !recovering;
+        var idle = !testing && !supervising && !recovering && !capturingRecenter;
         var valid = Installation.GameExists(gameFolder);
         var pending = Installation.SessionPending(gameFolder);
         var playLease = valid && File.Exists(Path.Combine(gameFolder!, Installation.PlayLease));
@@ -235,6 +258,7 @@ internal sealed class MainForm : LauncherForm
         browse.Enabled = idle;
         query.Enabled = pattern.Enabled = refreshHeadset.Enabled = idle && File.Exists(probePath);
         defaults.Enabled = idle;
+        recenter.Enabled = !testing && !supervising && !recovering;
         state.Text = supervising ? "VR session in progress. Quit the game normally; the launcher then restores the original game files."
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
             : playLease ? "A VR session is active or was interrupted. After the game exits, choose Restore original files."
@@ -279,7 +303,7 @@ internal sealed class MainForm : LauncherForm
         EnableActions();
         try
         {
-            notice.Text = "Checking the headset, then Steam opens the game. Put on your headset.";
+            notice.Text = $"Checking the headset, then Steam opens the game. Put on your headset. Press {RecenterShortcut.Label(recenterKey, recenterModifiers)} in the game to recenter.";
             using var worker = Process.Start(Installation.VrStartInfo(gameFolder)) ?? throw new IOException("The VR session supervisor did not start.");
             var errors = worker.StandardError.ReadToEndAsync();
             await worker.WaitForExitAsync();
@@ -372,6 +396,30 @@ internal sealed class MainForm : LauncherForm
         }
     }
 
+    private void UpdateRecenterLabel()
+    {
+        recenter.Text = RecenterShortcut.Label(recenterKey, recenterModifiers);
+        recenterHint.Text = $"Press {recenter.Text} in GRID Autosport to recenter: sit comfortably and face forward. It also places the screen used for loading and menus in front of you.";
+    }
+
+    // Key capture as in GRID2VR: the next key press (with Ctrl, Alt, Shift) becomes the shortcut.
+    protected override bool ProcessCmdKey(ref Message message, Keys keyData) =>
+        capturingRecenter ? CaptureRecenterKey(keyData) : base.ProcessCmdKey(ref message, keyData);
+
+    internal bool CaptureRecenterKey(Keys keyData)
+    {
+        if (!capturingRecenter) return false;
+        var key = (int)(keyData & Keys.KeyCode);
+        if (key == (int)Keys.Escape) { capturingRecenter = false; UpdateRecenterLabel(); notice.Text = "Recenter shortcut unchanged."; EnableActions(); return true; }
+        if (key is (int)Keys.ControlKey or (int)Keys.Menu or (int)Keys.ShiftKey or (int)Keys.LWin or (int)Keys.RWin) return true;
+        var modifiers = ((keyData & Keys.Control) != 0 ? 1 : 0) | ((keyData & Keys.Alt) != 0 ? 2 : 0) | ((keyData & Keys.Shift) != 0 ? 4 : 0);
+        if (!RecenterShortcut.Valid(key, modifiers)) { notice.Text = "Choose another key; system shortcuts are reserved."; return true; }
+        recenterKey = key; recenterModifiers = modifiers; capturingRecenter = false;
+        UpdateRecenterLabel(); ChoiceEdited();
+        notice.Text = "Recenter shortcut changed. Save settings or launch to keep it.";
+        return true;
+    }
+
     internal void UpdateVrSummary() => vrSummary.Text = headsetResolution?.Summary(renderScale.Value) ??
         "Connect your headset and choose Refresh headset to see the render size. VR launches read it automatically.";
 
@@ -394,7 +442,8 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(save, "Keep your launcher choices without launching.");
         tips.SetToolTip(recover, "Remove the VR files left by an interrupted session and restore the original game executable.");
         tips.SetToolTip(logs, "Open the folder with VR session and headset-check logs to attach to a report.");
-        tips.SetToolTip(refreshHeadset, "Read the connected headset's recommended resolution through the 32-bit OpenXR runtime.");
+        tips.SetToolTip(refreshHeadset, "Read the connected headset''s recommended resolution through the 32-bit OpenXR runtime.");
+        tips.SetToolTip(recenter, "Click, then press the key (with Ctrl, Alt or Shift) that recenters your view in VR.");
     }
 
     private static Button Button(string text, string name) => new() { Text = text, Name = name, AutoSize = true, Padding = new Padding(5, 2, 5, 2) };

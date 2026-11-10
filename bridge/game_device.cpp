@@ -205,6 +205,28 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
 
 bool AutosportUseHeadset() { return headset; }
 bool AutosportRegularPlay() { return regularPlay; }
+// -gasvrrecenterkey=VK -gasvrrecentermods=MASK (1 Ctrl, 2 Alt, 4 Shift): the launcher's recenter
+// shortcut. -gasvrkeephorizon=0 also aligns pitch and roll to the head when recentering.
+bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers) {
+    static unsigned parsedKey, parsedModifiers;
+    static const bool valid = [] {
+        const wchar_t* cmd = GetCommandLineW();
+        const wchar_t* arg = wcsstr(cmd, L" -gasvrrecenterkey=");
+        unsigned value{}, mods{};
+        if (!arg || swscanf_s(arg, L" -gasvrrecenterkey=%u", &value) != 1 || value < 8 || value > 254) return false;
+        if (const wchar_t* modArg = wcsstr(cmd, L" -gasvrrecentermods=")) {
+            if (swscanf_s(modArg, L" -gasvrrecentermods=%u", &mods) != 1 || mods > 7) return false;
+        }
+        parsedKey = value; parsedModifiers = mods;
+        return true;
+    }();
+    key = parsedKey; modifiers = parsedModifiers;
+    return valid;
+}
+bool AutosportKeepHorizonLevel() {
+    static const bool keep = wcsstr(GetCommandLineW(), L" -gasvrkeephorizon=0") == nullptr;
+    return keep;
+}
 // -gasvreyesize=WIDTHxHEIGHT: the per-eye size reported to the game (density 1). Absent: the
 // legacy 960x1080 per eye from the fixed 1920x1080 HMD descriptor.
 bool AutosportEyeSizeRequest(unsigned& width, unsigned& height) {
