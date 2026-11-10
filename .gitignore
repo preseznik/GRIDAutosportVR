@@ -1,0 +1,11 @@
+# Build output, run captures and local test data (Steam executables and backups live under artifacts/).
+artifacts/
+build/
+.deps/
+**/bin/
+**/obj/
+__pycache__/
+*.pyc
+*.user
+*.log
+.vs/

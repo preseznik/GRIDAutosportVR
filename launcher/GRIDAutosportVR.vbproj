@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>GRIDAutosportVR</RootNamespace>
+    <StartupObject>GRIDAutosportVR.Program</StartupObject>
+    <OptionExplicit>On</OptionExplicit>
+    <OptionStrict>On</OptionStrict>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\logo.ico</ApplicationIcon>
+    <AssemblyName>GRIDAutosportVR.Launcher</AssemblyName>
+    <Version>0.0.0-prototype</Version>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <Import Include="System.IO" />
+    <Import Include="System.Diagnostics" />
+    <EmbeddedResource Include="assets\logo.png" LogicalName="GRIDAutosportVR.logo.png" />
+    <EmbeddedResource Include="assets\logo-display.png" LogicalName="GRIDAutosportVR.logo-display.png" />
+    <EmbeddedResource Include="assets\logo.ico" LogicalName="GRIDAutosportVR.logo.ico" />
+    <Content Include="..\artifacts\probe\AutosportXRProbe.exe" Link="probe\AutosportXRProbe.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <Content Include="..\artifacts\bridge-build\Release\gasxr.dll" Link="renderer\gasxr.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+</Project>
