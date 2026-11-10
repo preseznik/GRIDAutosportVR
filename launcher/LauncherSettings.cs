@@ -10,7 +10,7 @@ namespace GRIDAutosportVR;
 internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true, int VrRenderScale = 100,
     int RecenterKey = 121, int RecenterModifiers = 0, bool KeepHorizonLevel = true,
     string LaunchMode = "Normal", string Car = RaceSession.DefaultCar, string Track = RaceSession.DefaultTrack,
-    int Laps = 3, int Opponents = 7, string OpponentCars = "same");
+    int Laps = 3, int Opponents = 7, string OpponentCars = "same", bool VrCockpit = true);
 
 internal static class LauncherSettings
 {
@@ -103,7 +103,8 @@ internal static class LauncherSettings
             ReadText(document, "track", RaceSession.DefaultTrack, ValidTrack, fileName),
             ReadCount(document, "laps", 3, RaceSession.MaxLaps, fileName),
             ReadCount(document, "opponents", 7, RaceSession.MaxOpponents, fileName),
-            ReadText(document, "opponentCars", "same", RaceSession.OpponentChoices.Contains, fileName));
+            ReadText(document, "opponentCars", "same", RaceSession.OpponentChoices.Contains, fileName),
+            ReadFlag(document, "vrCockpit", true, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -125,6 +126,7 @@ internal static class LauncherSettings
         document["laps"] = choices.Laps;
         document["opponents"] = choices.Opponents;
         document["opponentCars"] = choices.OpponentCars;
+        document["vrCockpit"] = choices.VrCockpit;
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
     }
 

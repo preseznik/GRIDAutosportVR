@@ -34,6 +34,7 @@ internal sealed class MainForm : LauncherForm
     private readonly ComboBox launchMode = Choice("LaunchMode"), car = Choice("SessionCar"), track = Choice("SessionTrack"), opponentCars = Choice("OpponentCars");
     private readonly NumericUpDown laps = Count("Laps", RaceSession.MaxLaps), opponents = Count("Opponents", RaceSession.MaxOpponents);
     private readonly Label sessionSummary = TextLabel("");
+    private readonly CheckBox vrCockpit = new() { Name = "VrCockpit", AccessibleName = "Start in the cockpit view", Text = "Start in the cockpit view", Checked = true, AutoSize = true };
     private ContentCatalog catalog = ContentCatalog.Empty;
     private string? catalogFolder;
     private string chosenCar = RaceSession.DefaultCar, chosenTrack = RaceSession.DefaultTrack;
@@ -80,6 +81,7 @@ internal sealed class MainForm : LauncherForm
         Field(launcher, "Laps", laps);
         Field(launcher, "Opponents", opponents);
         Field(launcher, "Opponent cars", opponentCars);
+        Field(launcher, "Camera", vrCockpit);
         sessionSummary.Name = "SessionSummary"; sessionSummary.Tag = "hint";
         launcher.Controls.Add(sessionSummary);
         launcher.Controls.Add(TextLabel("Normal opens the game's own menus, where you choose cars and events. Practice starts the selected car and track on your own; Race adds 1–11 computer-controlled opponents. Practice and Race apply to Launch VR; the desktop Launch always opens the menus. They run on the game's benchmark mode, which has no pause menu: choose End session (beside Launch VR) to stop."));
@@ -162,6 +164,7 @@ internal sealed class MainForm : LauncherForm
         foreach (var combo in new[] { launchMode, car, track, opponentCars })
             combo.SelectedIndexChanged += (_, _) => SessionEdited();
         laps.ValueChanged += (_, _) => SessionEdited();
+        vrCockpit.CheckedChanged += (_, _) => ChoiceEdited();
         opponents.ValueChanged += (_, _) => SessionEdited();
         modernInterface.CheckedChanged += (_, _) =>
         {
@@ -176,7 +179,7 @@ internal sealed class MainForm : LauncherForm
 
     private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
-        (opponentCars.SelectedItem as Option)?.Id ?? "same");
+        (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -253,7 +256,7 @@ internal sealed class MainForm : LauncherForm
         {
             launchMode.SelectedItem = launchMode.Items.Cast<Option>().First(o => o.Id == choices.LaunchMode);
             opponentCars.SelectedItem = opponentCars.Items.Cast<Option>().First(o => o.Id == choices.OpponentCars);
-            laps.Value = choices.Laps; opponents.Value = choices.Opponents;
+            laps.Value = choices.Laps; opponents.Value = choices.Opponents; vrCockpit.Checked = choices.VrCockpit;
             chosenCar = choices.Car; chosenTrack = choices.Track;
             SelectSession();
         }
@@ -352,6 +355,7 @@ internal sealed class MainForm : LauncherForm
         var mode = (launchMode.SelectedItem as Option)?.Id ?? "Normal";
         launchMode.Enabled = idle;
         car.Enabled = track.Enabled = laps.Enabled = idle && mode != "Normal" && catalog.Cars.Count > 0;
+        vrCockpit.Enabled = idle && mode != "Normal";
         opponents.Enabled = opponentCars.Enabled = idle && mode == "Race" && catalog.Cars.Count > 0;
         sessionSummary.Text = RaceSession.Summary(Current, catalog) + (mode == "Race" && opponentCars.SelectedItem is Option { Id: "class" } && car.SelectedItem is CarItem c
             ? $" Discipline: {c.Class}{(catalog.Cars.Any(o => o.Id != c.Id && o.Class == c.Class && c.Class != "Other") ? "" : "; no other installed car shares it, so opponents use your car")}." : "");
@@ -571,6 +575,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(track, "The circuit or street route for Practice or Race.");
         tips.SetToolTip(laps, $"Laps for Practice or Race, 1–{RaceSession.MaxLaps}.");
         tips.SetToolTip(opponents, $"Race only: 1–{RaceSession.MaxOpponents} computer-controlled opponents. You start on pole.");
+        tips.SetToolTip(vrCockpit, "Practice and Race in VR start in the driver's seat (the game's head camera) instead of the chase camera. The game's change-camera button still switches views. Normal races keep the camera you last used.");
         tips.SetToolTip(opponentCars, "Race only. Same car uses your car in its other liveries. Same discipline picks other installed cars of your car's discipline. Mixed picks any installed cars.");
         tips.SetToolTip(recenter, "Click, then press the key (with Ctrl, Alt or Shift) that recenters your view in VR.");
     }

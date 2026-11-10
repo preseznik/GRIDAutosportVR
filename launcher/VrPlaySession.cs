@@ -132,6 +132,7 @@ internal static partial class VrPlaySession
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (choices.HudFollowView ? "1" : "0"),
          "-gasvrrecenterkey=" + choices.RecenterKey, "-gasvrrecentermods=" + choices.RecenterModifiers, "-gasvrkeephorizon=" + (choices.KeepHorizonLevel ? "1" : "0"),
          .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : [],
+         .. choices.VrCockpit ? new[] { "-gasvrcockpit=1" } : [],
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : []];
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).

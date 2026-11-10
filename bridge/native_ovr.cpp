@@ -681,6 +681,30 @@ void __cdecl finishBenchmark() {
     reinterpret_cast<void (__cdecl*)()>(gameImage + 0x4EE040)();
     ExitProcess(0);
 }
+// Race start camera. When the race scene begins, RVA 2D4AE5 looks up the player's view by
+// name on the vehicle view manager (RVA 830300: __thiscall, djb2 of the name against each
+// view's hash at +0xD0, index or -1) and selects it: the saved current_camera, or chase_close
+// in benchmark and attract sessions (Practice / Race). With -gasvrcockpit=1 a headset Practice
+// / Race session gets the car's head-cam (the driver cockpit, defined for every shipped car)
+// instead, or the game's choice for a car without one. It runs on the game's own thread; the
+// camera button still cycles views afterwards.
+using ViewLookupFn = int (__thiscall*)(void*, const char*);
+ViewLookupFn stockViewLookup = nullptr;
+int __fastcall raceStartView(void* manager, void*, const char* requested) {
+    if (AutosportStartInCockpit() && AutosportUseHeadset() && AutosportPracticeSession()) {
+        const int cockpit = stockViewLookup(manager, "head-cam");
+        if (cockpit >= 0) {
+            char label[48]{};
+            __try { strncpy_s(label, requested ? requested : "(none)", _TRUNCATE); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { strcpy_s(label, "(unreadable)"); }
+            AutosportLog("Race start camera head-cam (view %d) instead of %s at frame=%llu", cockpit, label, frame);
+            return cockpit;
+        }
+        AutosportLog("Race start camera: this car has no head-cam view; keeping the game's choice");
+    }
+    return stockViewLookup(manager, requested);
+}
+
 template<class F> Site site(UINT call, UINT target, F callback, UINT resume = 0) {
     return {call, target, reinterpret_cast<void (__cdecl*)()>(callback), resume};
 }
@@ -718,7 +742,7 @@ bool AutosportInstallNativeOvr() noexcept {
         site(0x59E92B, 0xA9DEA0, recenterTracking), site(0x5C52EE, 0xA9DED0, configureRenderer),
         site(0x5C5306, 0xA9DE40, setCaps), site(0x5C5316, 0xA9DE60, configureTracking),
         site(0x680311, 0x678000, selectProjectionEye), site(0x6803E9, 0xA9E6D0, hudOrtho),
-        site(0x720C4A, 0x11D4D0, uiCameraCall)
+        site(0x720C4A, 0x11D4D0, uiCameraCall), site(0x2D4AE5, 0x830300, raceStartView)
     };
     // Original worker return: clear both active flags, pop EBX (only on the
     // results path), then the common pop ESI / pop EBP / ret 4.
@@ -759,6 +783,7 @@ bool AutosportInstallNativeOvr() noexcept {
     AutosportBindLoadingOverlay(base);
     gameImage = base;
     osdLayoutReturn = base + 0x1B7AF0;
+    stockViewLookup = reinterpret_cast<ViewLookupFn>(base + 0x830300);
     for (auto& s : sites) {
         if (s.resume && AutosportRegularPlay()) continue;
         UINT delta = reinterpret_cast<UINT>(s.replacement) - reinterpret_cast<UINT>(base + s.call + 5);

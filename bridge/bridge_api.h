@@ -3,6 +3,8 @@
 
 bool AutosportUseHeadset();
 bool AutosportRegularPlay();
+bool AutosportStartInCockpit();
+bool AutosportPracticeSession();
 bool AutosportHudFollowsView();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);

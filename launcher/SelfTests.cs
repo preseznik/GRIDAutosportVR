@@ -67,7 +67,10 @@ internal static class SelfTests
         var race = new Choices(LaunchMode: "Race", Car: "pag", Track: "circuits/bathurst/route_1", Laps: 20, Opponents: 11, OpponentCars: "class");
         LauncherSettings.Save(race, file);
         Check(LauncherSettings.Load(file) == race);
-        foreach (var bad in new[] { "{\"launchMode\": \"Online\"}", "{\"car\": \"../x\"}", "{\"track\": \"p2p/okutama/route_0\"}", "{\"laps\": 0}",
+        Check(new Choices().VrCockpit); // Practice / Race start in the cockpit by default.
+        LauncherSettings.Save(race with { VrCockpit = false }, file);
+        Check(!LauncherSettings.Load(file).VrCockpit);
+        foreach (var bad in new[] { "{\"vrCockpit\": 1}", "{\"launchMode\": \"Online\"}", "{\"car\": \"../x\"}", "{\"track\": \"p2p/okutama/route_0\"}", "{\"laps\": 0}",
                                     "{\"opponents\": 12}", "{\"opponentCars\": \"any\"}", "{\"track\": \"cities/chicago/route_0 -benchmark x\"}" })
         {
             File.WriteAllText(file, bad);
@@ -138,7 +141,8 @@ internal static class SelfTests
         File.Delete(HeadsetResolution.StorePath);
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
-             "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264"]));
+             "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1"]));
+        Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(VrCockpit: false), null).Contains("-gasvrcockpit=1"));
         var shortcut = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(RecenterKey: 120, RecenterModifiers: 5, KeepHorizonLevel: false), null);
         Check(shortcut.Contains("-gasvrrecenterkey=120") && shortcut.Contains("-gasvrrecentermods=5") && shortcut.Contains("-gasvrkeephorizon=0") && !shortcut.Any(a => a.StartsWith("-gasvreyesize")));
         Check(RecenterShortcut.Label(121, 0) == "F10" && RecenterShortcut.Label(120, 5) == "Ctrl+Shift+F9" && !RecenterShortcut.Valid(115, 2) && !RecenterShortcut.Valid(9, 2));
@@ -279,6 +283,7 @@ internal static class SelfTests
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Meta Quest 3"));
         // Session: Normal by default; Practice enables car, track and laps; Race also the opponents.
         Check(Find<ComboBox>(form, "LaunchMode").Text == "Normal" && !Find<ComboBox>(form, "SessionCar").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);
+        Check(!Find<CheckBox>(form, "VrCockpit").Enabled); // Practice / Race only.
         form.UseCatalog(new([new("sls", "Mercedes-Benz SLS AMG GT3", "Endurance", ["user", "03"]), new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])],
             [new("cities/san_francisco/route_0", "cities", "san_francisco", "route_0", "San Francisco — route 0 (street)"), new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
         Check(Find<ComboBox>(form, "SessionCar").Text.StartsWith("Mercedes") && Find<ComboBox>(form, "SessionTrack").Text.StartsWith("San Francisco"));
@@ -299,6 +304,7 @@ internal static class SelfTests
             var mode = Find<ComboBox>(form, "LaunchMode");
             mode.SelectedIndex = 1;
             Check(Find<ComboBox>(form, "SessionCar").Enabled && Find<NumericUpDown>(form, "Laps").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);
+            Check(Find<CheckBox>(form, "VrCockpit").Enabled && Find<CheckBox>(form, "VrCockpit").Checked);
             Check(Find<Label>(form, "SessionSummary").Text.StartsWith("Practice: Mercedes-Benz SLS AMG GT3 at San Francisco"));
             mode.SelectedIndex = 2;
             Find<ComboBox>(form, "SessionTrack").SelectedIndex = 1;

@@ -20,6 +20,7 @@ bool hudFollowsView;
 unsigned eyeWidth, eyeHeight;
 bool keepActive = true;
 bool testPad; // -gasvrtestpad=1: harness-driven virtual gamepad (hookTestPad).
+bool startInCockpit; // -gasvrcockpit=1: headset races start in the driver cockpit view (native_ovr raceStartView).
 bool uiComparison;
 bool compareSlate;
 unsigned captures;
@@ -53,6 +54,7 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     const wchar_t* cmd = GetCommandLineW();
     keepActive = !wcsstr(cmd, L" -gasvrkeepactive=0");
     testPad = wcsstr(cmd, L" -gasvrtestpad=1") != nullptr;
+    startInCockpit = wcsstr(cmd, L" -gasvrcockpit=1") != nullptr;
     constexpr wchar_t playArg[] = L" -gasvrplay=";
     if (const wchar_t* flag = wcsstr(cmd, playArg)) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
@@ -305,6 +307,8 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
 
 bool AutosportUseHeadset() { return headset; }
 bool AutosportRegularPlay() { return regularPlay; }
+bool AutosportStartInCockpit() { return startInCockpit; }
+bool AutosportPracticeSession() { return practiceSession; }
 // -gasvrrecenterkey=VK -gasvrrecentermods=MASK (1 Ctrl, 2 Alt, 4 Shift): the launcher's recenter
 // shortcut. -gasvrkeephorizon=0 also aligns pitch and roll to the head when recentering.
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers) {
