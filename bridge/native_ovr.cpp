@@ -227,6 +227,82 @@ double clockSeconds() {
     return static_cast<double>(ticks.QuadPart) / frequency.QuadPart;
 }
 
+// The main window procedure (RVA 4E0E50) sets the game window's inactive flag (+0x1D9) on
+// WM_ACTIVATEAPP and clears it on WM_ACTIVATE; the startup videos stop advancing while it is
+// set. A headset player rarely has the game window focused, so headset sessions withhold the
+// deactivations (-gasvrkeepactive=0 opts out). Every activation change is logged.
+WNDPROC stockWndProc = nullptr;
+LRESULT CALLBACK gameWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    const bool keep = AutosportKeepActive();
+    switch (message) {
+    case WM_ACTIVATEAPP:
+        AutosportLog("Window WM_ACTIVATEAPP active=%u frame=%llu%s", unsigned(wParam != 0), frame,
+                     !wParam && keep ? " (withheld)" : "");
+        if (!wParam && keep) return 0;
+        break;
+    case WM_ACTIVATE:
+        AutosportLog("Window WM_ACTIVATE state=%u minimized=%u frame=%llu%s", unsigned(LOWORD(wParam)),
+                     unsigned(HIWORD(wParam) != 0), frame, LOWORD(wParam) == WA_INACTIVE && keep ? " (withheld)" : "");
+        if (LOWORD(wParam) == WA_INACTIVE && keep) return 0;
+        break;
+    case WM_KILLFOCUS:
+        if (keep) return 0; // Keyboard focus moves regardless; the game is not told.
+        break;
+    case WM_SIZE:
+        if (wParam == SIZE_MINIMIZED || wParam == SIZE_RESTORED)
+            AutosportLog("Window WM_SIZE %s frame=%llu", wParam == SIZE_MINIMIZED ? "minimized" : "restored", frame);
+        break;
+    }
+    return CallWindowProcW(stockWndProc, window, message, wParam, lParam);
+}
+void watchGameWindow(HWND window) {
+    if (stockWndProc || !window || !IsWindowUnicode(window)) return;
+    DWORD pid{};
+    if (!GetWindowThreadProcessId(window, &pid) || pid != GetCurrentProcessId()) return;
+    stockWndProc = reinterpret_cast<WNDPROC>(SetWindowLongW(window, GWL_WNDPROC, reinterpret_cast<LONG>(&gameWndProc)));
+    const HWND foreground = GetForegroundWindow();
+    AutosportLog("Window procedure watched=%d keepActive=%d foreground=%d active=%d",
+                 stockWndProc != nullptr, AutosportKeepActive(), foreground == window, GetActiveWindow() == window);
+}
+
+// Shortly after the title scene appears (native frame ~2300 on xr-sim), the game stops calling
+// the HMD frame path and draws the menus with its own swap-chain Present, uncapped (~1200/s).
+// Log when that starts and every 10 s after; presentMirror's own Present is excluded.
+using PresentFn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+PresentFn stockPresent = nullptr;
+thread_local bool mirrorPresenting = false;
+HRESULT STDMETHODCALLTYPE watchedPresent(IDXGISwapChain* chain, UINT sync, UINT flags) {
+    if (!mirrorPresenting) {
+        static ULONGLONG since;
+        static unsigned count;
+        static uint64_t startFrame = UINT64_MAX;
+        const ULONGLONG now = GetTickCount64();
+        static unsigned transitions;
+        if (startFrame != frame) {
+            // Capped, in case a mode interleaves HMD frames and presents every frame.
+            if (++transitions <= 40) {
+                if (startFrame != UINT64_MAX && count)
+                    AutosportLog("Game Presents ended: %u in %llums", count, now - since);
+                AutosportLog("Game Present without the HMD path from native frame=%llu sync=%u", frame, sync);
+            }
+            startFrame = frame; since = now; count = 0;
+        }
+        if (++count % 10000 == 0)
+            AutosportLog("Game Presents continuing: %u in %llums nativeFrame=%llu", count, now - since, frame);
+    }
+    return stockPresent(chain, sync, flags);
+}void watchPresent(IDXGISwapChain* chain) {
+    if (stockPresent || !chain) return;
+    void** table = *reinterpret_cast<void***>(chain);
+    DWORD protection{};
+    if (!VirtualProtect(&table[8], sizeof(void*), PAGE_EXECUTE_READWRITE, &protection)) return;
+    stockPresent = reinterpret_cast<PresentFn>(table[8]);
+    table[8] = reinterpret_cast<void*>(&watchedPresent);
+    DWORD previous{};
+    VirtualProtect(&table[8], sizeof(void*), protection, &previous);
+    AutosportLog("Swap chain Present watched");
+}
+
 char __cdecl initialize() { return 1; }
 Hmd* __cdecl createHmd(int index) {
     if (index != 0) return nullptr;
@@ -290,8 +366,11 @@ char __cdecl configureRenderer(Hmd* target, const Config* next, unsigned, const 
     closeFrame();
     config = *next;
     DXGI_SWAP_CHAIN_DESC swap{};
-    if (config.chain && SUCCEEDED(config.chain->GetDesc(&swap)))
+    if (config.chain && SUCCEEDED(config.chain->GetDesc(&swap))) {
         gameWindow.store(swap.OutputWindow);
+        watchGameWindow(swap.OutputWindow);
+        watchPresent(config.chain);
+    }
     descriptors = output;
     int middle = config.window.x / 2;
     for (int eye = 0; eye != 2; ++eye) {
@@ -403,7 +482,9 @@ void presentMirror(ID3D11Texture2D* packed) {
         back->Release();
     }
     // The native Oculus submit bypasses the ordinary game swap-chain Present.
+    mirrorPresenting = true;
     config.chain->Present(0, 0);
+    mirrorPresenting = false;
 }
 
 void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {

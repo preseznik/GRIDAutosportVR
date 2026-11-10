@@ -97,7 +97,7 @@ def run(args):
     session.mkdir(parents=True)
     (session / "session.id").write_bytes(token.encode("ascii"))
     report = dict(kind="xrsim-normal-play", bridge=str(bridge), bridgeSha256=sha(dll), stockSha256=STOCK,
-                  focusLoss=not args.no_focus_loss, session=str(session), directory=str(folder), samples=[])
+                  focusLoss=not args.no_focus_loss, keepActive=not args.no_keep_active, deactivateAt=args.deactivate_at, session=str(session), directory=str(folder), samples=[])
     def save():
         (folder / "run.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     save()
@@ -116,16 +116,28 @@ def run(args):
             exclusive(APPID, b"255220")
             wrote_appid = True
         env = dict(os.environ, XR_RUNTIME_JSON=str(manifest), XRSIM_DIR=str(sim), XRSIM_HEADSET_CONFIG=str(HEADSET))
-        game = subprocess.Popen([str(EXE), "-gasvrplay=" + token, "-gasvrmode=openxr", "-gasvrhudfollow=0"],
+        game = subprocess.Popen([str(EXE), "-gasvrplay=" + token, "-gasvrmode=openxr", "-gasvrhudfollow=0"] +
+                                (["-gasvrkeepactive=0"] if args.no_keep_active else []),
                                 cwd=GAME, env=env)
         report["pid"] = game.pid
         print(f"Started {EXE.name} PID {game.pid} on xr-sim", flush=True)
         start = time.monotonic()
         injected = None
         next_shot = 10.0
+        deactivated = args.deactivate_at is None
         while time.monotonic() - start < args.seconds:
             if game.poll() is not None:
                 raise RuntimeError(f"Game exited early with {game.returncode:#x}")
+            if not deactivated and time.monotonic() - start >= args.deactivate_at:
+                # Tell the game it lost activation, as Windows does when another app is clicked;
+                # posted to the game window only, the desktop's real focus is untouched.
+                window = game_window(game.pid)
+                if window:
+                    from ctypes import windll
+                    windll.user32.PostMessageW(window, 0x0006, 0, 0)  # WM_ACTIVATE, WA_INACTIVE
+                    windll.user32.PostMessageW(window, 0x001C, 0, 0)  # WM_ACTIVATEAPP, deactivated
+                    deactivated = True
+                    report["deactivatedAt"] = round(time.monotonic() - start, 2)
             state = read_state(sim)
             if state:
                 sample = {k: state.get(k) for k in ("uptimeMs", "sessionState", "endFrames", "layeredFrames",
@@ -191,6 +203,8 @@ if __name__ == "__main__":
     parser.add_argument("--bridge", default=str(BUILT_DLL), help="gasxr.dll to stage (default: the latest build)")
     parser.add_argument("--seconds", type=int, default=60, help="How long to watch normal play before closing")
     parser.add_argument("--no-focus-loss", action="store_true", help="Leave xr-sim's focus model alone")
+    parser.add_argument("--no-keep-active", action="store_true", help="Start with -gasvrkeepactive=0 (game sees deactivations)")
+    parser.add_argument("--deactivate-at", type=float, help="Post WM_ACTIVATE/WM_ACTIVATEAPP deactivation to the game window after this many seconds")
     options = parser.parse_args()
     with session_lock():
         sys.exit(run(options))

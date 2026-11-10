@@ -14,6 +14,7 @@ wchar_t directory[MAX_PATH]{};
 bool headset;
 bool regularPlay;
 bool hudFollowsView;
+bool keepActive = true;
 bool uiComparison;
 bool compareSlate;
 unsigned captures;
@@ -45,6 +46,7 @@ bool supportedHost() {
 bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     // Steam starts the renderer itself and does not inherit the test runner's environment.
     const wchar_t* cmd = GetCommandLineW();
+    keepActive = !wcsstr(cmd, L" -gasvrkeepactive=0");
     constexpr wchar_t playArg[] = L" -gasvrplay=";
     if (const wchar_t* flag = wcsstr(cmd, playArg)) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
@@ -203,6 +205,7 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
 bool AutosportUseHeadset() { return headset; }
 bool AutosportRegularPlay() { return regularPlay; }
 bool AutosportHudFollowsView() { return uiComparison ? captures == 1 : hudFollowsView; }
+bool AutosportKeepActive() { return keepActive && headset; }
 bool AutosportUiComparison() { return uiComparison; }
 bool AutosportCompareSlate() { return compareSlate; }
 const char* AutosportTransitionSample() {
