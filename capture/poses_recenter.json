@@ -1,0 +1,7 @@
+[
+  {"at": 102, "cmds": ["head pose 0 1.6 0 0 0 0"], "shot": "base"},
+  {"at": 103.5, "cmds": ["head rot 30 0 0"], "shot": "yaw30"},
+  {"at": 105, "cmds": ["recenter"], "shot": "yaw30-recentered"},
+  {"at": 106.5, "cmds": ["head rot 0 0 0"], "shot": "forward-after-recenter"},
+  {"at": 108, "cmds": ["head rot 30 0 0", "recenter"], "shot": "recentered-back"}
+]

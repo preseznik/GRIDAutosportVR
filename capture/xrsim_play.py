@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import uuid
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -93,20 +94,38 @@ def run(args):
     sim.mkdir()
     manifest = runtime_manifest(folder)
     token = uuid.uuid4().hex
-    session = SESSIONS / token
-    session.mkdir(parents=True)
-    (session / "session.id").write_bytes(token.encode("ascii"))
-    report = dict(kind="xrsim-normal-play", bridge=str(bridge), bridgeSha256=sha(dll), stockSha256=STOCK,
+    fixture_hash = ""
+    if args.benchmark:
+        # The game's own benchmark race, as in bridge/run.py; logs and eye captures go to the run folder.
+        fixture = paths(stamp)[1]
+        tree = ET.parse(GAME / "example_benchmark.xml")
+        tree.getroot().attrib.update(outputfilename=fixture.stem, cycle_camera=str(args.cycle_camera).lower(),
+                                     skipreplays="true", infinite_loop="false")
+        tree.write(folder / fixture.name, encoding="utf-8", xml_declaration=True)
+        fixture_data = (folder / fixture.name).read_bytes()
+        fixture_hash = sha(fixture_data)
+        session = folder
+        game_args = ["-benchmark", fixture.name, "-gasvrdir=" + str(folder), "-gasvrmode=openxr",
+                     "-gasvrhudfollow=0", "-gasvrseconds=" + str(args.race_seconds)]
+    else:
+        session = SESSIONS / token
+        session.mkdir(parents=True)
+        (session / "session.id").write_bytes(token.encode("ascii"))
+        game_args = ["-gasvrplay=" + token, "-gasvrmode=openxr", "-gasvrhudfollow=0"]
+    script = json.loads(Path(args.script).read_text(encoding="utf-8")) if args.script else []
+    report = dict(kind="xrsim-benchmark" if args.benchmark else "xrsim-normal-play", bridge=str(bridge), bridgeSha256=sha(dll), stockSha256=STOCK,
                   focusLoss=not args.no_focus_loss, keepActive=not args.no_keep_active, deactivateAt=args.deactivate_at, session=str(session), directory=str(folder), samples=[])
     def save():
         (folder / "run.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     save()
     print(folder, flush=True)
-    exclusive(LEASE, json.dumps({"stamp": stamp, "dll": sha(dll), "fixture": ""}).encode())
+    exclusive(LEASE, json.dumps({"stamp": stamp, "dll": sha(dll), "fixture": fixture_hash}).encode())
     wrote_appid = False
     game = None
     try:
         exclusive(DLL, dll)
+        if args.benchmark:
+            exclusive(fixture, fixture_data)
         exclusive(temp, private)
         if file_sha(EXE) != STOCK or file_sha(temp) != PRIVATE:
             raise RuntimeError("Executable changed during staging")
@@ -116,9 +135,11 @@ def run(args):
             exclusive(APPID, b"255220")
             wrote_appid = True
         env = dict(os.environ, XR_RUNTIME_JSON=str(manifest), XRSIM_DIR=str(sim), XRSIM_HEADSET_CONFIG=str(HEADSET))
-        game = subprocess.Popen([str(EXE), "-gasvrplay=" + token, "-gasvrmode=openxr", "-gasvrhudfollow=0"] +
+        game = subprocess.Popen([str(EXE)] + game_args +
                                 (["-gasvrkeepactive=0"] if args.no_keep_active else []) + list(args.game_arg),
                                 cwd=GAME, env=env)
+        race_start = None
+        log = session / "bridge.log"
         report["pid"] = game.pid
         print(f"Started {EXE.name} PID {game.pid} on xr-sim", flush=True)
         start = time.monotonic()
@@ -127,7 +148,33 @@ def run(args):
         deactivated = args.deactivate_at is None
         while time.monotonic() - start < args.seconds:
             if game.poll() is not None:
+                if args.benchmark and game.returncode == 0:
+                    break  # The benchmark closes the game itself after the race.
                 raise RuntimeError(f"Game exited early with {game.returncode:#x}")
+            if script and race_start is None and log.is_file() and \
+                    "StateLoading exited" in log.read_text(encoding="ascii", errors="replace"):
+                race_start = time.monotonic()
+                report["raceStartAt"] = round(race_start - start, 2)
+                print(f"Race scene at {report['raceStartAt']} s; running {len(script)} pose steps", flush=True)
+            while script and race_start is not None and time.monotonic() - race_start >= script[0]["at"]:
+                # Scripted head poses after the race scene appears; each optional shot is what
+                # the simulated headset shows once the game has rendered the new pose.
+                step = script.pop(0)
+                if step.get("cmds"):
+                    send(sim, step["cmds"])
+                if step.get("key"):
+                    # A key posted to the game window only (e.g. F11 recenter); desktop focus is untouched.
+                    from ctypes import windll
+                    vk = {"F11": 0x7A, "ESC": 0x1B, "ENTER": 0x0D}[step["key"]]
+                    window = game_window(game.pid)
+                    if window:
+                        windll.user32.PostMessageW(window, 0x0100, vk, 1)        # WM_KEYDOWN
+                        time.sleep(.1)
+                        windll.user32.PostMessageW(window, 0x0101, vk, 0xC0000001)  # WM_KEYUP
+                if step.get("shot"):
+                    time.sleep(.4)
+                    send(sim, [f"capture tag {step['shot']}", "capture next 1"])
+                report.setdefault("steps", []).append({"t": round(time.monotonic() - race_start, 2), **step})
             if not deactivated and time.monotonic() - start >= args.deactivate_at:
                 # Tell the game it lost activation, as Windows does when another app is clicked;
                 # posted to the game window only, the desktop's real focus is untouched.
@@ -166,16 +213,19 @@ def run(args):
             time.sleep(.5 if shots and shots[0] < 15 else 1)
         state = read_state(sim) or {}
         report["final"] = {k: state.get(k) for k in ("sessionState", "endFrames", "layeredFrames")}
-        try:
-            send(sim, ["capture next 1"])
-            time.sleep(2)
-        except RuntimeError as exc:
-            report["captureError"] = str(exc)
-        window = game_window(game.pid)
-        from ctypes import windll
-        if not window or not windll.user32.PostMessageW(window, 0x10, 0, 0):
-            raise RuntimeError("Could not post WM_CLOSE to the game window")
+        if game.poll() is None:
+            try:
+                send(sim, ["capture next 1"])
+                time.sleep(2)
+            except RuntimeError as exc:
+                report["captureError"] = str(exc)
+            window = game_window(game.pid)
+            from ctypes import windll
+            if not window or not windll.user32.PostMessageW(window, 0x10, 0, 0):
+                raise RuntimeError("Could not post WM_CLOSE to the game window")
         report["exitCode"] = game.wait(120)
+        if script:
+            report["stepsNotRun"] = script
     except Exception as exc:
         report["error"] = str(exc)
         if game and game.poll() is None:
@@ -189,9 +239,8 @@ def run(args):
             cleanup()
             report["stockRestored"] = True
         finally:
-            for name in ("bridge.log",):
-                if (session / name).is_file():
-                    shutil.copy2(session / name, folder / name)
+            if session != folder and (session / "bridge.log").is_file():
+                shutil.copy2(session / "bridge.log", folder / "bridge.log")
             save()
     regained = "focusRegainedAfter" in report
     print(f"exit={report.get('exitCode')} final={report.get('final')} regained={regained}", flush=True)
@@ -203,6 +252,10 @@ if __name__ == "__main__":
     parser.add_argument("--bridge", default=str(BUILT_DLL), help="gasxr.dll to stage (default: the latest build)")
     parser.add_argument("--seconds", type=int, default=60, help="How long to watch normal play before closing")
     parser.add_argument("--no-focus-loss", action="store_true", help="Leave xr-sim's focus model alone")
+    parser.add_argument("--benchmark", action="store_true", help="Run the game's benchmark race instead of normal play")
+    parser.add_argument("--cycle-camera", action="store_true", help="Benchmark: let the game cycle its cameras")
+    parser.add_argument("--race-seconds", type=int, default=30, help="Benchmark: race second of the bridge's own eye capture")
+    parser.add_argument("--script", help='JSON list of {"at": s after the race scene, "cmds": [...], "shot": "tag"}')
     parser.add_argument("--game-arg", action="append", default=[], help="Extra -gasvr... argument for the game (repeatable)")
     parser.add_argument("--shots", default="10,20,30,40,50,60", help="Seconds at which xr-sim captures what the headset is shown")
     parser.add_argument("--no-keep-active", action="store_true", help="Start with -gasvrkeepactive=0 (game sees deactivations)")

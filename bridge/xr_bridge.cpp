@@ -299,6 +299,19 @@ bool Bridge::locate() {
         if (result == XR_EVENT_UNAVAILABLE) break;
         checked(result, "xrPollEvent");
         if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) throw std::runtime_error("instance_loss_pending");
+        if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+            // A runtime recenter (e.g. holding the Quest's Oculus button) moves LOCAL onto the
+            // head. The seat origin and the seated screen were placed in the old LOCAL; place
+            // both again from the head in the new one, as the game's own recenter does.
+            const auto& change = reinterpret_cast<const XrEventDataReferenceSpaceChangePending&>(event);
+            // xr-sim leaves the session handle null; this bridge only ever has one session.
+            if ((change.session == session || change.session == XR_NULL_HANDLE) &&
+                change.referenceSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL) {
+                screenAnchored = false;
+                recenterPending = true;
+                AutosportLog("XR LOCAL space recentered by the runtime at frame=%llu: re-placing the seated screen and recentering", serial);
+            }
+        }
         if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
             const auto& changed = reinterpret_cast<const XrEventDataSessionStateChanged&>(event);
             require(changed.session == session, "unexpected_session_event");

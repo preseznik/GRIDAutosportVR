@@ -347,7 +347,10 @@ char __cdecl attachWindow(Hmd* target, HWND, const void*, const void*) {
 char __cdecl dismissHealthWarning(Hmd*) { return 0; }
 void __cdecl setCaps(Hmd*, unsigned) {}
 char __cdecl configureTracking(Hmd* target, unsigned, unsigned) { return target == &hmd; }
-void __cdecl recenterTracking(Hmd*) { recenter = true; }
+void __cdecl recenterTracking(Hmd*) {
+    recenter = true;
+    AutosportLog("Native recenter requested frame=%llu", frame);
+}
 
 // This SDK returns an 8-byte size in EDX:EAX. The game scales it relative to its display mode.
 uint64_t __cdecl textureSize(Hmd* target, int eye, Fov, float density) {
