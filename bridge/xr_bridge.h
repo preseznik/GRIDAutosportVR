@@ -29,3 +29,6 @@ void AutosportPrepareForGameExit() noexcept;
 // Static status string for the caller's log. No game process file or config writes.
 const char* AutosportBridgeStatus() noexcept;
 double AutosportDisplayPeriodSeconds() noexcept;
+// True once, on the render thread, after the first FOCUSED of a session whose views were
+// already in use: the caller recenters its seated origin on the focused pose.
+bool AutosportTakeRecenterRequest() noexcept;

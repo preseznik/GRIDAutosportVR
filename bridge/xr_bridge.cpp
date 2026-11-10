@@ -20,6 +20,18 @@ using Microsoft::WRL::ComPtr;
 namespace {
 thread_local char status[256] = "idle";
 void report(const char* message) { snprintf(status, sizeof(status), "%s", message); }
+const char* stateName(XrSessionState state) {
+    constexpr const char* names[] = {"UNKNOWN", "IDLE", "READY", "SYNCHRONIZED", "VISIBLE",
+                                     "FOCUSED", "STOPPING", "LOSS_PENDING", "EXITING"};
+    return unsigned(state) < ARRAYSIZE(names) ? names[unsigned(state)] : "OTHER";
+}
+// Whether a window of this process is the Windows foreground window. Logged with
+// runtime visibility, which some runtimes tie to the focused desktop application.
+bool gameForeground() {
+    DWORD pid{};
+    const HWND window = GetForegroundWindow();
+    return window && GetWindowThreadProcessId(window, &pid) && pid == GetCurrentProcessId();
+}
 void require(bool condition, const char* what) { if (!condition) throw std::runtime_error(what); }
 void checked(XrResult result, const char* what) {
     if (result == XR_SUCCESS) return;
@@ -104,6 +116,14 @@ struct Bridge {
     bool screenAnchored{};
     bool headset{}, running{}, frameOpen{}, active{}, failed{}, seen{}, gpuUsed{}, closePending{};
     uint64_t serial{};
+    XrSessionState state{XR_SESSION_STATE_UNKNOWN};
+    // A run of native frames the runtime asked us not to render (shouldRender false or discarded).
+    bool hidden{};
+    // Views located before the first FOCUSED come from a session the runtime is not yet
+    // presenting. Re-place the seated screen and recenter once when it is focused.
+    bool locatedBeforeFocus{}, everFocused{}, recenterPending{};
+    uint64_t hiddenFrom{}, hiddenFrames{};
+    ULONGLONG hiddenTick{};
     XrTime time{};
     XrDuration period{};
     XrView located[2]{};
@@ -282,6 +302,16 @@ bool Bridge::locate() {
         if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
             const auto& changed = reinterpret_cast<const XrEventDataSessionStateChanged&>(event);
             require(changed.session == session, "unexpected_session_event");
+            state = changed.state;
+            AutosportLog("XR session state=%s frame=%llu gameForeground=%d", stateName(state), serial, gameForeground());
+            if (changed.state == XR_SESSION_STATE_FOCUSED && !everFocused) {
+                everFocused = true;
+                if (locatedBeforeFocus) {
+                    screenAnchored = false;
+                    recenterPending = true;
+                    AutosportLog("XR first focus at frame=%llu: re-placing the seated screen and recentering", serial);
+                }
+            }
             if (changed.state == XR_SESSION_STATE_READY && !running) {
                 XrSessionBeginInfo begin{XR_TYPE_SESSION_BEGIN_INFO};
                 begin.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -297,15 +327,35 @@ bool Bridge::locate() {
     }
     if (!running) { report("waiting_for_session_ready"); return false; }
     XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
-    XrFrameState state{XR_TYPE_FRAME_STATE};
-    checked(xrWaitFrame(session, &wait, &state), "xrWaitFrame");
-    time = state.predictedDisplayTime;
-    period = state.predictedDisplayPeriod;
+    XrFrameState frameState{XR_TYPE_FRAME_STATE};
+    checked(xrWaitFrame(session, &wait, &frameState), "xrWaitFrame");
+    time = frameState.predictedDisplayTime;
+    period = frameState.predictedDisplayPeriod;
     XrFrameBeginInfo begin{XR_TYPE_FRAME_BEGIN_INFO};
     const auto result = xrBeginFrame(session, &begin);
     if (result != XR_FRAME_DISCARDED) checked(result, "xrBeginFrame");
     frameOpen = true;
-    if (!state.shouldRender || result == XR_FRAME_DISCARDED) { end(); report("runtime_skipped_frame"); return false; }
+    if (result == XR_FRAME_DISCARDED) { end(); report("runtime_discarded_frame"); return false; }
+    // Virtual Desktop holds shouldRender false while the session is not FOCUSED, and only
+    // grants FOCUSED again after frames that carry a layer. Ending those frames empty
+    // parks the session at VISIBLE indefinitely: the headset stays black through the
+    // startup videos and menu. The game draws these frames regardless, so keep
+    // submitting them; OpenXR allows layers on a frame the runtime says not to render.
+    if (!frameState.shouldRender) {
+        if (!hidden) {
+            hidden = true;
+            hiddenFrom = serial;
+            hiddenFrames = 0;
+            hiddenTick = GetTickCount64();
+            AutosportLog("XR runtime not rendering from frame=%llu state=%s gameForeground=%d; still submitting",
+                         serial, stateName(state), gameForeground());
+        }
+        ++hiddenFrames;
+    } else if (hidden) {
+        hidden = false;
+        AutosportLog("XR runtime rendering from frame=%llu after %llu frames (%.1fs from frame %llu) state=%s gameForeground=%d",
+                     serial, hiddenFrames, (GetTickCount64()-hiddenTick)*1e-3, hiddenFrom, stateName(state), gameForeground());
+    }
     XrViewLocateInfo locateInfo{XR_TYPE_VIEW_LOCATE_INFO};
     locateInfo.displayTime = time;
     locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -316,6 +366,7 @@ bool Bridge::locate() {
     checked(xrLocateViews(session, &locateInfo, &viewState, 2, &n, located), "xrLocateViews");
     constexpr auto valid = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
     if (n != 2 || (viewState.viewStateFlags & valid) != valid) { end(); report("invalid_runtime_pose"); return false; }
+    if (!everFocused) locatedBeforeFocus = true;
     if (!screenAnchored) {
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
         constexpr auto flags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
@@ -509,6 +560,12 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
 } // namespace
 
 const char* AutosportBridgeStatus() noexcept { return status; }
+bool AutosportTakeRecenterRequest() noexcept {
+    std::lock_guard<std::mutex> lock(guard);
+    if (!bridge || bridge->owner != GetCurrentThreadId() || !bridge->recenterPending) return false;
+    bridge->recenterPending = false;
+    return true;
+}
 double AutosportDisplayPeriodSeconds() noexcept {
     std::lock_guard<std::mutex> lock(guard);
     return bridge && bridge->owner == GetCurrentThreadId() ? bridge->period*1e-9 : 0.0;

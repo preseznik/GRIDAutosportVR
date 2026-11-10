@@ -348,6 +348,7 @@ Timing* __cdecl beginFrame(Timing* timing, Hmd* target, unsigned) {
     BridgeView views[2]{};
     frameOpen = AutosportBeginViews(config.device, config.context, AutosportUseHeadset(), frame, views);
     if (frameOpen) {
+        if (AutosportTakeRecenterRequest()) recenter = true;
         applyViews(views);
         if (frame == 1) AutosportLog("Native BeginFrame: %s", AutosportBridgeStatus());
     }

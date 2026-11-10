@@ -125,9 +125,75 @@ void AutosportLog(const char* format, ...) {
     ReleaseSRWLockExclusive(&logLock);
 }
 
+namespace {
+// Startup and attract videos play through bink2w32.dll. Log each open and close so a
+// session log shows which native frames carried a video. Behaviour is unchanged.
+using BinkOpenFn = void* (__stdcall*)(const char*, unsigned);
+using BinkCloseFn = void (__stdcall*)(void*);
+BinkOpenFn stockBinkOpen;
+BinkCloseFn stockBinkClose;
+constexpr unsigned binkFileHandle = 0x00800000; // BINKFILEHANDLE: the name is a HANDLE.
+
+void copyVideoName(const char* name, unsigned flags, char (&out)[160]) {
+    strcpy_s(out, "(handle)");
+    if (!name || (flags & binkFileHandle)) return;
+    __try { strncpy_s(out, name, _TRUNCATE); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { strcpy_s(out, "(unreadable)"); }
+}
+void* __stdcall loggedBinkOpen(const char* name, unsigned flags) {
+    char label[160];
+    copyVideoName(name, flags, label);
+    void* video = stockBinkOpen(name, flags);
+    AutosportLog("Native video open name=%s flags=%08x handle=%p", label, flags, video);
+    return video;
+}
+void __stdcall loggedBinkClose(void* video) {
+    AutosportLog("Native video close handle=%p", video);
+    stockBinkClose(video);
+}
+
+// Replace one by-name import of the game image. The original stays callable through *original.
+bool hookImport(const char* dll, const char* function, void* replacement, void** original) {
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS32*>(image + dos->e_lfanew);
+    const auto& imports = pe->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!imports.VirtualAddress) return false;
+    for (auto* desc = reinterpret_cast<const IMAGE_IMPORT_DESCRIPTOR*>(image + imports.VirtualAddress);
+         desc->Name; ++desc) {
+        if (_stricmp(reinterpret_cast<const char*>(image + desc->Name), dll) || !desc->OriginalFirstThunk) continue;
+        const auto* names = reinterpret_cast<const IMAGE_THUNK_DATA32*>(image + desc->OriginalFirstThunk);
+        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA32*>(const_cast<BYTE*>(image) + desc->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL32(names->u1.Ordinal)) continue;
+            const auto* byName = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(image + names->u1.AddressOfData);
+            if (strcmp(reinterpret_cast<const char*>(byName->Name), function)) continue;
+            DWORD protection{};
+            if (!VirtualProtect(&slots->u1.Function, sizeof(DWORD), PAGE_READWRITE, &protection)) return false;
+            *original = reinterpret_cast<void*>(slots->u1.Function);
+            slots->u1.Function = reinterpret_cast<DWORD>(replacement);
+            DWORD previous{};
+            VirtualProtect(&slots->u1.Function, sizeof(DWORD), protection, &previous);
+            return *original != nullptr;
+        }
+    }
+    return false;
+}
+void hookVideoLogging() {
+    static bool attempted;
+    if (attempted || !adapterReady || !directory[0]) return;
+    attempted = true; // The renderer's D3D11 device exists, so the game's imports are bound.
+    const bool open = hookImport("bink2w32.dll", "_BinkOpen@8", reinterpret_cast<void*>(&loggedBinkOpen),
+                                 reinterpret_cast<void**>(&stockBinkOpen));
+    const bool close = hookImport("bink2w32.dll", "_BinkClose@4", reinterpret_cast<void*>(&loggedBinkClose),
+                                  reinterpret_cast<void**>(&stockBinkClose));
+    AutosportLog("Native video logging open=%d close=%d", open, close);
+}
+}
+
 extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVER_TYPE type, HMODULE software,
         UINT flags, const D3D_FEATURE_LEVEL* levels, UINT count, UINT sdk, ID3D11Device** device,
         D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context) {
+    hookVideoLogging();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
     AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u",
                  hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime);

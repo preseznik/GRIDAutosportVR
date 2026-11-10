@@ -31,4 +31,8 @@ To check both HUD modes and the track reveal without a headset, run `python brid
 
 To reproduce an early window close with a connected headset, run `python bridge/run.py --mode openxr --quit-after-capture --race-seconds 1`. Success requires a stereo capture, clean process exits, stock restoration, and a completed OpenXR shutdown handshake. Omit `--quit-after-capture` for a full lap. The full run also requires the game's result XML to match the fixture. It saves that result alongside the eye capture.
 
+Normal play can be checked without a headset on the [xr-sim](https://github.com/phunkaeg/xr-sim) OpenXR runtime: build it for x86 in `.deps/xr-sim` (`cmake --preset x86`, `cmake --build --preset x86-release`), then run `python capture/xrsim_play.py --seconds 50`. It starts the AVX game directly with a normal-play token, so the startup videos and title scene run, and models Virtual Desktop dropping focus (`focus policy vdxr-layers`, `shouldRender` held false, ~87 ms frames). It passes when the session is FOCUSED again; `--no-focus-loss` leaves the focus model alone. Results and xr-sim captures go under `artifacts/bridge-runs`.
+
+Virtual Desktop holds `shouldRender` false while a session is not focused and restores focus only after frames that carry a layer. The bridge therefore keeps submitting while `shouldRender` is false, and on the first FOCUSED it re-places the seated screen and recenters once.
+
 The runner restores the stock executable and removes its session files after the game exits. If the runner was interrupted, close Autosport and run `python bridge/run.py --restore`. Keep the run directory until restoration succeeds. Steam game executables and backups are local test data and should be excluded from release packages.
