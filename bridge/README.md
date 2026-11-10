@@ -37,6 +37,8 @@ Virtual Desktop holds `shouldRender` false while a session is not focused and re
 
 While its window is inactive the game pauses its startup videos and drops to about 18 fps, and a headset player rarely has that window focused. Bridge sessions (headset play and the capture benchmark) therefore withhold `WM_ACTIVATEAPP`/`WM_ACTIVATE` deactivations and `WM_KILLFOCUS` from the game; `-gasvrkeepactive=0` opts out. `--deactivate-at 2` (with `--no-keep-active` for the control) posts a deactivation to the game window to check this without touching the desktop focus.
 
+The startup videos (`intel_sting.bk2`, `sting.bk2`) are drawn into the game's back buffer, not the HMD eye texture, which stays a flat dark fill. Until the first loading state of normal play, the seated screen therefore shows the back buffer, and the desktop mirror leaves it as the game drew it; `-gasvrstartupsource=eye` restores the eye-texture source. `capture/xrsim_play.py --shots 3,5,8,11` captures that interval.
+
 Shortly after the title scene appears, the game stops calling the HMD frame path and draws the menus with its own uncapped swap-chain `Present`. While that lasts, the bridge ends the abandoned HMD frame and shows each presented back buffer on the seated screen, paced by `xrWaitFrame`. The HMD path takes over again at the next native BeginFrame.
 
 The runner restores the stock executable and removes its session files after the game exits. If the runner was interrupted, close Autosport and run `python bridge/run.py --restore`. Keep the run directory until restoration succeeds. Steam game executables and backups are local test data and should be excluded from release packages.

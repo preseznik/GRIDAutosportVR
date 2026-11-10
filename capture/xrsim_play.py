@@ -117,13 +117,13 @@ def run(args):
             wrote_appid = True
         env = dict(os.environ, XR_RUNTIME_JSON=str(manifest), XRSIM_DIR=str(sim), XRSIM_HEADSET_CONFIG=str(HEADSET))
         game = subprocess.Popen([str(EXE), "-gasvrplay=" + token, "-gasvrmode=openxr", "-gasvrhudfollow=0"] +
-                                (["-gasvrkeepactive=0"] if args.no_keep_active else []),
+                                (["-gasvrkeepactive=0"] if args.no_keep_active else []) + list(args.game_arg),
                                 cwd=GAME, env=env)
         report["pid"] = game.pid
         print(f"Started {EXE.name} PID {game.pid} on xr-sim", flush=True)
         start = time.monotonic()
         injected = None
-        next_shot = 10.0
+        shots = sorted(float(s) for s in args.shots.split(",") if s.strip())
         deactivated = args.deactivate_at is None
         while time.monotonic() - start < args.seconds:
             if game.poll() is not None:
@@ -155,15 +155,15 @@ def run(args):
                         time.monotonic() - injected > .6 and state.get("sessionState") == "FOCUSED"):
                     report["focusRegainedAfter"] = round(time.monotonic() - injected, 2)
                     print(f"FOCUSED again {report['focusRegainedAfter']} s after the drop", flush=True)
-                if time.monotonic() - start >= next_shot and state.get("sessionRunning"):
+                if shots and time.monotonic() - start >= shots[0] and state.get("sessionRunning"):
                     # A timeline of what the headset is shown: xr-sim composites the submitted layers.
                     try:
-                        send(sim, [f"capture tag t{int(next_shot):03d}s", "capture next 1"])
+                        send(sim, [f"capture tag t{int(shots[0]):03d}s", "capture next 1"])
                     except RuntimeError as exc:
                         report.setdefault("captureErrors", []).append(str(exc))
-                    next_shot += 10
+                    shots.pop(0)
             save()
-            time.sleep(1)
+            time.sleep(.5 if shots and shots[0] < 15 else 1)
         state = read_state(sim) or {}
         report["final"] = {k: state.get(k) for k in ("sessionState", "endFrames", "layeredFrames")}
         try:
@@ -203,6 +203,8 @@ if __name__ == "__main__":
     parser.add_argument("--bridge", default=str(BUILT_DLL), help="gasxr.dll to stage (default: the latest build)")
     parser.add_argument("--seconds", type=int, default=60, help="How long to watch normal play before closing")
     parser.add_argument("--no-focus-loss", action="store_true", help="Leave xr-sim's focus model alone")
+    parser.add_argument("--game-arg", action="append", default=[], help="Extra -gasvr... argument for the game (repeatable)")
+    parser.add_argument("--shots", default="10,20,30,40,50,60", help="Seconds at which xr-sim captures what the headset is shown")
     parser.add_argument("--no-keep-active", action="store_true", help="Start with -gasvrkeepactive=0 (game sees deactivations)")
     parser.add_argument("--deactivate-at", type=float, help="Post WM_ACTIVATE/WM_ACTIVATEAPP deactivation to the game window after this many seconds")
     options = parser.parse_args()

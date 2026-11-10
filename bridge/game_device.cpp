@@ -228,6 +228,12 @@ const char* AutosportTransitionSample() {
     constexpr const char* names[] = {"startup", "loading", "scene"};
     return names[current];
 }
+// Normal play before the first StateLoading: the startup videos. -gasvrstartupsource=eye keeps
+// the HMD eye texture as the seated screen's source there (the pre-2026-11-10 behaviour).
+bool AutosportStartupFromBackBuffer() {
+    static const bool eye = wcsstr(GetCommandLineW(), L" -gasvrstartupsource=eye") != nullptr;
+    return regularPlay && headset && !eye && phase.load() == Phase::Startup;
+}
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
     if (current != Phase::Startup) return current == Phase::Loading;

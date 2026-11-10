@@ -530,6 +530,7 @@ bool showMenuPresent(IDXGISwapChain* chain) {
     showing = true;
     return result.submitted;
 }
+bool startupFromBack = false;
 void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
     if (target != &hmd) return;
     if (frameOpen && eyes && eyes[0].api == 5 && eyes[1].api == 5 && eyes[0].texture &&
@@ -543,14 +544,36 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
         bool capture = !overlay && requestedEyes == 3 && AutosportCaptureRequested();
         const char* transition = (overlay || capture) ? nullptr : AutosportTransitionSample();
         const auto mode = AutosportFlatScreen() ? BridgePresentation::FlatScreen : BridgePresentation::Stereo;
+        startupFromBack = AutosportStartupFromBackBuffer();
         static int lastMode = -1;
         if (lastMode != static_cast<int>(mode)) {
             lastMode = static_cast<int>(mode);
             AutosportLog("Native frame %llu presentation=%s HUD follows view=%d", frame,
                          mode == BridgePresentation::FlatScreen ? "seated-screen" : "race-stereo", AutosportHudFollowsView());
         }
-        auto result = AutosportEndViews(eyes[0].texture, 0, rects, frame,
-                                        (capture || transition || overlay) ? AutosportRunDirectory() : nullptr, mode);
+        // The startup videos never reach the eye texture (a flat dark fill). Show the game's
+        // back buffer on the seated screen until the first loading state instead.
+        ID3D11Texture2D* back = nullptr;
+        if (startupFromBack && mode == BridgePresentation::FlatScreen && config.chain &&
+            FAILED(config.chain->GetBuffer(0, IID_PPV_ARGS(&back)))) back = nullptr;
+        BridgeEndResult result{};
+        if (back && back != eyes[0].texture) {
+            D3D11_TEXTURE2D_DESC desc{};
+            back->GetDesc(&desc);
+            const RECT full{0, 0, LONG(desc.Width), LONG(desc.Height)};
+            const RECT whole[2]{full, full};
+            result = AutosportEndViews(back, 0, whole, frame, nullptr, mode);
+            static bool noted;
+            if (!noted) {
+                noted = true;
+                AutosportLog("Startup seated screen from the back buffer %ux%u format=%u frame=%llu submitted=%u",
+                             desc.Width, desc.Height, unsigned(desc.Format), frame, unsigned(result.submitted));
+            }
+        } else {
+            result = AutosportEndViews(eyes[0].texture, 0, rects, frame,
+                                       (capture || transition || overlay) ? AutosportRunDirectory() : nullptr, mode);
+        }
+        if (back) back->Release();
         AutosportFinishLoadingOverlayFrame(frame, result.captured);
         if (frame == 1 || frame % 1800 == 0 || result.captured)
             AutosportLog("Frame %llu pose-mask=%u packed=%p submitted=%u status=%s", frame, requestedEyes,
@@ -569,7 +592,9 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
         if (frameOpen && (frame < 3 || frame % 120 == 0)) AutosportLog("native submit lacks a common D3D11 eye texture");
         closeFrame();
     }
-    presentMirror(eyes && eyes[0].api == 5 ? eyes[0].texture : nullptr);
+    // During startup the back buffer already holds the frame shown on the desktop; keep it.
+    presentMirror(eyes && eyes[0].api == 5 && !startupFromBack ? eyes[0].texture : nullptr);
+    startupFromBack = false;
 }
 
 struct Site { UINT call, target; void (__cdecl *replacement)(); UINT resume; };

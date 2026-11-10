@@ -9,6 +9,7 @@ bool AutosportUiComparison();
 bool AutosportCompareSlate();
 const char* AutosportTransitionSample();
 bool AutosportFlatScreen();
+bool AutosportStartupFromBackBuffer();
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event);
 void __fastcall AutosportLoadingExited(void* dispatcher, void*, const void* event);
 bool AutosportCaptureRequested();
