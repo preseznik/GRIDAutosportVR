@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
+#include <cstdlib>
+#include <xinput.h>
 
 namespace {
 const BYTE* image;
@@ -17,6 +19,7 @@ bool practiceSession; // A play session started with its own -benchmarkAttract f
 bool hudFollowsView;
 unsigned eyeWidth, eyeHeight;
 bool keepActive = true;
+bool testPad; // -gasvrtestpad=1: harness-driven virtual gamepad (hookTestPad).
 bool uiComparison;
 bool compareSlate;
 unsigned captures;
@@ -49,6 +52,7 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     // Steam starts the renderer itself and does not inherit the test runner's environment.
     const wchar_t* cmd = GetCommandLineW();
     keepActive = !wcsstr(cmd, L" -gasvrkeepactive=0");
+    testPad = wcsstr(cmd, L" -gasvrtestpad=1") != nullptr;
     constexpr wchar_t playArg[] = L" -gasvrplay=";
     if (const wchar_t* flag = wcsstr(cmd, playArg)) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
@@ -166,8 +170,9 @@ void __stdcall loggedBinkClose(void* video) {
     stockBinkClose(video);
 }
 
-// Replace one by-name import of the game image. The original stays callable through *original.
-bool hookImport(const char* dll, const char* function, void* replacement, void** original) {
+// Replace one import of the game image, by name (or by ordinal when function is null). The
+// original stays callable through *original.
+bool hookImport(const char* dll, const char* function, void* replacement, void** original, WORD ordinal = 0) {
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
     const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS32*>(image + dos->e_lfanew);
     const auto& imports = pe->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
@@ -178,9 +183,12 @@ bool hookImport(const char* dll, const char* function, void* replacement, void**
         const auto* names = reinterpret_cast<const IMAGE_THUNK_DATA32*>(image + desc->OriginalFirstThunk);
         auto* slots = reinterpret_cast<IMAGE_THUNK_DATA32*>(const_cast<BYTE*>(image) + desc->FirstThunk);
         for (; names->u1.AddressOfData; ++names, ++slots) {
-            if (IMAGE_SNAP_BY_ORDINAL32(names->u1.Ordinal)) continue;
-            const auto* byName = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(image + names->u1.AddressOfData);
-            if (strcmp(reinterpret_cast<const char*>(byName->Name), function)) continue;
+            if (IMAGE_SNAP_BY_ORDINAL32(names->u1.Ordinal)) {
+                if (function || IMAGE_ORDINAL32(names->u1.Ordinal) != ordinal) continue;
+            } else {
+                const auto* byName = reinterpret_cast<const IMAGE_IMPORT_BY_NAME*>(image + names->u1.AddressOfData);
+                if (!function || strcmp(reinterpret_cast<const char*>(byName->Name), function)) continue;
+            }
             DWORD protection{};
             if (!VirtualProtect(&slots->u1.Function, sizeof(DWORD), PAGE_READWRITE, &protection)) return false;
             *original = reinterpret_cast<void*>(slots->u1.Function);
@@ -202,12 +210,93 @@ void hookVideoLogging() {
                                   reinterpret_cast<void**>(&stockBinkClose));
     AutosportLog("Native video logging open=%d close=%d", open, close);
 }
+
+// Test only, never passed by the launcher: with -gasvrtestpad=1 controller 0 is a virtual
+// gamepad whose buttons the xr-sim harness sets by writing pad.txt (hex XINPUT_GAMEPAD
+// wButtons) into the session folder. The game reads the keyboard through Raw Input and
+// DirectInput, which a test cannot reach without taking the desktop's focus.
+using XInputGetStateFn = DWORD (WINAPI*)(DWORD, XINPUT_STATE*);
+using XInputGetCapabilitiesFn = DWORD (WINAPI*)(DWORD, DWORD, XINPUT_CAPABILITIES*);
+XInputGetStateFn stockXInputGetState;
+XInputGetCapabilitiesFn stockXInputGetCapabilities;
+WORD testPadButtons() {
+    static ULONGLONG checked;
+    static WORD buttons;
+    const ULONGLONG now = GetTickCount64();
+    if (now - checked < 30) return buttons;
+    checked = now;
+    wchar_t path[MAX_PATH]{};
+    char text[16]{};
+    DWORD read{};
+    swprintf_s(path, L"%s\\pad.txt", directory);
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return buttons = 0;
+    ReadFile(file, text, sizeof(text) - 1, &read, nullptr);
+    CloseHandle(file);
+    const WORD next = WORD(strtoul(text, nullptr, 16));
+    if (next != buttons) AutosportLog("Test pad buttons=%04x", next);
+    return buttons = next;
+}
+DWORD WINAPI testPadGetState(DWORD user, XINPUT_STATE* state) {
+    if (user != 0 || !state) return stockXInputGetState(user, state);
+    static DWORD packet;
+    static WORD last = 0xffff;
+    const WORD buttons = testPadButtons();
+    if (buttons != last) { last = buttons; ++packet; }
+    *state = {};
+    state->dwPacketNumber = packet;
+    state->Gamepad.wButtons = buttons;
+    return ERROR_SUCCESS;
+}
+DWORD WINAPI testPadCapabilities(DWORD user, DWORD flags, XINPUT_CAPABILITIES* caps) {
+    if (user != 0 || !caps) return stockXInputGetCapabilities(user, flags, caps);
+    *caps = {};
+    caps->Type = XINPUT_DEVTYPE_GAMEPAD;
+    caps->SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
+    caps->Gamepad.wButtons = 0xf3ff;
+    return ERROR_SUCCESS;
+}
+// The game ignores input while its window is not the foreground one, and a test never takes the
+// desktop's focus. With the test pad only, these report the game's own window as foreground.
+using WindowQueryFn = HWND (WINAPI*)();
+WindowQueryFn stockForeground, stockActive, stockFocus;
+HWND ownWindow() {
+    static HWND found;
+    if (found && IsWindow(found)) return found;
+    EnumWindows([](HWND window, LPARAM) -> BOOL {
+        DWORD pid{};
+        GetWindowThreadProcessId(window, &pid);
+        if (pid != GetCurrentProcessId() || !IsWindowVisible(window) || GetWindow(window, GW_OWNER)) return TRUE;
+        found = window;
+        return FALSE;
+    }, 0);
+    return found;
+}
+HWND WINAPI testForeground() { HWND own = ownWindow(); return own ? own : stockForeground(); }
+HWND WINAPI testActive() { HWND own = ownWindow(); return own ? own : stockActive(); }
+HWND WINAPI testFocus() { HWND own = ownWindow(); return own ? own : stockFocus(); }
+
+void hookTestPad() {
+    static bool attempted;
+    if (attempted || !testPad || !adapterReady || !directory[0]) return;
+    attempted = true;
+    const bool windows = hookImport("user32.dll", "GetForegroundWindow", reinterpret_cast<void*>(&testForeground), reinterpret_cast<void**>(&stockForeground)) &&
+                         hookImport("user32.dll", "GetActiveWindow", reinterpret_cast<void*>(&testActive), reinterpret_cast<void**>(&stockActive)) &&
+                         hookImport("user32.dll", "GetFocus", reinterpret_cast<void*>(&testFocus), reinterpret_cast<void**>(&stockFocus));
+    AutosportLog("Test pad foreground report=%d", windows);
+    const bool state = hookImport("xinput1_3.dll", nullptr, reinterpret_cast<void*>(&testPadGetState),
+                                  reinterpret_cast<void**>(&stockXInputGetState), 2);
+    const bool caps = hookImport("xinput1_3.dll", nullptr, reinterpret_cast<void*>(&testPadCapabilities),
+                                 reinterpret_cast<void**>(&stockXInputGetCapabilities), 4);
+    AutosportLog("Test pad on controller 0 state=%d capabilities=%d", state, caps);
+}
 }
 
 extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVER_TYPE type, HMODULE software,
         UINT flags, const D3D_FEATURE_LEVEL* levels, UINT count, UINT sdk, ID3D11Device** device,
         D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context) {
     hookVideoLogging();
+    hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
     AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d",
                  hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession);

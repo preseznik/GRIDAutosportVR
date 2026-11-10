@@ -6,13 +6,20 @@ namespace GRIDAutosportVR;
 internal static class Program
 {
     private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | (--play-vr | --restore-play) --game-dir FOLDER | --self-test [OUTPUT]" +
-        " | --discover OUTPUT | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
+        " | --discover OUTPUT | --end-session --game-dir FOLDER | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
 
     [STAThread]
     private static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : null);
         if (args is ["--discover", var discovered]) return Discover(discovered);
+        if (args is ["--end-session", "--game-dir", var endGame])
+        {
+            // The launcher's End session from a command line: close the game running in that folder.
+            Console.WriteLine(VrPlaySession.EndSession(Path.TrimEndingDirectorySeparator(Path.GetFullPath(endGame)), TimeSpan.FromSeconds(15))
+                ? "Closed GRID Autosport." : "GRID Autosport is not running from that folder.");
+            return 0;
+        }
         if (args is ["--write-session", "--game-dir", var sessionGame, var sessionOut]) return WriteSession(sessionGame, null, sessionOut);
         if (args is ["--write-session", "--game-dir", var testGame, "--settings", var testSettings, var testOut]) return WriteSession(testGame, testSettings, testOut);
         if (args is ["--check-install" or "--check-uninstall", "--game", var game, "--error-log", var errorLog])

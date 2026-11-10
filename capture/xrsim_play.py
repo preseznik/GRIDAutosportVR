@@ -36,6 +36,9 @@ APPID = GAME / "steam_appid.txt"
 FLOW = GAME / "system" / "flow.bin"
 STOCK_FLOW = "b5f326eb2ad9ff1307c6bbf05ace2af99f21fcb9908704d66bd209882c30f20b"
 SESSIONS = Path(os.environ["LOCALAPPDATA"]) / "GRIDAutosportVR" / "sessions"
+# XINPUT_GAMEPAD wButtons for the harness's virtual gamepad ("pad" script steps).
+PAD_BUTTONS = {"UP": 0x1, "DOWN": 0x2, "LEFT": 0x4, "RIGHT": 0x8, "START": 0x10, "BACK": 0x20,
+               "LB": 0x100, "RB": 0x200, "A": 0x1000, "B": 0x2000, "X": 0x4000, "Y": 0x8000}
 UNFOCUSED = ["focus policy vdxr-layers", "focus frames 3", "focus norender on", "focus throttle 87"]
 
 
@@ -120,6 +123,8 @@ def run(args):
             # Launcher Practice / Race: the play session's own file through the attract flow.
             game_args += ["-benchmarkAttract", "GASVR_" + token + ".xml"]
     script = json.loads(Path(args.script).read_text(encoding="utf-8")) if args.script else []
+    if any(step.get("pad") for step in script):
+        game_args.append("-gasvrtestpad=1")
     report = dict(kind="xrsim-benchmark" if args.benchmark else "xrsim-normal-play", bridge=str(bridge), bridgeSha256=sha(dll), stockSha256=STOCK,
                   focusLoss=not args.no_focus_loss, keepActive=not args.no_keep_active, deactivateAt=args.deactivate_at, session=str(session), directory=str(folder), samples=[])
     def save():
@@ -199,6 +204,14 @@ def run(args):
                         windll.user32.PostMessageW(window, 0x0100, vk, 1)        # WM_KEYDOWN
                         time.sleep(.1)
                         windll.user32.PostMessageW(window, 0x0101, vk, 0xC0000001)  # WM_KEYUP
+                if step.get("pad"):
+                    # Virtual gamepad 0 (-gasvrtestpad=1): press the named buttons, then release.
+                    buttons = 0
+                    for name in step["pad"].split("+"):
+                        buttons |= PAD_BUTTONS[name]
+                    (session / "pad.txt").write_text(f"{buttons:04x}", encoding="ascii")
+                    time.sleep(step.get("hold", .25))
+                    (session / "pad.txt").write_text("0000", encoding="ascii")
                 if step.get("shot"):
                     time.sleep(.4)
                     send(sim, [f"capture tag {step['shot']}", "capture next 1"])

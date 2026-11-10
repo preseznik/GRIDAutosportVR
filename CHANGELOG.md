@@ -13,4 +13,6 @@ First packaged build of GRID Autosport VR for the Steam game (AVX renderer, buil
 - Launch VR adds the VR files for the session only and restores the original game files when the game exits.
 - Launch mode Practice or Race (Launcher → Session): pick an installed car and track, 1–20 laps and, for Race, 1–11 AI opponents (same car, same discipline or mixed). Launch VR goes straight to the grid and you drive; Normal keeps the game's own menus.
 
-Known limits: menus are shown flat. Practice and Race start from Launch VR only, in day and dry conditions, and you start on pole. Controller/wheel recenter buttons are not available yet.
+- End session (beside Launch VR while a session runs) closes the game and restores the original files.
+
+Known limits: menus are shown flat. Practice and Race start from Launch VR only, in day and dry conditions, and you start on pole; they have no pause menu, so stop them with End session. Controller/wheel recenter buttons are not available yet.

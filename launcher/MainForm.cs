@@ -27,7 +27,8 @@ internal sealed class MainForm : LauncherForm
     private bool capturingRecenter;
     private readonly Button desktop = Button("Launch", "LaunchDesktop"), vr = Button("Launch VR", "LaunchVR"),
         save = Button("Save settings", "SaveSettings"), recover = Button("Restore original files", "RestoreOriginalFiles"),
-        logs = Button("Open logs", "OpenLogs");
+        logs = Button("Open logs", "OpenLogs"), end = Button("End session", "EndSession");
+    private bool ending;
     // Launcher Practice / Race (RaceSession): the event the next Launch VR starts.
     private sealed record Option(string Id, string Label) { public override string ToString() => Label; }
     private readonly ComboBox launchMode = Choice("LaunchMode"), car = Choice("SessionCar"), track = Choice("SessionTrack"), opponentCars = Choice("OpponentCars");
@@ -81,7 +82,7 @@ internal sealed class MainForm : LauncherForm
         Field(launcher, "Opponent cars", opponentCars);
         sessionSummary.Name = "SessionSummary"; sessionSummary.Tag = "hint";
         launcher.Controls.Add(sessionSummary);
-        launcher.Controls.Add(TextLabel("Normal opens the game's own menus, where you choose cars and events. Practice starts the selected car and track on your own; Race adds 1–11 computer-controlled opponents. Practice and Race apply to Launch VR; the desktop Launch always opens the menus."));
+        launcher.Controls.Add(TextLabel("Normal opens the game's own menus, where you choose cars and events. Practice starts the selected car and track on your own; Race adds 1–11 computer-controlled opponents. Practice and Race apply to Launch VR; the desktop Launch always opens the menus. They run on the game's benchmark mode, which has no pause menu: choose End session (beside Launch VR) to stop."));
         launcher.Controls.Add(TextLabel("Launch VR starts GRID Autosport through Steam with the VR renderer. The startup videos, loading screens and menus appear on a screen in front of your seat; races are in stereo with head tracking. Finish with Quit in the game: the launcher then restores the original game files. After an interrupted session, choose Restore original files."));
         launcher = launcherColumns.Second;
         Section(launcher, "Before you launch");
@@ -132,7 +133,8 @@ internal sealed class MainForm : LauncherForm
         settings.Controls.Add(TextLabel("Reset launcher choices. Save settings or launch to keep the reset. Game files and settings are unchanged."));
 
         notice.Margin = new Padding(0, 10, 0, 8); layout.Controls.Add(notice);
-        layout.Controls.Add(new LauncherFooter(desktop, vr, save, recover, logs));
+        end.Visible = false;
+        layout.Controls.Add(new LauncherFooter(desktop, vr, save, recover, logs, end));
         Controls.Add(layout);
         void FitStatusLabels()
         {
@@ -146,6 +148,7 @@ internal sealed class MainForm : LauncherForm
         save.Click += (_, _) => SaveChoices(true);
         recover.Click += async (_, _) => await RecoverAsync();
         logs.Click += (_, _) => OpenLogs();
+        end.Click += async (_, _) => await EndSessionAsync();
         browse.Click += (_, _) => ChooseGame();
         query.Click += async (_, _) => await RunProbeAsync(false);
         pattern.Click += async (_, _) => await RunProbeAsync(true);
@@ -341,6 +344,8 @@ internal sealed class MainForm : LauncherForm
         vr.AccessibleDescription = problem ?? "Start GRID Autosport in VR through Steam.";
         save.Enabled = idle && Current != saved;
         recover.Enabled = idle && playLease;
+        end.Visible = supervising;
+        end.Enabled = supervising && !ending;
         browse.Enabled = idle;
         query.Enabled = pattern.Enabled = refreshHeadset.Enabled = idle && File.Exists(probePath);
         defaults.Enabled = idle;
@@ -351,7 +356,9 @@ internal sealed class MainForm : LauncherForm
         sessionSummary.Text = RaceSession.Summary(Current, catalog) + (mode == "Race" && opponentCars.SelectedItem is Option { Id: "class" } && car.SelectedItem is CarItem c
             ? $" Discipline: {c.Class}{(catalog.Cars.Any(o => o.Id != c.Id && o.Class == c.Class && c.Class != "Other") ? "" : "; no other installed car shares it, so opponents use your car")}." : "");
         recenter.Enabled = !testing && !supervising && !recovering;
-        state.Text = supervising ? "VR session in progress. Quit the game normally; the launcher then restores the original game files."
+        state.Text = supervising ? (Current.LaunchMode == "Normal"
+                ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
+                : $"{Current.LaunchMode} in progress. It has no pause menu: choose End session to stop; the launcher then restores the original game files.")
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
             : playLease ? "A VR session is active or was interrupted. After the game exits, choose Restore original files."
             : pending ? "A VR benchmark session is pending. Restore it with bridge/run.py --restore before launching."
@@ -411,6 +418,27 @@ internal sealed class MainForm : LauncherForm
         {
             supervising = false;
             if (!IsDisposed) RefreshInstallation();
+        }
+    }
+
+    private async Task EndSessionAsync()
+    {
+        if (!supervising || ending || gameFolder is null) return;
+        ending = true;
+        EnableActions();
+        try
+        {
+            notice.Text = "Closing GRID Autosport…";
+            var folder = gameFolder;
+            var closed = await Task.Run(() => VrPlaySession.EndSession(folder, TimeSpan.FromSeconds(15)));
+            if (!IsDisposed && supervising)
+                notice.Text = closed ? "GRID Autosport closed. Restoring the original game files…" : "GRID Autosport is not running yet; the session ends when Steam's start times out.";
+        }
+        catch (Exception error) { if (!IsDisposed) notice.Text = error.Message; }
+        finally
+        {
+            ending = false;
+            if (!IsDisposed) EnableActions();
         }
     }
 
@@ -535,6 +563,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(vr, "Check the headset, add the VR files and start the game through Steam. The files are removed when the game exits.");
         tips.SetToolTip(save, "Keep your launcher choices without launching.");
         tips.SetToolTip(recover, "Remove the VR files left by an interrupted session and restore the original game executable.");
+        tips.SetToolTip(end, "Close this session's game (as its close button does) and restore the original game files. Practice and Race have no pause menu, so use this to stop early.");
         tips.SetToolTip(logs, "Open the folder with VR session and headset-check logs to attach to a report.");
         tips.SetToolTip(refreshHeadset, "Read the connected headset''s recommended resolution through the 32-bit OpenXR runtime.");
         tips.SetToolTip(launchMode, "Normal opens the game's menus. Practice starts the selected car and track on your own. Race adds computer-controlled opponents. Practice and Race apply to Launch VR.");

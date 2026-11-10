@@ -86,6 +86,40 @@ internal static partial class VrPlaySession
                 }
     }
 
+    // End session: ask the running game in this folder to close (as its window's close button
+    // does), then end the process if it has not exited within the grace period. The session
+    // supervisor sees the exit and restores the original files. Returns false if none was running.
+    public static bool EndSession(string folder, TimeSpan grace)
+    {
+        var games = new List<Process>();
+        foreach (var name in new[] { "GRIDAutosport_avx", "GRIDAutosport" })
+            foreach (var entry in Process.GetProcessesByName(name))
+            {
+                try
+                {
+                    if (!entry.HasExited && string.Equals(Path.GetDirectoryName(entry.MainModule?.FileName), folder, StringComparison.OrdinalIgnoreCase))
+                    {
+                        games.Add(entry);
+                        continue;
+                    }
+                }
+                catch (Exception error) when (error is InvalidOperationException or Win32Exception) { }
+                entry.Dispose();
+            }
+        try
+        {
+            foreach (var game in games) game.CloseMainWindow();
+            var deadline = DateTime.UtcNow + grace;
+            foreach (var game in games)
+            {
+                var left = deadline - DateTime.UtcNow;
+                if (!game.WaitForExit(left > TimeSpan.Zero ? left : TimeSpan.Zero)) game.Kill();
+            }
+            return games.Count > 0;
+        }
+        finally { foreach (var game in games) game.Dispose(); }
+    }
+
     private static string CheckedFolder(string? folder)
     {
         if (!Installation.GameExists(folder)) throw new IOException("Select the registered Steam installation of GRID Autosport.");

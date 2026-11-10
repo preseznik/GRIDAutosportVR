@@ -213,6 +213,7 @@ internal static class SelfTests
         var args = VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true);
         Check(args[^2..].SequenceEqual(["-benchmarkAttract", "GASVR_" + id + ".xml"]) && args.Contains("-gasvrplay=" + id));
         Check(!VrPlaySession.SteamArguments(id, new Choices(), null).Contains("-benchmarkAttract"));
+        Check(!VrPlaySession.EndSession(game, TimeSpan.Zero)); // No game runs from the fake folder.
 
         // The flow patch: only the pinned stock file is accepted.
         Check(Throws<IOException>(() => PracticeFlow.Guarded(new byte[PracticeFlow.Length])));
@@ -268,6 +269,7 @@ internal static class SelfTests
         foreach (var name in new[] { "LaunchDesktop", "LaunchVR", "SaveSettings", "RestoreOriginalFiles", "OpenLogs", "HelpAbout", "SessionStatus", "SessionNotice" })
             Check(form.Controls.Find(name, true).Length == 1, name);
         Check(!Find<Button>(form, "LaunchVR").Enabled && !Find<Button>(form, "LaunchDesktop").Enabled && !Find<Button>(form, "SaveSettings").Enabled);
+        Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
         Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "Keyboard shortcuts", "Recenter alignment", "Paths and runtime", "Headset check", "Launcher preferences"]));

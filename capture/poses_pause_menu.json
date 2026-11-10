@@ -1,6 +1,7 @@
 [
-  {"at": 8, "cmds": ["head pose 0 1.6 0 0 0 0"], "shot": "p08"},
-  {"at": 10, "key": "ESC"},
-  {"at": 13, "shot": "p13"},
-  {"at": 20, "shot": "p20"}
+  {"at": 8, "cmds": ["head pose 0 1.6 0 0 0 0"]},
+  {"at": 30, "pad": "START", "hold": 0.5},
+  {"at": 33, "shot": "p33"},
+  {"at": 36, "pad": "START", "hold": 0.5},
+  {"at": 39, "shot": "p39"}
 ]

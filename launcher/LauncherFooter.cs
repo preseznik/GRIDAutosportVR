@@ -6,12 +6,15 @@ namespace GRIDAutosportVR;
 internal sealed class LauncherFooter : Panel
 {
     private readonly Button launch, vr, save, recover, logs;
+    private readonly Button? end;
     private bool arranging;
-    public LauncherFooter(Button desktop, Button headset, Button settings, Button restore, Button openLogs)
+    // end (End session) is shown beside Launch VR only while it is Visible.
+    public LauncherFooter(Button desktop, Button headset, Button settings, Button restore, Button openLogs, Button? endSession = null)
     {
-        launch = desktop; vr = headset; save = settings; recover = restore; logs = openLogs;
+        launch = desktop; vr = headset; save = settings; recover = restore; logs = openLogs; end = endSession;
         Dock = DockStyle.Fill; Margin = new Padding(0, 12, 0, 0);
         Controls.AddRange([launch, vr, save, recover, logs]);
+        if (end is not null) { Controls.Add(end); end.VisibleChanged += (_, _) => PerformLayout(); }
     }
     protected override void OnLayout(LayoutEventArgs e)
     {
@@ -23,8 +26,10 @@ internal sealed class LauncherFooter : Panel
             var gap = (int)Math.Round(8 * DeviceDpi / 96.0);
             foreach (var button in Controls.OfType<Button>()) button.Size = button.GetPreferredSize(Size.Empty);
             var row = Controls.OfType<Button>().Max(b => b.Height);
-            var compact = Width < launch.Width + vr.Width + save.Width + recover.Width + logs.Width + gap * 5;
+            var ending = end is { Visible: true } ? end.Width + gap : 0;
+            var compact = Width < launch.Width + vr.Width + ending + save.Width + recover.Width + logs.Width + gap * 5;
             launch.Location = Point.Empty; vr.Location = new Point(launch.Right + gap, 0);
+            if (end is not null) end.Location = new Point(vr.Right + gap, 0);
             logs.Location = new Point(Width - logs.Width, compact ? row + gap : 0);
             recover.Location = new Point(logs.Left - gap - recover.Width, logs.Top);
             save.Location = new Point(compact ? Width - save.Width : recover.Left - gap - save.Width, 0);
