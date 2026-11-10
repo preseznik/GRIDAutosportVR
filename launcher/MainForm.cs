@@ -1,0 +1,392 @@
+using System.Diagnostics;
+
+namespace GRIDAutosportVR;
+
+// GRID2VR's launcher layout (header, status, tabs of collapsible sections, notice, footer) with
+// the Autosport actions: Steam game folder, normal VR play through the bridge, runtime checks.
+internal sealed class MainForm : LauncherForm
+{
+    private const string HudHelp = "Off keeps the race HUD one metre ahead of your seated position. On moves it with your head, as the game's own HUD does. Loading screens stay in place in both modes. Applies to the next VR launch.";
+    private string? gameFolder;
+    private readonly string? probePath, rendererPath;
+    private readonly SelectableStatusText state = new() { Name = "SessionStatus", AccessibleName = "Session status" },
+        notice = new() { Name = "SessionNotice", AccessibleName = "Session message" };
+    private readonly TextBox gamePath = new() { Name = "GameFolder", ReadOnly = true, Dock = DockStyle.Fill, AccessibleName = "Steam game folder" };
+    private readonly Button browse = Button("Choose game folder…", "BrowseGame"), query = Button("Check runtime", "CheckRuntime"),
+        pattern = Button("Show eye markers", "EyeMarkers"), defaults = Button("Restore defaults", "LauncherDefaults");
+    private readonly CheckBox hudFollow = new() { Name = "HudFollowView", AccessibleName = "HUD follows view", AccessibleDescription = HudHelp, Text = "On", AutoSize = true };
+    private readonly AppearanceSwitch modernInterface = new();
+    private readonly Button desktop = Button("Launch", "LaunchDesktop"), vr = Button("Launch VR", "LaunchVR"),
+        save = Button("Save settings", "SaveSettings"), recover = Button("Restore original files", "RestoreOriginalFiles"),
+        logs = Button("Open logs", "OpenLogs");
+    private readonly ToolTip tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 15000, ShowAlways = true };
+    private readonly List<SectionHeader> sectionHeaders = [];
+    private LauncherWindow window = new();
+    private Choices saved = new();
+    private bool windowLoaded, testing, supervising, recovering;
+    private string? recoveryError;
+
+    internal ModernTabs Tabs { get; }
+    internal IReadOnlyList<SectionHeader> SectionHeaders => sectionHeaders;
+    internal LauncherWindow WindowPreferences => window;
+
+    public MainForm(string? folder, string? probe, string? renderer)
+    {
+        gameFolder = folder; probePath = probe; rendererPath = renderer;
+        Text = Branding.Title + " — " + BuildInfo.Channel; Font = new Font("Segoe UI", 10);
+        KeyPreview = true; AutoScaleMode = AutoScaleMode.Dpi; MinimumSize = new Size(560, 540);
+        ClientSize = new Size(900, 720); StartPosition = FormStartPosition.CenterScreen;
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 5 };
+        layout.ColumnStyles.Add(new(SizeType.Percent, 100));
+        foreach (var size in new[] { SizeType.AutoSize, SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize, SizeType.AutoSize })
+            layout.RowStyles.Add(new(size, size == SizeType.Percent ? 100 : 0));
+        var title = TextLabel(Branding.Title); title.Font = new Font(Font.FontFamily, 20, FontStyle.Bold);
+        var channel = TextLabel(BuildInfo.Channel + " " + BuildInfo.Version); channel.Name = "Channel"; channel.Tag = "hint"; channel.Margin = new Padding(8, 0, 8, 0);
+        var help = new Button { Text = "?", Name = "HelpAbout", AccessibleName = "Help / About", Size = new Size(36, 36), Anchor = AnchorStyles.Right };
+        help.Click += (_, _) => ShowAbout();
+        HelpRequested += (_, e) => { e.Handled = true; ShowAbout(); };
+        layout.Controls.Add(new LauncherHeader(Branding.Logo(64), title, channel, help));
+        state.Margin = new Padding(0, 8, 0, 16); layout.Controls.Add(state);
+        Tabs = new ModernTabs { Name = "LauncherTabs", Dock = DockStyle.Fill };
+        layout.Controls.Add(Tabs);
+
+        var launcherColumns = Columns(Page(Tabs, "Launcher")); var launcher = launcherColumns.First;
+        Section(launcher, "Session");
+        Field(launcher, "Launch mode", TextLabel("Normal — the game's own menus"));
+        launcher.Controls.Add(TextLabel("Launch VR starts GRID Autosport through Steam with the VR renderer. The startup videos and menus appear on a screen in front of your seat; races are in stereo with head tracking. Choose cars and events in the game's menus."));
+        launcher.Controls.Add(TextLabel("Finish with Quit in the game: the launcher then restores the original game files. After an interrupted session, choose Restore original files."));
+        launcher = launcherColumns.Second;
+        Section(launcher, "Before you launch");
+        launcher.Controls.Add(TextLabel("Connect your headset to its 32-bit OpenXR runtime, for example Virtual Desktop, before Launch VR. The launcher checks the runtime first and stops if no headset answers."));
+        launcher.Controls.Add(TextLabel("Launch starts the unmodified game on the desktop through Steam."));
+
+        var graphics = Columns(Page(Tabs, "Graphics")).First;
+        Section(graphics, "VR HUD");
+        Field(graphics, "Follow view", hudFollow);
+        graphics.Controls.Add(TextLabel(HudHelp));
+
+        var settingColumns = Columns(Page(Tabs, "Settings")); var settings = settingColumns.First;
+        Section(settings, "Paths and runtime");
+        Field(settings, "Game folder", gamePath);
+        settings.Controls.Add(browse);
+        settings.Controls.Add(TextLabel("Uses your Steam installation of GRID Autosport (build with GRIDAutosport_avx.exe). The VR files are added only for a VR session and removed when it ends."));
+        Section(settings, "Headset check");
+        settings.Controls.Add(TextLabel("Check the 32-bit OpenXR runtime, or show a marker in each eye for up to 20 seconds. Connect your headset first."));
+        var probeActions = new FlowLayoutPanel { Name = "HeadsetCheckActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
+        probeActions.Controls.AddRange([query, pattern]);
+        settings.Controls.Add(probeActions);
+        if (probePath is null) settings.Controls.Add(TextLabel(@"Place AutosportXRProbe.exe in this package's probe folder to enable these checks."));
+        settings = settingColumns.Second;
+        Section(settings, "Launcher preferences");
+        Field(settings, "Modern interface", modernInterface);
+        settings.Controls.Add(TextLabel("Preview the red-accented Modern interface, or switch off for Classic. Both follow Windows light/dark and high-contrast settings. Save settings or launch to keep your choice."));
+        settings.Controls.Add(defaults);
+        settings.Controls.Add(TextLabel("Reset launcher choices. Save settings or launch to keep the reset. Game files and settings are unchanged."));
+
+        notice.Margin = new Padding(0, 10, 0, 8); layout.Controls.Add(notice);
+        layout.Controls.Add(new LauncherFooter(desktop, vr, save, recover, logs));
+        Controls.Add(layout);
+        void FitStatusLabels()
+        {
+            var width = Math.Max(1, layout.ClientSize.Width - layout.Padding.Horizontal);
+            state.FitWidth(width); notice.FitWidth(width);
+        }
+        layout.SizeChanged += (_, _) => FitStatusLabels(); FitStatusLabels();
+
+        desktop.Click += (_, _) => RunDesktop();
+        vr.Click += async (_, _) => await RunVrAsync();
+        save.Click += (_, _) => SaveChoices(true);
+        recover.Click += async (_, _) => await RecoverAsync();
+        logs.Click += (_, _) => OpenLogs();
+        browse.Click += (_, _) => ChooseGame();
+        query.Click += async (_, _) => await RunProbeAsync(false);
+        pattern.Click += async (_, _) => await RunProbeAsync(true);
+        defaults.Click += (_, _) => { ApplyChoices(new Choices()); notice.Text = "Launcher defaults restored. Save settings or launch to keep them."; };
+        hudFollow.CheckedChanged += (_, _) => ChoiceEdited();
+        modernInterface.CheckedChanged += (_, _) =>
+        {
+            LauncherAppearance.Modern = modernInterface.Checked;
+            LauncherAppearance.Apply(this);
+            ChoiceEdited();
+        };
+        ConfigureTooltips(help);
+        LoadChoices();
+        RefreshInstallation();
+    }
+
+    private Choices Current => new(hudFollow.Checked, modernInterface.Checked);
+
+    private void LoadChoices()
+    {
+        try { saved = LauncherSettings.Load(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            saved = new();
+            notice.Text = "Could not read the launcher settings; defaults are shown. " + error.Message;
+        }
+        ApplyChoices(saved);
+    }
+
+    private void ApplyChoices(Choices choices)
+    {
+        hudFollow.Checked = choices.HudFollowView;
+        modernInterface.Checked = choices.ModernInterface;
+        LauncherAppearance.Modern = choices.ModernInterface;
+        EnableActions();
+    }
+
+    private void ChoiceEdited()
+    {
+        if (Current != saved) notice.Text = "Unsaved changes. Save settings or launch to keep them.";
+        EnableActions();
+    }
+
+    private bool SaveChoices(bool announce)
+    {
+        try
+        {
+            LauncherSettings.Save(Current);
+            saved = Current;
+            if (announce) notice.Text = "Settings saved for the next launch.";
+            EnableActions();
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            notice.Text = "Could not save the launcher settings. " + error.Message;
+            return false;
+        }
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        RestoreWindow();
+        base.OnLoad(e);
+    }
+
+    private void RestoreWindow()
+    {
+        window = LauncherSettings.LoadWindow();
+        var work = Screen.FromControl(this).WorkingArea;
+        MinimumSize = new Size(Math.Min(LauncherAppearance.Px(this, 560), work.Width), Math.Min(LauncherAppearance.Px(this, 540), work.Height));
+        var available = new Size(work.Width - (Width - ClientSize.Width), work.Height - (Height - ClientSize.Height));
+        ClientSize = window.ClientSizeAtDpi(DeviceDpi, available);
+        if (StartPosition != FormStartPosition.Manual) Location = new Point(work.Left + (work.Width - Width) / 2, work.Top + (work.Height - Height) / 2);
+        var collapsed = window.CollapsedSections;
+        window = LauncherWindow.FromClientSize(ClientSize, DeviceDpi) with { Maximized = window.Maximized, CollapsedSections = collapsed };
+        ApplyCollapsedSections(collapsed);
+        if (window.Maximized) WindowState = FormWindowState.Maximized;
+        windowLoaded = true;
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (testing && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            notice.Text = "Waiting for the OpenXR check to finish before closing.";
+            return;
+        }
+        if (windowLoaded)
+        {
+            var maximized = WindowState == FormWindowState.Maximized;
+            var size = maximized || WindowState == FormWindowState.Minimized ? RestoreBounds.Size - (Size - ClientSize) : ClientSize;
+            window = LauncherWindow.FromClientSize(size, DeviceDpi) with { Maximized = maximized, CollapsedSections = window.CollapsedSections };
+            try { LauncherSettings.SaveWindow(window); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+        base.OnFormClosing(e);
+    }
+
+    internal void ApplyCollapsedSections(string? collapsedTitles)
+    {
+        var collapsed = (window with { CollapsedSections = collapsedTitles }).Collapsed();
+        foreach (var header in sectionHeaders) header.Collapsed = collapsed.Contains(header.Title);
+    }
+
+    private void EnableActions()
+    {
+        gamePath.Text = gameFolder ?? "";
+        var idle = !testing && !supervising && !recovering;
+        var valid = Installation.GameExists(gameFolder);
+        var pending = Installation.SessionPending(gameFolder);
+        var playLease = valid && File.Exists(Path.Combine(gameFolder!, Installation.PlayLease));
+        desktop.Enabled = idle && valid && recoveryError is null && !pending;
+        var problem = recoveryError ?? Installation.VrLaunchProblem(gameFolder, probePath, rendererPath);
+        vr.Enabled = idle && problem is null;
+        vr.AccessibleDescription = problem ?? "Start GRID Autosport in VR through Steam.";
+        save.Enabled = idle && Current != saved;
+        recover.Enabled = idle && playLease;
+        browse.Enabled = idle;
+        query.Enabled = pattern.Enabled = idle && File.Exists(probePath);
+        defaults.Enabled = idle;
+        state.Text = supervising ? "VR session in progress. Quit the game normally; the launcher then restores the original game files."
+            : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
+            : playLease ? "A VR session is active or was interrupted. After the game exits, choose Restore original files."
+            : pending ? "A VR benchmark session is pending. Restore it with bridge/run.py --restore before launching."
+            : !valid ? "Choose your GRID Autosport Steam folder in Settings → Paths and runtime."
+            : problem is not null ? problem
+            : "Ready. Connect your headset, then choose Launch VR.";
+    }
+
+    private void RefreshInstallation()
+    {
+        recoveryError = null;
+        var recovered = false;
+        if (Installation.GameExists(gameFolder))
+        {
+            try { recovered = VrPlaySession.Recover(gameFolder); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { recoveryError = error.Message; }
+        }
+        EnableActions();
+        if (recovered) notice.Text = "Restored the game files from the interrupted VR session.";
+    }
+
+    private void ChooseGame()
+    {
+        using var dialog = new FolderBrowserDialog { Description = "Select the GRID Autosport folder in your Steam library.", ShowNewFolderButton = false, UseDescriptionForTitle = true };
+        if (gameFolder is not null) dialog.InitialDirectory = gameFolder;
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (!Installation.GameExists(dialog.SelectedPath))
+        {
+            notice.Text = "This folder does not match the GRID Autosport Steam manifest.";
+            return;
+        }
+        gameFolder = dialog.SelectedPath;
+        notice.Text = "Game folder selected.";
+        RefreshInstallation();
+    }
+
+    private async Task RunVrAsync()
+    {
+        if (supervising || testing || gameFolder is null || !SaveChoices(false)) return;
+        supervising = true;
+        EnableActions();
+        try
+        {
+            notice.Text = "Checking the headset, then Steam opens the game. Put on your headset.";
+            using var worker = Process.Start(Installation.VrStartInfo(gameFolder)) ?? throw new IOException("The VR session supervisor did not start.");
+            var errors = worker.StandardError.ReadToEndAsync();
+            await worker.WaitForExitAsync();
+            var detail = (await errors).Trim();
+            if (!IsDisposed)
+                notice.Text = worker.ExitCode == 0 ? "VR session ended. Original game files restored."
+                    : detail.Length > 0 ? detail : "VR session exited with code " + worker.ExitCode + ".";
+        }
+        catch (Exception error) { if (!IsDisposed) notice.Text = error.Message; }
+        finally
+        {
+            supervising = false;
+            if (!IsDisposed) RefreshInstallation();
+        }
+    }
+
+    private void RunDesktop()
+    {
+        if (!SaveChoices(false)) return;
+        try
+        {
+            Process.Start(Installation.DesktopStartInfo(gameFolder))?.Dispose();
+            notice.Text = "Launch request sent to Steam.";
+        }
+        catch (Exception error) { notice.Text = error.Message; }
+        EnableActions();
+    }
+
+    private async Task RecoverAsync()
+    {
+        if (gameFolder is null) return;
+        recovering = true;
+        EnableActions();
+        try
+        {
+            var folder = gameFolder;
+            var restored = await Task.Run(() => VrPlaySession.Recover(folder));
+            recoveryError = null;
+            notice.Text = restored ? "Original game files restored." : "No VR session needed restoring.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            recoveryError = error.Message;
+            notice.Text = error.Message;
+        }
+        finally
+        {
+            recovering = false;
+            EnableActions();
+        }
+    }
+
+    private void OpenLogs()
+    {
+        try
+        {
+            Directory.CreateDirectory(Installation.LogDirectory);
+            Process.Start(new ProcessStartInfo(Installation.LogDirectory) { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception error) { notice.Text = error.Message; }
+    }
+
+    private async Task RunProbeAsync(bool stereo)
+    {
+        if (testing) return;
+        testing = true;
+        EnableActions();
+        try
+        {
+            Directory.CreateDirectory(Installation.LogDirectory);
+            var logFile = Path.Combine(Installation.LogDirectory, (stereo ? "eye-test-" : "openxr-") + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".log");
+            notice.Text = stereo ? "Running the headset eye test…" : "Checking the 32-bit OpenXR runtime…";
+            using var worker = Process.Start(Installation.ProbeStartInfo(probePath, stereo, logFile)) ?? throw new IOException("The OpenXR probe did not start.");
+            await worker.WaitForExitAsync();
+            notice.Text = (Installation.ProbeError(worker.ExitCode) ?? (stereo ? "The probe showed its test pattern." : "Runtime check passed.")) +
+                (File.Exists(logFile) ? Environment.NewLine + logFile : " The probe did not create its log.");
+        }
+        catch (Exception error) { notice.Text = error.Message; }
+        finally
+        {
+            testing = false;
+            EnableActions();
+        }
+    }
+
+    private void ShowAbout()
+    {
+        MessageBox.Show(this,
+            $"{Branding.Title} {BuildInfo.Version} ({BuildInfo.Channel})\nBuild: {BuildInfo.Built}, {BuildInfo.Revision}\n\n" +
+            "Connect your headset, choose Launch VR, and finish with Quit in the game so the launcher can restore the original files.\n\n" +
+            Branding.Repository,
+            "Help / About", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void ConfigureTooltips(Control help)
+    {
+        tips.SetToolTip(help, "Help / About. You can also press F1.");
+        tips.SetToolTip(desktop, "Start the unmodified game on the desktop through Steam.");
+        tips.SetToolTip(vr, "Check the headset, add the VR files and start the game through Steam. The files are removed when the game exits.");
+        tips.SetToolTip(save, "Keep your launcher choices without launching.");
+        tips.SetToolTip(recover, "Remove the VR files left by an interrupted session and restore the original game executable.");
+        tips.SetToolTip(logs, "Open the folder with VR session and headset-check logs to attach to a report.");
+    }
+
+    private static Button Button(string text, string name) => new() { Text = text, Name = name, AutoSize = true, Padding = new Padding(5, 2, 5, 2) };
+    private static Label TextLabel(string text) => new() { Text = text, AutoSize = true, UseMnemonic = false, Margin = new Padding(0, 4, 0, 10) };
+    private static VerticalStack Page(TabControl tabs, string title)
+    {
+        var page = new TabPage(title) { Padding = new Padding(16), AutoScroll = true, BackColor = SystemColors.Control };
+        var content = new VerticalStack { Name = title + "Content" };
+        page.Controls.Add(content); tabs.TabPages.Add(page);
+        return content;
+    }
+    private static ResponsiveColumns Columns(Control parent)
+    {
+        var columns = new ResponsiveColumns(); parent.Controls.Add(columns); return columns;
+    }
+    private void Section(Control content, string title)
+    {
+        var header = new SectionHeader(title) { Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 12, 0, 8) };
+        header.CollapsedChanged += (_, _) => window = window.WithCollapsed(sectionHeaders.Where(h => h.Collapsed).Select(h => h.Title).Distinct());
+        sectionHeaders.Add(header); content.Controls.Add(header);
+    }
+    private static void Field(Control content, string title, Control control) => content.Controls.Add(new SettingRow(title, control));
+}

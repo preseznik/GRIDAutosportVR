@@ -3,15 +3,18 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <RootNamespace>GRIDAutosportVR</RootNamespace>
-    <StartupObject>GRIDAutosportVR.Program</StartupObject>
-    <OptionExplicit>On</OptionExplicit>
-    <OptionStrict>On</OptionStrict>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>GRIDAutosportVR</RootNamespace>
+    <AssemblyName>GRIDAutosportVR.Launcher</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets\logo.ico</ApplicationIcon>
-    <AssemblyName>GRIDAutosportVR.Launcher</AssemblyName>
-    <Version>0.0.0-prototype</Version>
+    <Version>0.1.0</Version>
+    <ReleaseChannel Condition="'$(ReleaseChannel)' == ''">Experimental</ReleaseChannel>
+    <BuildUtc Condition="'$(BuildUtc)' == ''">Development build</BuildUtc>
+    <BuildRevision Condition="'$(BuildRevision)' == ''">local</BuildRevision>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -19,9 +22,9 @@
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
-    <Import Include="System.IO" />
-    <Import Include="System.Diagnostics" />
-    <EmbeddedResource Include="assets\logo.png" LogicalName="GRIDAutosportVR.logo.png" />
+    <AssemblyMetadata Include="ReleaseChannel" Value="$(ReleaseChannel)" />
+    <AssemblyMetadata Include="BuildUtc" Value="$(BuildUtc)" />
+    <AssemblyMetadata Include="BuildRevision" Value="$(BuildRevision)" />
     <EmbeddedResource Include="assets\logo-display.png" LogicalName="GRIDAutosportVR.logo-display.png" />
     <EmbeddedResource Include="assets\logo.ico" LogicalName="GRIDAutosportVR.logo.ico" />
     <Content Include="..\artifacts\probe\AutosportXRProbe.exe" Link="probe\AutosportXRProbe.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
