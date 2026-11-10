@@ -16,6 +16,10 @@ internal sealed class MainForm : LauncherForm
         pattern = Button("Show eye markers", "EyeMarkers"), defaults = Button("Restore defaults", "LauncherDefaults");
     private readonly CheckBox hudFollow = new() { Name = "HudFollowView", AccessibleName = "HUD follows view", AccessibleDescription = HudHelp, Text = "On", AutoSize = true };
     private readonly AppearanceSwitch modernInterface = new();
+    private readonly RenderScaleSlider renderScale = new() { Name = "VrRenderScale", AccessibleName = "VR render scale" };
+    private readonly Button refreshHeadset = Button("Refresh headset", "RefreshHeadset");
+    private readonly Label vrSummary = TextLabel("");
+    private HeadsetResolution? headsetResolution = HeadsetResolution.Load();
     private readonly Button desktop = Button("Launch", "LaunchDesktop"), vr = Button("Launch VR", "LaunchVR"),
         save = Button("Save settings", "SaveSettings"), recover = Button("Restore original files", "RestoreOriginalFiles"),
         logs = Button("Open logs", "OpenLogs");
@@ -61,7 +65,14 @@ internal sealed class MainForm : LauncherForm
         launcher.Controls.Add(TextLabel("Connect your headset to its 32-bit OpenXR runtime, for example Virtual Desktop, before Launch VR. The launcher checks the runtime first and stops if no headset answers."));
         launcher.Controls.Add(TextLabel("Launch starts the unmodified game on the desktop through Steam."));
 
-        var graphics = Columns(Page(Tabs, "Graphics")).First;
+        var graphicsColumns = Columns(Page(Tabs, "Graphics")); var graphics = graphicsColumns.First;
+        Section(graphics, "VR rendering");
+        Field(graphics, "VR render scale", renderScale);
+        graphics.Controls.Add(refreshHeadset);
+        vrSummary.Name = "VrResolutionSummary"; vrSummary.Tag = "hint";
+        Field(graphics, "Next VR launch", vrSummary);
+        graphics.Controls.Add(TextLabel("100% renders each eye at the connected headset's recommended resolution. Lower values trade detail for performance; higher values sharpen the image and use more GPU time and memory. Headset output stays at 100%. The launcher reads the headset's resolution before every VR launch."));
+        graphics = graphicsColumns.Second;
         Section(graphics, "VR HUD");
         Field(graphics, "Follow view", hudFollow);
         graphics.Controls.Add(TextLabel(HudHelp));
@@ -104,6 +115,8 @@ internal sealed class MainForm : LauncherForm
         pattern.Click += async (_, _) => await RunProbeAsync(true);
         defaults.Click += (_, _) => { ApplyChoices(new Choices()); notice.Text = "Launcher defaults restored. Save settings or launch to keep them."; };
         hudFollow.CheckedChanged += (_, _) => ChoiceEdited();
+        renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); ChoiceEdited(); };
+        refreshHeadset.Click += async (_, _) => await RunProbeAsync(false);
         modernInterface.CheckedChanged += (_, _) =>
         {
             LauncherAppearance.Modern = modernInterface.Checked;
@@ -115,7 +128,7 @@ internal sealed class MainForm : LauncherForm
         RefreshInstallation();
     }
 
-    private Choices Current => new(hudFollow.Checked, modernInterface.Checked);
+    private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value);
 
     private void LoadChoices()
     {
@@ -132,7 +145,9 @@ internal sealed class MainForm : LauncherForm
     {
         hudFollow.Checked = choices.HudFollowView;
         modernInterface.Checked = choices.ModernInterface;
+        renderScale.Value = choices.VrRenderScale;
         LauncherAppearance.Modern = choices.ModernInterface;
+        UpdateVrSummary();
         EnableActions();
     }
 
@@ -218,7 +233,7 @@ internal sealed class MainForm : LauncherForm
         save.Enabled = idle && Current != saved;
         recover.Enabled = idle && playLease;
         browse.Enabled = idle;
-        query.Enabled = pattern.Enabled = idle && File.Exists(probePath);
+        query.Enabled = pattern.Enabled = refreshHeadset.Enabled = idle && File.Exists(probePath);
         defaults.Enabled = idle;
         state.Text = supervising ? "VR session in progress. Quit the game normally; the launcher then restores the original game files."
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
@@ -339,7 +354,14 @@ internal sealed class MainForm : LauncherForm
             notice.Text = stereo ? "Running the headset eye test…" : "Checking the 32-bit OpenXR runtime…";
             using var worker = Process.Start(Installation.ProbeStartInfo(probePath, stereo, logFile)) ?? throw new IOException("The OpenXR probe did not start.");
             await worker.WaitForExitAsync();
-            notice.Text = (Installation.ProbeError(worker.ExitCode) ?? (stereo ? "The probe showed its test pattern." : "Runtime check passed.")) +
+            var failure = Installation.ProbeError(worker.ExitCode);
+            if (failure is null && File.Exists(logFile) && HeadsetResolution.FromProbeLog(File.ReadLines(logFile)) is { } headset)
+            {
+                headsetResolution = headset;
+                try { headset.Save(); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+                UpdateVrSummary();
+            }
+            notice.Text = (failure ?? (stereo ? "The probe showed its test pattern." : "Runtime check passed; headset resolution refreshed.")) +
                 (File.Exists(logFile) ? Environment.NewLine + logFile : " The probe did not create its log.");
         }
         catch (Exception error) { notice.Text = error.Message; }
@@ -349,6 +371,11 @@ internal sealed class MainForm : LauncherForm
             EnableActions();
         }
     }
+
+    internal void UpdateVrSummary() => vrSummary.Text = headsetResolution?.Summary(renderScale.Value) ??
+        "Connect your headset and choose Refresh headset to see the render size. VR launches read it automatically.";
+
+    internal void UseHeadset(HeadsetResolution? value) { headsetResolution = value; UpdateVrSummary(); }
 
     private void ShowAbout()
     {
@@ -367,6 +394,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(save, "Keep your launcher choices without launching.");
         tips.SetToolTip(recover, "Remove the VR files left by an interrupted session and restore the original game executable.");
         tips.SetToolTip(logs, "Open the folder with VR session and headset-check logs to attach to a report.");
+        tips.SetToolTip(refreshHeadset, "Read the connected headset's recommended resolution through the 32-bit OpenXR runtime.");
     }
 
     private static Button Button(string text, string name) => new() { Text = text, Name = name, AutoSize = true, Padding = new Padding(5, 2, 5, 2) };

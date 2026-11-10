@@ -61,7 +61,15 @@ internal static class Program
             var failure = Installation.ProbeError(check.ExitCode);
             if (failure is not null) throw new IOException(failure + Environment.NewLine + logFile);
         }
-        return VrPlaySession.Run(folder!, renderer!);
+        // Render each eye at the headset's recommended size times VR render scale. Without a
+        // readable size the bridge keeps the game's legacy eye size.
+        var headset = HeadsetResolution.FromProbeLog(File.ReadLines(logFile));
+        if (headset is null) return VrPlaySession.Run(folder!, renderer!);
+        try { headset.Save(); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        var scale = LauncherSettings.Load().VrRenderScale;
+        var (width, height, used) = headset.LaunchSize(scale);
+        return VrPlaySession.Run(folder!, renderer!, (width, height),
+            $"Render {width}x{height} per eye at {used}% (requested {scale}%) of {headset.Headset} {headset.Width}x{headset.Height} via {headset.Runtime}.");
     }
 
     private static int Inspect(string? folder, string? probe, string? renderer)

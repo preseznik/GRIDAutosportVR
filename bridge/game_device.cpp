@@ -14,6 +14,7 @@ wchar_t directory[MAX_PATH]{};
 bool headset;
 bool regularPlay;
 bool hudFollowsView;
+unsigned eyeWidth, eyeHeight;
 bool keepActive = true;
 bool uiComparison;
 bool compareSlate;
@@ -204,6 +205,22 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
 
 bool AutosportUseHeadset() { return headset; }
 bool AutosportRegularPlay() { return regularPlay; }
+// -gasvreyesize=WIDTHxHEIGHT: the per-eye size reported to the game (density 1). Absent: the
+// legacy 960x1080 per eye from the fixed 1920x1080 HMD descriptor.
+bool AutosportEyeSizeRequest(unsigned& width, unsigned& height) {
+    static const bool parsed = [] {
+        const wchar_t* arg = wcsstr(GetCommandLineW(), L" -gasvreyesize=");
+        unsigned w{}, h{};
+        if (arg && swscanf_s(arg, L" -gasvreyesize=%ux%u", &w, &h) == 2 && w >= 64 && h >= 64 && w <= 8192 && h <= 8192) {
+            eyeWidth = w; eyeHeight = h;
+            return true;
+        }
+        return false;
+    }();
+    if (!parsed) return false;
+    width = eyeWidth; height = eyeHeight;
+    return true;
+}
 bool AutosportHudFollowsView() { return uiComparison ? captures == 1 : hudFollowsView; }
 // Every bridge session (headset play and the capture benchmark) keeps the game running when its
 // window is inactive; the game otherwise drops to ~18 fps and pauses its startup videos.

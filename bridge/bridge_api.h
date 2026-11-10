@@ -5,6 +5,7 @@ bool AutosportUseHeadset();
 bool AutosportRegularPlay();
 bool AutosportHudFollowsView();
 bool AutosportKeepActive();
+bool AutosportEyeSizeRequest(unsigned& width, unsigned& height);
 bool AutosportUiComparison();
 bool AutosportCompareSlate();
 const char* AutosportTransitionSample();

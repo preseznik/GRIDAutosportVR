@@ -355,8 +355,11 @@ void __cdecl recenterTracking(Hmd*) {
 // This SDK returns an 8-byte size in EDX:EAX. The game scales it relative to its display mode.
 uint64_t __cdecl textureSize(Hmd* target, int eye, Fov, float density) {
     if (target != &hmd || unsigned(eye) > 1 || !(density > 0 && density <= 4)) return 0;
-    const UINT width = UINT((hmd.resolution.x / 2) * density);
-    const UINT height = UINT(hmd.resolution.y * density);
+    UINT width = UINT((hmd.resolution.x / 2) * density);
+    UINT height = UINT(hmd.resolution.y * density);
+    unsigned requestedWidth{}, requestedHeight{};
+    if (AutosportEyeSizeRequest(requestedWidth, requestedHeight)) { width = UINT(requestedWidth * density); height = UINT(requestedHeight * density); }
+    AutosportLog("Native texture size request eye=%d density=%.3f -> %ux%u", eye, density, width, height);
     return uint64_t(width) | (uint64_t(height) << 32);
 }
 void setOptics(int eye, Fov fov, Vec adjustment) {
@@ -394,7 +397,11 @@ char __cdecl configureRenderer(Hmd* target, const Config* next, unsigned, const 
     return 1;
 }
 
-void applyViews(const BridgeView (&views)[2]) {
+// flat: the frame is shown on the seated screen (startup, loading), not as a stereo projection.
+// The headset's lenses are off-centre (e.g. 54 degrees inward, 40 outward), which pushes the game's
+// centred loading cards past the eye image's edge. A flat screen needs no lens match, so give the
+// game a centred field of view with the same total width and height.
+void applyViews(const BridgeView (&views)[2], bool flat) {
     Vec center{};
     for (auto& v : views) {
         center.x += .5f*v.position[0];
@@ -420,8 +427,12 @@ void applyViews(const BridgeView (&views)[2]) {
         Rotation q{v.orientation[0], v.orientation[1], v.orientation[2], v.orientation[3]};
         Vec pos{v.position[0], v.position[1], v.position[2]};
         poses[eye] = {multiply(originYaw, q), rotate(originYaw, sub(center, originPosition))};
-        setOptics(eye, {std::tan(v.fov[2]), -std::tan(v.fov[3]), -std::tan(v.fov[0]), std::tan(v.fov[1])},
-                  rotate(conjugate(q), sub(center, pos)));
+        Fov fov{std::tan(v.fov[2]), -std::tan(v.fov[3]), -std::tan(v.fov[0]), std::tan(v.fov[1])};
+        if (flat) {
+            const float horizontal = .5f * (fov.left + fov.right), vertical = .5f * (fov.up + fov.down);
+            fov = {vertical, vertical, horizontal, horizontal};
+        }
+        setOptics(eye, fov, rotate(conjugate(q), sub(center, pos)));
     }
 }
 
@@ -437,7 +448,7 @@ Timing* __cdecl beginFrame(Timing* timing, Hmd* target, unsigned) {
     frameOpen = AutosportBeginViews(config.device, config.context, AutosportUseHeadset(), frame, views);
     if (frameOpen) {
         if (AutosportTakeRecenterRequest()) recenter = true;
-        applyViews(views);
+        applyViews(views, AutosportFlatScreen());
         if (frame == 1) AutosportLog("Native BeginFrame: %s", AutosportBridgeStatus());
     }
     else if (frame == 1 || frame % 300 == 0) AutosportLog("begin frame %llu: %s", frame, AutosportBridgeStatus());
@@ -578,6 +589,18 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
         }
         if (back) back->Release();
         AutosportFinishLoadingOverlayFrame(frame, result.captured);
+        {
+            // One line per eye-target size: the size the game actually renders each eye at.
+            static UINT loggedWidth, loggedHeight;
+            D3D11_TEXTURE2D_DESC packedDesc{};
+            eyes[0].texture->GetDesc(&packedDesc);
+            if (packedDesc.Width != loggedWidth || packedDesc.Height != loggedHeight) {
+                loggedWidth = packedDesc.Width; loggedHeight = packedDesc.Height;
+                AutosportLog("Native eye target %ux%u samples=%u left=%ld,%ld,%ld,%ld right=%ld,%ld,%ld,%ld frame=%llu", packedDesc.Width, packedDesc.Height,
+                             packedDesc.SampleDesc.Count, rects[0].left, rects[0].top, rects[0].right, rects[0].bottom,
+                             rects[1].left, rects[1].top, rects[1].right, rects[1].bottom, frame);
+            }
+        }
         if (frame == 1 || frame % 1800 == 0 || result.captured)
             AutosportLog("Frame %llu pose-mask=%u packed=%p submitted=%u status=%s", frame, requestedEyes,
                          static_cast<void*>(eyes[0].texture), result.submitted, AutosportBridgeStatus());

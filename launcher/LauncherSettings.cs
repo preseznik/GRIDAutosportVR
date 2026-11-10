@@ -5,7 +5,7 @@ namespace GRIDAutosportVR;
 
 // Launcher choices saved by Save settings or a launch. Unknown keys are kept, so tools such as
 // bridge/run.py can read hudFollowView from the same settings.json.
-internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true);
+internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true, int VrRenderScale = 100);
 
 internal static class LauncherSettings
 {
@@ -47,13 +47,21 @@ internal static class LauncherSettings
         throw new JsonException(key + " must be true or false in " + fileName);
     }
 
+    private static int ReadScale(JsonObject document, string key, int fallback, string fileName)
+    {
+        if (!document.TryGetPropertyValue(key, out var node)) return fallback;
+        if (node is JsonValue value && value.TryGetValue(out int scale) && scale is >= RenderScaleSlider.MinimumScale and <= RenderScaleSlider.MaximumScale) return scale;
+        throw new JsonException($"{key} must be a whole number from {RenderScaleSlider.MinimumScale} to {RenderScaleSlider.MaximumScale} in {fileName}");
+    }
+
     public static Choices Load(string? fileName = null)
     {
         fileName ??= SettingsPath;
         var document = ReadDocument(fileName);
         // Settings saved before the Modern interface existed keep the look their users chose.
         var modernFallback = !File.Exists(fileName);
-        return new Choices(ReadFlag(document, "hudFollowView", false, fileName), ReadFlag(document, "modernInterface", modernFallback, fileName));
+        return new Choices(ReadFlag(document, "hudFollowView", false, fileName), ReadFlag(document, "modernInterface", modernFallback, fileName),
+            ReadScale(document, "vrRenderScale", 100, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -62,6 +70,7 @@ internal static class LauncherSettings
         var document = ReadDocument(fileName);
         document["hudFollowView"] = choices.HudFollowView;
         document["modernInterface"] = choices.ModernInterface;
+        document["vrRenderScale"] = choices.VrRenderScale;
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
     }
 

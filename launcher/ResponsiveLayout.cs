@@ -143,7 +143,8 @@ internal class SettingRow : Panel
             var labelWidth = Math.Min(Px(215), width / 2);
             var editorWidth = Math.Max(1, stacked ? width : width - labelWidth - gap);
             if (editor is Label label) label.MaximumSize = new Size(editorWidth, 0);
-            var editorHeight = Math.Max(Px(28), editor.GetPreferredSize(new Size(editorWidth, 0)).Height);
+            var editorHeight = editor is RenderScaleSlider slider ? Px(slider.HasMarker ? 62 : 42)
+                : Math.Max(Px(28), editor.GetPreferredSize(new Size(editorWidth, 0)).Height);
             var labelHeight = string.IsNullOrEmpty(caption.Text) ? 0 : TextRenderer.MeasureText(caption.Text, Font,
                 new Size(Math.Max(1, (stacked ? width : labelWidth) - caption.Padding.Horizontal), 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
             var rowHeight = stacked ? labelHeight + editorHeight + gap : Math.Max(labelHeight, editorHeight);

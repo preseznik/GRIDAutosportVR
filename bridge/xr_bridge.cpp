@@ -560,11 +560,17 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         screen.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         screen.subImage = projections[0].subImage;
         screen.pose = screenAnchor;
-        // The left copy occupies half the physical atlas. Restore the logical
-        // desktop canvas aspect for the single screen, including 4:3 benchmarks.
+        // A whole-texture source (the game's back buffer) keeps its pixel aspect. An eye image
+        // covers the field of view the game rendered with, so show it at that tangent aspect;
+        // the game's pixels need not be square (the legacy 400x600 eye was not).
         D3D11_TEXTURE2D_DESC canvas{};
         snapshot->GetDesc(&canvas);
-        screen.size = {2.4f,2.4f * float(canvas.Height)/float(canvas.Width)};
+        const auto& f = located[0].fov;
+        const float tangentAspect = (std::tan(-f.angleLeft) + std::tan(f.angleRight)) / (std::tan(f.angleUp) + std::tan(-f.angleDown));
+        const bool wholeTexture = UINT(rects[0].right - rects[0].left) == canvas.Width && UINT(rects[0].bottom - rects[0].top) == canvas.Height;
+        const float aspect = wholeTexture || !(tangentAspect > .2f && tangentAspect < 5.f) ? float(canvas.Width) / float(canvas.Height) : tangentAspect;
+        // At most 2.4 m wide and 1.8 m tall, two metres away: 4:3 keeps the original 2.4 x 1.8 m.
+        screen.size = aspect >= 2.4f / 1.8f ? XrExtent2Df{2.4f, 2.4f / aspect} : XrExtent2Df{1.8f * aspect, 1.8f};
         end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screen));
         return true;
     }

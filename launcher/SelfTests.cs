@@ -23,6 +23,7 @@ internal static class SelfTests
             Settings(data);
             Window();
             InstallationRules();
+            RenderScale();
             ApplicationConfiguration.Initialize();
             Application.SetColorMode(SystemColorMode.System);
             Form(output);
@@ -40,7 +41,11 @@ internal static class SelfTests
     private static void Settings(string data)
     {
         var file = Path.Combine(data, "settings-test.json");
-        Check(LauncherSettings.Load(file) == new Choices(false, true)); // New installs: Modern interface.
+        Check(LauncherSettings.Load(file) == new Choices(false, true, 100)); // New installs: Modern interface, 100% VR scale.
+        LauncherSettings.Save(new Choices(false, true, 175), file);
+        Check(LauncherSettings.Load(file).VrRenderScale == 175);
+        File.WriteAllText(file, "{\"vrRenderScale\": 40}");
+        Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
         LauncherSettings.Save(new Choices(true, false), file);
         Check(LauncherSettings.Load(file) == new Choices(true, false));
         File.WriteAllText(file, "{\"hudFollowView\": true, \"other\": 7}");
@@ -79,6 +84,34 @@ internal static class SelfTests
         Check(Throws<FileNotFoundException>(() => Installation.ProbeStartInfo(null, false, "x.log")));
     }
 
+    private static readonly string[] QuestProbe =
+    [
+        "architecture=Win32 mode=query", "runtime=VirtualDesktopXR version=1.1.0",
+        "headset=Meta Quest 3 position_tracking=1 orientation_tracking=1",
+        "eye0=3072x3264 recommended_samples=1", "eye1=3072x3264 recommended_samples=1", "exit_code=0"
+    ];
+    internal static HeadsetResolution Quest3 => HeadsetResolution.FromProbeLog(QuestProbe)!;
+
+    private static void RenderScale()
+    {
+        var quest = HeadsetResolution.FromProbeLog(QuestProbe);
+        Check(quest == new HeadsetResolution("VirtualDesktopXR 1.1.0", "Meta Quest 3", 3072, 3264));
+        Check(HeadsetResolution.FromProbeLog(QuestProbe.Where(l => !l.StartsWith("eye0"))) is null);
+        Check(HeadsetResolution.FromProbeLog(["headset=X", "eye0=99999x100"]) is null);
+        Check(quest!.LaunchSize(100) == (3072, 3264, 100) && quest.LaunchSize(50) == (1536, 1632, 50));
+        // One D3D11 texture holds both eyes: 8192 per eye; 3264 x 2.51 = 8192 is the limit here.
+        Check(quest.MaximumRenderScale == 251 && quest.LaunchSize(300) == (7710, 8192, 251));
+        Check(quest.Summary(100).Contains("Render: 3072 × 3264 per eye at 100%") && quest.Summary(300).Contains("251% will be used"));
+        quest.Save();
+        Check(HeadsetResolution.Load() == quest);
+        File.WriteAllText(HeadsetResolution.StorePath, "{}");
+        Check(HeadsetResolution.Load() is null);
+        File.Delete(HeadsetResolution.StorePath);
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", true, (3072, 3264)).SequenceEqual(
+            ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1", "-gasvreyesize=3072x3264"]));
+        Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", false, null).Any(a => a.StartsWith("-gasvreyesize")));
+    }
+
     private static void Form(string output)
     {
         using var form = new MainForm(null, null, null) { ShowInactive = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) };
@@ -88,7 +121,10 @@ internal static class SelfTests
         Check(!Find<Button>(form, "LaunchVR").Enabled && !Find<Button>(form, "LaunchDesktop").Enabled && !Find<Button>(form, "SaveSettings").Enabled);
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR HUD", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
+        form.UseHeadset(Quest3);
+        Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Meta Quest 3"));
         form.Show();
         Application.DoEvents();
         try
@@ -99,6 +135,10 @@ internal static class SelfTests
             Check(Find<Button>(form, "SaveSettings").Enabled && Find<SelectableStatusText>(form, "SessionNotice").Text.Contains("Unsaved"));
             Find<Button>(form, "SaveSettings").PerformClick();
             Check(LauncherSettings.Load().HudFollowView && !Find<Button>(form, "SaveSettings").Enabled);
+            Find<RenderScaleSlider>(form, "VrRenderScale").Value = 150;
+            Check(Find<Button>(form, "SaveSettings").Enabled && Find<Label>(form, "VrResolutionSummary").Text.Contains("4608 × 4896 per eye at 150%"));
+            Find<Button>(form, "SaveSettings").PerformClick();
+            Check(LauncherSettings.Load().VrRenderScale == 150);
             // Collapsing a section is remembered by title and restored.
             var headset = form.SectionHeaders.Single(h => h.Title == "Headset check");
             form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Settings");

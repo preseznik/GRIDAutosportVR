@@ -86,7 +86,12 @@ internal static partial class VrPlaySession
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder!));
     }
 
-    public static int Run(string gameFolder, string bridgePath)
+    // Steam arguments for the game process. eyeSize is the per-eye render size reported to the game.
+    internal static string[] SteamArguments(string id, bool hudFollow, (int Width, int Height)? eyeSize) =>
+        ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (hudFollow ? "1" : "0"),
+         .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : []];
+
+    public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null)
     {
         var folder = CheckedFolder(gameFolder);
         var client = SteamLibrary.SteamClient() ?? throw new IOException("Steam.exe was not found. Start Steam, then try again.");
@@ -104,8 +109,8 @@ internal static partial class VrPlaySession
             {
                 Stage(folder, bridgePath, id);
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
-                foreach (var arg in new[] { "-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (hudFollow ? "1" : "0") })
-                    start.ArgumentList.Add(arg);
+                foreach (var arg in SteamArguments(id, hudFollow, eyeSize)) start.ArgumentList.Add(arg);
+                if (renderNote is not null) Record(id, renderNote);
                 Record(id, "Requesting normal play through Steam.");
                 var requested = DateTime.UtcNow;
                 using (var steam = Process.Start(start))
