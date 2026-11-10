@@ -25,7 +25,13 @@ internal static partial class VrPlaySession
         public string? Id { get; set; }
         public string? GameFolder { get; set; }
         public string? BridgeHash { get; set; }
+        // Practice / Race: the session file in the game folder and the swapped system/flow.bin.
+        public string? SessionHash { get; set; }
+        public bool Flow { get; set; }
     }
+
+    private static string SessionFile(string id) => "GASVR_" + id + ".xml";
+    private static string FlowFile(string folder) => Path.Combine(folder, "system", "flow.bin");
 
     private static string SessionFolder(string id) => Path.Combine(LauncherSettings.DataDirectory, "sessions", id);
     private static string Hash(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
@@ -87,12 +93,15 @@ internal static partial class VrPlaySession
     }
 
     // Steam arguments for the game process. eyeSize is the per-eye render size reported to the game.
-    internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize) =>
+    // A Practice / Race session adds -benchmarkAttract with its session file.
+    internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize, bool session = false) =>
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (choices.HudFollowView ? "1" : "0"),
          "-gasvrrecenterkey=" + choices.RecenterKey, "-gasvrrecentermods=" + choices.RecenterModifiers, "-gasvrkeephorizon=" + (choices.KeepHorizonLevel ? "1" : "0"),
-         .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : []];
+         .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : [],
+         .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : []];
 
-    public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null)
+    // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
+    public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null)
     {
         var folder = CheckedFolder(gameFolder);
         var client = SteamLibrary.SteamClient() ?? throw new IOException("Steam.exe was not found. Start Steam, then try again.");
@@ -106,12 +115,14 @@ internal static partial class VrPlaySession
             EnsureIdle(folder);
             RestoreLease(folder);
             var id = Guid.NewGuid().ToString("N");
+            var session = sessionXml?.Invoke(choices);
             try
             {
-                Stage(folder, bridgePath, id);
+                Stage(folder, bridgePath, id, session);
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
-                foreach (var arg in SteamArguments(id, choices, eyeSize)) start.ArgumentList.Add(arg);
+                foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null)) start.ArgumentList.Add(arg);
                 if (renderNote is not null) Record(id, renderNote);
+                if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
                 Record(id, "Requesting normal play through Steam.");
                 var requested = DateTime.UtcNow;
                 using (var steam = Process.Start(start))
@@ -134,12 +145,14 @@ internal static partial class VrPlaySession
 
     // The marker and stock backup are committed before the lease. The lease is
     // committed before either game file is changed, including on an interrupted launch.
-    private static void Stage(string folder, string bridgePath, string id)
+    internal static void Stage(string folder, string bridgePath, string id, byte[]? session = null)
     {
         var executable = Path.Combine(folder, Avx);
         var dll = Path.Combine(folder, BridgeName);
         if (File.Exists(dll) || File.Exists(Path.Combine(folder, Installation.PlayLease)))
             throw new IOException("A VR bridge or play session already exists in the game folder. Existing files were preserved.");
+        var stockFlow = session is null ? null : File.ReadAllBytes(FlowFile(folder));
+        var guardedFlow = stockFlow is null ? null : PracticeFlow.Guarded(stockFlow);
         var stock = File.ReadAllBytes(executable);
         if (Hash(stock) != StockSha256 || !stock.AsSpan(ImportNameOffset, 10).SequenceEqual("d3d11.dll\0"u8))
             throw new IOException("This GRID Autosport AVX executable is not the supported Steam build.");
@@ -147,18 +160,36 @@ internal static partial class VrPlaySession
         Encoding.ASCII.GetBytes(BridgeName).CopyTo(candidate, ImportNameOffset);
         if (Hash(candidate) != VrSha256) throw new IOException("The VR executable verification failed.");
         var payload = File.ReadAllBytes(bridgePath);
-        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload) };
+        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), SessionHash = session is null ? null : Hash(session), Flow = session is not null };
         var saved = SessionFolder(id);
         Directory.CreateDirectory(saved);
         WriteNew(Path.Combine(saved, "session.id"), Encoding.ASCII.GetBytes(id));
         WriteNew(Path.Combine(saved, "original-avx.exe"), stock);
         if (FileHash(Path.Combine(saved, "original-avx.exe")) != StockSha256) throw new IOException("The stock backup verification failed.");
+        if (stockFlow is not null)
+        {
+            WriteNew(Path.Combine(saved, "original-flow.bin"), stockFlow);
+            if (FileHash(Path.Combine(saved, "original-flow.bin")) != PracticeFlow.StockSha256) throw new IOException("The flow backup verification failed.");
+        }
         var prefix = Path.Combine(folder, "gasvr-play-" + id);
         WriteNew(prefix + ".lease.tmp", JsonSerializer.SerializeToUtf8Bytes(info));
         File.Move(prefix + ".lease.tmp", Path.Combine(folder, Installation.PlayLease));
         WriteNew(prefix + ".dll.tmp", payload);
         if (FileHash(prefix + ".dll.tmp") != info.BridgeHash) throw new IOException("The staged bridge verification failed.");
         File.Move(prefix + ".dll.tmp", dll);
+        if (session is not null)
+        {
+            WriteNew(prefix + ".xml.tmp", session);
+            if (FileHash(prefix + ".xml.tmp") != info.SessionHash) throw new IOException("The session file verification failed.");
+            File.Move(prefix + ".xml.tmp", Path.Combine(folder, SessionFile(id)));
+            WriteNew(prefix + ".flow.tmp", guardedFlow!);
+            EnsureIdle(folder);
+            if (FileHash(FlowFile(folder)) != PracticeFlow.StockSha256 || FileHash(prefix + ".flow.tmp") != PracticeFlow.GuardedSha256)
+                throw new IOException("system/flow.bin changed during staging.");
+            File.Replace(prefix + ".flow.tmp", FlowFile(folder), null);
+            if (FileHash(FlowFile(folder)) != PracticeFlow.GuardedSha256) throw new IOException("The installed Practice/Race flow verification failed.");
+            Record(id, "Staged session file " + info.SessionHash + " and guarded flow " + PracticeFlow.GuardedSha256 + ".");
+        }
         WriteNew(prefix + ".exe.tmp", candidate);
         EnsureIdle(folder);
         if (FileHash(executable) != StockSha256 || FileHash(prefix + ".exe.tmp") != VrSha256) throw new IOException("The game files changed during staging.");
@@ -216,6 +247,7 @@ internal static partial class VrPlaySession
         EnsureIdle(folder);
         var info = JsonSerializer.Deserialize<Lease>(File.ReadAllBytes(leaseFile));
         if (info is null || !SessionId().IsMatch(info.Id ?? "") || !Sha256Text().IsMatch(info.BridgeHash ?? "") ||
+            (info.SessionHash is not null && !Sha256Text().IsMatch(info.SessionHash)) ||
             !string.Equals(info.GameFolder, folder, StringComparison.OrdinalIgnoreCase)) throw new IOException("Invalid VR play lease. The game files were preserved.");
         var id = info.Id!;
         var saved = SessionFolder(id);
@@ -239,7 +271,13 @@ internal static partial class VrPlaySession
                 throw new IOException("The installed game executable changed independently. The current file and backup were preserved.");
         }
         if (FileHash(executable) != StockSha256) throw new IOException("Stock restoration could not be verified.");
+        if (info.Flow) RestoreFlow(folder, saved, prefix, id);
         RemoveMatching(Path.Combine(folder, BridgeName), info.BridgeHash!, id);
+        if (info.SessionHash is not null)
+        {
+            RemoveMatching(Path.Combine(folder, SessionFile(id)), info.SessionHash, id);
+            RemoveStageTemp(prefix + ".xml.tmp", info.SessionHash, id);
+        }
         RemoveStageTemp(prefix + ".exe.tmp", VrSha256, id);
         RemoveStageTemp(prefix + ".dll.tmp", info.BridgeHash!, id);
         RemoveStageTemp(prefix + ".restore.tmp", StockSha256, id);
@@ -247,7 +285,33 @@ internal static partial class VrPlaySession
         File.Delete(leaseFile);
         File.Delete(Path.Combine(saved, "session.id"));
         File.Delete(backup);
+        if (info.Flow) File.Delete(Path.Combine(saved, "original-flow.bin"));
         return true;
+    }
+
+    private static void RestoreFlow(string folder, string saved, string prefix, string id)
+    {
+        var flow = FlowFile(folder);
+        var backup = Path.Combine(saved, "original-flow.bin");
+        switch (FileHash(flow))
+        {
+            case PracticeFlow.GuardedSha256:
+                if (FileHash(backup) != PracticeFlow.StockSha256) throw new IOException("The original flow.bin backup failed verification. The game files were preserved.");
+                var restoreTemp = prefix + ".flow-restore.tmp";
+                if (File.Exists(restoreTemp) && FileHash(restoreTemp) != PracticeFlow.StockSha256) restoreTemp = prefix + ".flow-restore-" + Guid.NewGuid().ToString("N") + ".tmp";
+                if (!File.Exists(restoreTemp)) WriteNew(restoreTemp, File.ReadAllBytes(backup));
+                if (FileHash(restoreTemp) != PracticeFlow.StockSha256) throw new IOException("The flow.bin restore copy failed verification.");
+                File.Replace(restoreTemp, flow, null);
+                break;
+            case PracticeFlow.StockSha256:
+                break; // Staging stopped before the swap, or recovery already restored it.
+            default:
+                throw new IOException("system/flow.bin changed independently. The current file and backup were preserved.");
+        }
+        if (FileHash(flow) != PracticeFlow.StockSha256) throw new IOException("Stock flow.bin restoration could not be verified.");
+        RemoveStageTemp(prefix + ".flow.tmp", PracticeFlow.GuardedSha256, id);
+        RemoveStageTemp(prefix + ".flow-restore.tmp", PracticeFlow.StockSha256, id);
+        Record(id, "Restored and verified stock flow.bin " + PracticeFlow.StockSha256 + ".");
     }
 
     // Windows returns the command line as a counted UNICODE_STRING in our

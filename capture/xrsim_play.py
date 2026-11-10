@@ -116,6 +116,9 @@ def run(args):
         session.mkdir(parents=True)
         (session / "session.id").write_bytes(token.encode("ascii"))
         game_args = ["-gasvrplay=" + token, "-gasvrmode=openxr", "-gasvrhudfollow=0"]
+        if args.session:
+            # Launcher Practice / Race: the play session's own file through the attract flow.
+            game_args += ["-benchmarkAttract", "GASVR_" + token + ".xml"]
     script = json.loads(Path(args.script).read_text(encoding="utf-8")) if args.script else []
     report = dict(kind="xrsim-benchmark" if args.benchmark else "xrsim-normal-play", bridge=str(bridge), bridgeSha256=sha(dll), stockSha256=STOCK,
                   focusLoss=not args.no_focus_loss, keepActive=not args.no_keep_active, deactivateAt=args.deactivate_at, session=str(session), directory=str(folder), samples=[])
@@ -128,6 +131,9 @@ def run(args):
     game = None
     flow_backup = folder / "flow-original.bin"
     flow_staged = False
+    session_file = GAME / ("GASVR_" + token + ".xml")
+    session_data = Path(args.session).read_bytes() if args.session else b""
+    session_staged = False
     try:
         exclusive(DLL, dll)
         if args.benchmark:
@@ -136,6 +142,10 @@ def run(args):
         if file_sha(EXE) != STOCK or file_sha(temp) != PRIVATE:
             raise RuntimeError("Executable changed during staging")
         os.replace(temp, EXE)
+        if args.session:
+            exclusive(session_file, session_data)
+            session_staged = True
+            report["sessionFile"] = {"path": str(session_file), "sha256": sha(session_data), "xml": session_data.decode("utf-8")}
         if args.flow:
             # Research: a modified flow graph (Practice/Race). Back up the verified stock file first.
             if file_sha(FLOW) != STOCK_FLOW:
@@ -267,13 +277,18 @@ def run(args):
             if file_sha(FLOW) != STOCK_FLOW:
                 raise RuntimeError("system/flow.bin could not be restored; the backup is " + str(flow_backup))
             report["flowRestored"] = True
+        def remove_session():
+            if session_file.exists():
+                if file_sha(session_file) != sha(session_data):
+                    raise RuntimeError("Preserving independently changed " + str(session_file))
+                session_file.unlink()
         def remove_appid():
             if wrote_appid and APPID.read_bytes() == b"255220":
                 APPID.unlink()
         def restore_game():
             cleanup()
             report["stockRestored"] = True
-        for step in ([restore_flow] if flow_staged else []) + [remove_appid, restore_game]:
+        for step in ([restore_flow] if flow_staged else []) + ([remove_session] if session_staged else []) + [remove_appid, restore_game]:
             try:
                 step()
             except Exception as error:
@@ -299,6 +314,7 @@ if __name__ == "__main__":
     parser.add_argument("--benchmark", action="store_true", help="Run the game's benchmark race instead of normal play")
     parser.add_argument("--attract", action="store_true", help="Benchmark: launch with -benchmarkAttract instead of -benchmark")
     parser.add_argument("--flow", help="Benchmark research: stage this system/flow.bin for the run, restoring the stock file after")
+    parser.add_argument("--session", help="Normal play with this launcher session file (GRIDAutosportVR.exe --write-session); use with --flow")
     parser.add_argument("--laps", type=int, help="Benchmark: laps for the session")
     parser.add_argument("--cycle-camera", action="store_true", help="Benchmark: let the game cycle its cameras")
     parser.add_argument("--race-seconds", type=int, default=30, help="Benchmark: race second of the bridge's own eye capture")

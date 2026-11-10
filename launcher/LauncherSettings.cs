@@ -6,8 +6,11 @@ namespace GRIDAutosportVR;
 // Launcher choices saved by Save settings or a launch. Unknown keys are kept, so tools such as
 // bridge/run.py can read hudFollowView from the same settings.json.
 // RecenterKey is a Windows virtual-key code (121 = F10, as GRID2VR); RecenterModifiers: 1 Ctrl, 2 Alt, 4 Shift.
+// LaunchMode Normal opens the game's menus; Practice and Race start the chosen car and track (RaceSession).
 internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true, int VrRenderScale = 100,
-    int RecenterKey = 121, int RecenterModifiers = 0, bool KeepHorizonLevel = true);
+    int RecenterKey = 121, int RecenterModifiers = 0, bool KeepHorizonLevel = true,
+    string LaunchMode = "Normal", string Car = RaceSession.DefaultCar, string Track = RaceSession.DefaultTrack,
+    int Laps = 3, int Opponents = 7, string OpponentCars = "same");
 
 internal static class LauncherSettings
 {
@@ -69,6 +72,23 @@ internal static class LauncherSettings
         return shortcut;
     }
 
+    private static string ReadText(JsonObject document, string key, string fallback, Func<string, bool> valid, string fileName)
+    {
+        if (!document.TryGetPropertyValue(key, out var node)) return fallback;
+        if (node is JsonValue value && value.TryGetValue(out string? text) && valid(text)) return text;
+        throw new JsonException(key + " has an unsupported value in " + fileName);
+    }
+
+    private static int ReadCount(JsonObject document, string key, int fallback, int maximum, string fileName)
+    {
+        if (!document.TryGetPropertyValue(key, out var node)) return fallback;
+        if (node is JsonValue value && value.TryGetValue(out int number) && number >= 1 && number <= maximum) return number;
+        throw new JsonException($"{key} must be a whole number from 1 to {maximum} in {fileName}");
+    }
+
+    internal static bool ValidCar(string text) => System.Text.RegularExpressions.Regex.IsMatch(text, @"\A[a-z0-9_]{1,32}\z");
+    internal static bool ValidTrack(string text) => System.Text.RegularExpressions.Regex.IsMatch(text, @"\A(circuits|cities)/[a-z0-9_]{1,40}/route_\d{1,2}\z");
+
     public static Choices Load(string? fileName = null)
     {
         fileName ??= SettingsPath;
@@ -77,7 +97,13 @@ internal static class LauncherSettings
         var modernFallback = !File.Exists(fileName);
         var (key, modifiers) = ReadShortcut(document, fileName);
         return new Choices(ReadFlag(document, "hudFollowView", false, fileName), ReadFlag(document, "modernInterface", modernFallback, fileName),
-            ReadScale(document, "vrRenderScale", 100, fileName), key, modifiers, ReadFlag(document, "keepHorizonLevel", true, fileName));
+            ReadScale(document, "vrRenderScale", 100, fileName), key, modifiers, ReadFlag(document, "keepHorizonLevel", true, fileName),
+            ReadText(document, "launchMode", "Normal", RaceSession.Modes.Contains, fileName),
+            ReadText(document, "car", RaceSession.DefaultCar, ValidCar, fileName),
+            ReadText(document, "track", RaceSession.DefaultTrack, ValidTrack, fileName),
+            ReadCount(document, "laps", 3, RaceSession.MaxLaps, fileName),
+            ReadCount(document, "opponents", 7, RaceSession.MaxOpponents, fileName),
+            ReadText(document, "opponentCars", "same", RaceSession.OpponentChoices.Contains, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -90,6 +116,15 @@ internal static class LauncherSettings
         document["recenterKey"] = choices.RecenterKey;
         document["recenterModifiers"] = choices.RecenterModifiers;
         document["keepHorizonLevel"] = choices.KeepHorizonLevel;
+        if (!RaceSession.Modes.Contains(choices.LaunchMode) || !ValidCar(choices.Car) || !ValidTrack(choices.Track) ||
+            choices.Laps is < 1 or > RaceSession.MaxLaps || choices.Opponents is < 1 or > RaceSession.MaxOpponents ||
+            !RaceSession.OpponentChoices.Contains(choices.OpponentCars)) throw new ArgumentException("Unsupported session choice.");
+        document["launchMode"] = choices.LaunchMode;
+        document["car"] = choices.Car;
+        document["track"] = choices.Track;
+        document["laps"] = choices.Laps;
+        document["opponents"] = choices.Opponents;
+        document["opponentCars"] = choices.OpponentCars;
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
     }
 

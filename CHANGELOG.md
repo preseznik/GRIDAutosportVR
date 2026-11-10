@@ -11,5 +11,6 @@ First packaged build of GRID Autosport VR for the Steam game (AVX renderer, buil
 - The game keeps running when its window is not focused, so the headset view never stalls.
 - Launcher in GRID2VR's layout: collapsible sections, Modern/Classic themes, Save settings, Restore original files and Open logs.
 - Launch VR adds the VR files for the session only and restores the original game files when the game exits.
+- Launch mode Practice or Race (Launcher → Session): pick an installed car and track, 1–20 laps and, for Race, 1–11 AI opponents (same car, same discipline or mixed). Launch VR goes straight to the grid and you drive; Normal keeps the game's own menus.
 
-Known limits: menus are shown flat; choose cars and events in the game's menus. Controller/wheel recenter buttons and launcher-side Practice/Race selection are not available yet.
+Known limits: menus are shown flat. Practice and Race start from Launch VR only, in day and dry conditions, and you start on pole. Controller/wheel recenter buttons are not available yet.

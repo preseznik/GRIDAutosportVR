@@ -6,13 +6,15 @@ namespace GRIDAutosportVR;
 internal static class Program
 {
     private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | (--play-vr | --restore-play) --game-dir FOLDER | --self-test [OUTPUT]" +
-        " | --discover OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
+        " | --discover OUTPUT | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
 
     [STAThread]
     private static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : null);
         if (args is ["--discover", var discovered]) return Discover(discovered);
+        if (args is ["--write-session", "--game-dir", var sessionGame, var sessionOut]) return WriteSession(sessionGame, null, sessionOut);
+        if (args is ["--write-session", "--game-dir", var testGame, "--settings", var testSettings, var testOut]) return WriteSession(testGame, testSettings, testOut);
         if (args is ["--check-install" or "--check-uninstall", "--game", var game, "--error-log", var errorLog])
             return CheckForInstaller(args[0] == "--check-install", game, errorLog);
         var inspect = args.Length > 0 && args[0] == "--inspect";
@@ -62,6 +64,25 @@ internal static class Program
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return 1; }
     }
 
+    // Diagnostics and the xr-sim harness (capture/xrsim_play.py --session): the Practice / Race
+    // session file the next Launch VR would use, from the saved choices. Nothing is staged.
+    private static int WriteSession(string game, string? settings, string output)
+    {
+        try
+        {
+            var choices = LauncherSettings.Load(settings);
+            var catalog = RaceSession.Load(game);
+            File.WriteAllBytes(output, RaceSession.SessionXml(choices, catalog, Random.Shared.Next()));
+            Console.WriteLine(RaceSession.Summary(choices, catalog));
+            return 0;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or JsonException)
+        {
+            Console.Error.WriteLine(error.Message);
+            return 1;
+        }
+    }
+
     internal static string? InstallProblem(bool install, string game)
     {
         var valid = Installation.GameExists(game);
@@ -100,13 +121,17 @@ internal static class Program
         }
         // Render each eye at the headset's recommended size times VR render scale. Without a
         // readable size the bridge keeps the game's legacy eye size.
+        // Practice / Race: the session file from the installed content and the saved choices.
+        static byte[]? Session(string game, Choices choices) =>
+            choices.LaunchMode == "Normal" ? null : RaceSession.SessionXml(choices, RaceSession.Load(game), Random.Shared.Next());
         var headset = HeadsetResolution.FromProbeLog(File.ReadLines(logFile));
-        if (headset is null) return VrPlaySession.Run(folder!, renderer!);
+        if (headset is null) return VrPlaySession.Run(folder!, renderer!, sessionXml: c => Session(folder!, c));
         try { headset.Save(); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         var scale = LauncherSettings.Load().VrRenderScale;
         var (width, height, used) = headset.LaunchSize(scale);
         return VrPlaySession.Run(folder!, renderer!, (width, height),
-            $"Render {width}x{height} per eye at {used}% (requested {scale}%) of {headset.Headset} {headset.Width}x{headset.Height} via {headset.Runtime}.");
+            $"Render {width}x{height} per eye at {used}% (requested {scale}%) of {headset.Headset} {headset.Width}x{headset.Height} via {headset.Runtime}.",
+            c => Session(folder!, c));
     }
 
     private static int Inspect(string? folder, string? probe, string? renderer)
@@ -122,6 +147,8 @@ internal static class Program
             probePath = probe, eyeTestArguments = eyeTest, rendererPath = renderer, vrLaunchAvailable = vrProblem is null, vrLaunchProblem = vrProblem,
             vrTarget = vr?.FileName, vrArguments = vr?.ArgumentList.ToArray(), runtimeCheck = "on launch",
             settingsFile = LauncherSettings.SettingsPath, hudFollowView = LauncherSettings.Load().HudFollowView,
+            launchMode = LauncherSettings.Load().LaunchMode, session = valid ? RaceSession.Summary(LauncherSettings.Load(), RaceSession.Load(folder!)) : null,
+            installedCars = valid ? RaceSession.Load(folder!).Cars.Count : 0, installedTracks = valid ? RaceSession.Load(folder!).Tracks.Count : 0,
             version = BuildInfo.Version, channel = BuildInfo.Channel
         }));
         return valid ? 0 : 2;

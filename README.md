@@ -8,8 +8,9 @@ You need **Windows 10/11 (64-bit)**, the **Steam** version of GRID Autosport, an
 
 1. Close GRID Autosport, then run `GRIDAutosportVR-<version>-Setup.exe` and keep (or choose) your GRID Autosport Steam folder.
 2. Open **GRID Autosport VR** from the Start menu.
-3. Connect your headset, then click **Launch VR**. The launcher checks the headset, adds its VR files and starts the game through Steam.
-4. Finish with **Quit** in the game. The launcher restores the original game files. After an interrupted session, click **Restore original files**.
+3. Choose a **Launch mode** under **Launcher → Session**: **Normal** opens the game's menus; **Practice** puts your chosen car on your chosen track; **Race** adds 1–11 AI opponents.
+4. Connect your headset, then click **Launch VR**. The launcher checks the headset, adds its VR files and starts the game through Steam.
+5. Finish with **Quit** in the game. The launcher restores the original game files. After an interrupted session, click **Restore original files**.
 
 The portable ZIP works the same way: extract it into your GRID Autosport folder and run `GRIDAutosportVR\GRIDAutosportVR.exe`.
 
@@ -19,6 +20,7 @@ The portable ZIP works the same way: extract it into your GRID Autosport folder 
 - **Graphics → VR rendering** sets the VR render scale; 100% is the headset's recommended resolution.
 - **Graphics → VR HUD → Follow view** chooses between a HUD fixed in front of your seat and one that moves with your head.
 - Startup videos, loading screens and menus appear on a screen in front of you; races are in stereo.
+- In Practice and Race the start lights go green straight away: you start on pole, and the race is yours to drive.
 
 ## Help
 

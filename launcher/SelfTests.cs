@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml;
 
 namespace GRIDAutosportVR;
 
@@ -24,6 +25,7 @@ internal static class SelfTests
             Window();
             InstallationRules();
             RenderScale();
+            Sessions();
             ApplicationConfiguration.Initialize();
             Application.SetColorMode(SystemColorMode.System);
             Form(output);
@@ -60,6 +62,18 @@ internal static class SelfTests
         File.WriteAllText(file, "{\"hudFollowView\": \"yes\"}");
         Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
         Check(!Directory.EnumerateFiles(data, "*.tmp").Any());
+        // Practice / Race choices: Normal by default, validated on load and save.
+        Check(new Choices() is { LaunchMode: "Normal", Car: "sls", Track: "cities/san_francisco/route_0", Laps: 3, Opponents: 7, OpponentCars: "same" });
+        var race = new Choices(LaunchMode: "Race", Car: "pag", Track: "circuits/bathurst/route_1", Laps: 20, Opponents: 11, OpponentCars: "class");
+        LauncherSettings.Save(race, file);
+        Check(LauncherSettings.Load(file) == race);
+        foreach (var bad in new[] { "{\"launchMode\": \"Online\"}", "{\"car\": \"../x\"}", "{\"track\": \"p2p/okutama/route_0\"}", "{\"laps\": 0}",
+                                    "{\"opponents\": 12}", "{\"opponentCars\": \"any\"}", "{\"track\": \"cities/chicago/route_0 -benchmark x\"}" })
+        {
+            File.WriteAllText(file, bad);
+            Check(Throws<JsonException>(() => LauncherSettings.Load(file)), bad);
+        }
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Car: "a b"), file)));
         File.Delete(file);
     }
 
@@ -130,6 +144,123 @@ internal static class SelfTests
         Check(RecenterShortcut.Label(121, 0) == "F10" && RecenterShortcut.Label(120, 5) == "Ctrl+Shift+F9" && !RecenterShortcut.Valid(115, 2) && !RecenterShortcut.Valid(9, 2));
     }
 
+    // A fake Steam library with a few cars and routes (and some incomplete ones that must be skipped).
+    private static string FakeGame(string name)
+    {
+        var library = Path.Combine(LauncherSettings.DataDirectory, name);
+        var game = Path.Combine(library, "steamapps", "common", "GRID Autosport");
+        Directory.CreateDirectory(game);
+        File.WriteAllText(Path.Combine(library, "steamapps", "appmanifest_255220.acf"), "\"appid\" \"255220\"\n\"installdir\" \"GRID Autosport\"\n");
+        File.WriteAllBytes(Path.Combine(game, "GRIDAutosport.exe"), [0]);
+        foreach (var (id, liveries) in new[] { ("sls", new[] { "user", "03", "04" }), ("r8l", new[] { "user" }), ("pag", new[] { "user" }), ("zzz", new[] { "user" }), ("nouser", new[] { "01" }) })
+        {
+            var folder = Path.Combine(game, "cars", "models", id);
+            foreach (var livery in liveries) Directory.CreateDirectory(Path.Combine(folder, "livery_" + livery));
+            File.WriteAllText(Path.Combine(folder, "cameras.xml"), "<x/>");
+        }
+        Directory.CreateDirectory(Path.Combine(game, "cars", "models", "nocam", "livery_user"));
+        foreach (var route in new[] { "circuits/bathurst/route_1", "circuits/bathurst/route_0", "cities/san_francisco/route_0", "circuits/spa_francorchamps/route_10" })
+        {
+            var folder = Path.Combine(game, "tracks", "locations", route);
+            Directory.CreateDirectory(folder);
+            foreach (var file in new[] { "track.jpk", "route_objects.pssg", "progress_track.xml" }) File.WriteAllBytes(Path.Combine(folder, file), [0]);
+        }
+        Directory.CreateDirectory(Path.Combine(game, "tracks", "locations", "cities", "chicago", "route_0")); // Incomplete route.
+        Directory.CreateDirectory(Path.Combine(game, "tracks", "locations", "frontend", "frontend_garage", "route_0"));
+        return game;
+    }
+
+    private static void Sessions()
+    {
+        var game = FakeGame("session-library");
+        var catalog = RaceSession.Load(game);
+        Check(catalog.Cars.Select(c => c.Id).Order().SequenceEqual(["pag", "r8l", "sls", "zzz"]));
+        Check(catalog.Cars.Single(c => c.Id == "sls") is { Label: "Mercedes-Benz SLS AMG GT3", Class: "Endurance" } sls && sls.ToString() == "Mercedes-Benz SLS AMG GT3 · Endurance");
+        Check(catalog.Cars.Single(c => c.Id == "zzz") is { Label: "ZZZ", Class: "Other" });
+        Check(catalog.Tracks.Select(t => t.Id).SequenceEqual(["circuits/bathurst/route_0", "circuits/bathurst/route_1", "circuits/spa_francorchamps/route_10", "cities/san_francisco/route_0"]));
+        Check(catalog.Tracks[0].Label == "Mount Panorama — route 0" && catalog.Tracks[3].Label == "San Francisco — route 0 (street)");
+
+        XmlElement Parse(byte[] bytes) { var doc = new XmlDocument(); doc.LoadXml(System.Text.Encoding.UTF8.GetString(bytes)); return doc.DocumentElement!; }
+        var practice = Parse(RaceSession.SessionXml(new Choices(LaunchMode: "Practice", Laps: 5), catalog, 1));
+        var route = (XmlElement)practice.SelectSingleNode("track")!;
+        Check(practice.GetAttribute("infinite_loop") == "false" && practice.GetAttribute("skipreplays") == "true" && practice.GetAttribute("cycle_camera") == "false");
+        Check(route.GetAttribute("country") == "cities" && route.GetAttribute("name") == "san_francisco" && route.GetAttribute("route") == "route_0" &&
+              route.GetAttribute("laps") == "5" && route.GetAttribute("number_cars") == "1");
+        var player = (XmlElement)route.SelectSingleNode("car")!;
+        Check(player.GetAttribute("name") == "sls" && player.GetAttribute("livery") == "user" && player.GetAttribute("grid") == "0" && player.GetAttribute("ai_driver") == "AmericanaI_1_1");
+        // Same car: opponents use the car's other liveries in turn.
+        var same = ((XmlElement)Parse(RaceSession.SessionXml(new Choices(LaunchMode: "Race", Opponents: 3), catalog, 1)).SelectSingleNode("track")!);
+        var cars = same.SelectNodes("car")!.Cast<XmlElement>().ToArray();
+        Check(same.GetAttribute("number_cars") == "4" && cars.Select(c => c.GetAttribute("grid")).SequenceEqual(["0", "1", "2", "3"]));
+        Check(cars.All(c => c.GetAttribute("name") == "sls") && cars.Select(c => c.GetAttribute("livery")).SequenceEqual(["user", "03", "04", "03"]));
+        Check(cars.Select(c => c.GetAttribute("ai_driver")).Distinct().Count() == 4);
+        // Same discipline: other Endurance cars (r8l), repeated; Mixed: every other installed car.
+        var sameClass = RaceSession.SessionXml(new Choices(LaunchMode: "Race", Opponents: 4, OpponentCars: "class"), catalog, 7);
+        Check(Parse(sameClass).SelectNodes("track/car")!.Cast<XmlElement>().Skip(1).All(c => c.GetAttribute("name") == "r8l"));
+        var mixed = Parse(RaceSession.SessionXml(new Choices(LaunchMode: "Race", Opponents: 11, OpponentCars: "mixed"), catalog, 7)).SelectNodes("track/car")!.Cast<XmlElement>().ToArray();
+        Check(mixed.Length == 12 && mixed.Skip(1).Select(c => c.GetAttribute("name")).ToHashSet().SetEquals(["pag", "r8l", "zzz"]));
+        Check(RaceSession.SessionXml(new Choices(LaunchMode: "Race", OpponentCars: "mixed"), catalog, 7).SequenceEqual(RaceSession.SessionXml(new Choices(LaunchMode: "Race", OpponentCars: "mixed"), catalog, 7)));
+        // Other ("zzz") has no discipline: Same discipline falls back to the player's car.
+        Check(Parse(RaceSession.SessionXml(new Choices(LaunchMode: "Race", Car: "zzz", Opponents: 2, OpponentCars: "class"), catalog, 1)).SelectNodes("track/car")!.Cast<XmlElement>().All(c => c.GetAttribute("name") == "zzz"));
+        Check(Throws<IOException>(() => RaceSession.SessionXml(new Choices(LaunchMode: "Practice", Car: "foc"), catalog, 1)));
+        Check(Throws<IOException>(() => RaceSession.SessionXml(new Choices(LaunchMode: "Practice", Track: "cities/chicago/route_0"), catalog, 1)));
+        Check(Throws<ArgumentException>(() => RaceSession.SessionXml(new Choices(), catalog, 1)));
+        Check(RaceSession.Summary(new Choices(), catalog).StartsWith("Normal"));
+        Check(RaceSession.Summary(new Choices(LaunchMode: "Practice", Laps: 1), catalog) == "Practice: Mercedes-Benz SLS AMG GT3 at San Francisco — route 0 (street), 1 lap, solo.");
+        Check(RaceSession.Summary(new Choices(LaunchMode: "Race", Opponents: 1, OpponentCars: "class"), catalog).EndsWith("1 AI opponent (same discipline)."));
+
+        const string id = "0123456789abcdef0123456789abcdef";
+        var args = VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true);
+        Check(args[^2..].SequenceEqual(["-benchmarkAttract", "GASVR_" + id + ".xml"]) && args.Contains("-gasvrplay=" + id));
+        Check(!VrPlaySession.SteamArguments(id, new Choices(), null).Contains("-benchmarkAttract"));
+
+        // The flow patch: only the pinned stock file is accepted.
+        Check(Throws<IOException>(() => PracticeFlow.Guarded(new byte[PracticeFlow.Length])));
+        Check(PracticeFlow.Changes.Zip(PracticeFlow.Changes.Skip(1)).All(p => p.First.Offset + p.First.Before.Length / 2 <= p.Second.Offset));
+        Check(PracticeFlow.Changes.All(c => c.Before.Length == c.After.Length && c.Before != c.After));
+        Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(game)))!, true);
+        InstalledGame(Environment.GetEnvironmentVariable("GASVR_TEST_GAME"));
+    }
+
+    // With GASVR_TEST_GAME set to a real installation (read only): the real catalog and flow patch,
+    // then a full Practice stage and restore on a temporary copy of the AVX and flow.bin.
+    private static void InstalledGame(string? real)
+    {
+        if (string.IsNullOrEmpty(real)) { Console.WriteLine("Installed-game checks skipped (set GASVR_TEST_GAME)."); return; }
+        var installed = RaceSession.Load(real);
+        Console.WriteLine($"Installed: {installed.Cars.Count} cars, {installed.Tracks.Count} routes.");
+        Check(installed.Cars.Count >= 80 && installed.Tracks.Count >= 100 && installed.Cars.All(c => c.Class != "Other"));
+        var stockFlow = File.ReadAllBytes(Path.Combine(real, "system", "flow.bin"));
+        var guarded = PracticeFlow.Guarded(stockFlow);
+        Check(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(guarded)) == PracticeFlow.GuardedSha256);
+
+        var game = FakeGame("stage-library");
+        File.Copy(Path.Combine(real, "GRIDAutosport_avx.exe"), Path.Combine(game, "GRIDAutosport_avx.exe"));
+        Directory.CreateDirectory(Path.Combine(game, "system"));
+        File.WriteAllBytes(Path.Combine(game, "system", "flow.bin"), stockFlow);
+        var bridge = Path.Combine(LauncherSettings.DataDirectory, "bridge-test.dll");
+        File.WriteAllBytes(bridge, [1, 2, 3]);
+        const string id = "fedcba9876543210fedcba9876543210";
+        var session = RaceSession.SessionXml(new Choices(LaunchMode: "Practice"), RaceSession.Load(game), 1);
+        VrPlaySession.Stage(game, bridge, id, session);
+        Check(File.ReadAllBytes(Path.Combine(game, "GASVR_" + id + ".xml")).SequenceEqual(session));
+        Check(File.ReadAllBytes(Path.Combine(game, "system", "flow.bin")).SequenceEqual(guarded));
+        Check(File.Exists(Path.Combine(game, "gasxr.dll")) && File.Exists(Path.Combine(game, Installation.PlayLease)));
+        Check(Program.InstallProblem(false, game)!.Contains("Restore original files"));
+        Check(VrPlaySession.Recover(game));
+        Check(File.ReadAllBytes(Path.Combine(game, "system", "flow.bin")).SequenceEqual(stockFlow));
+        Check(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(game, "GRIDAutosport_avx.exe")))) == VrPlaySession.StockSha256);
+        Check(Directory.EnumerateFiles(game).Select(Path.GetFileName).Order(StringComparer.Ordinal).SequenceEqual(["GRIDAutosport.exe", "GRIDAutosport_avx.exe"]), string.Join(",", Directory.EnumerateFiles(game)));
+        Check(!Directory.EnumerateFiles(Path.Combine(LauncherSettings.DataDirectory, "sessions", id)).Any(f => f.EndsWith(".bin") || f.EndsWith(".exe")));
+        // A flow.bin changed during the session is preserved with its backup and lease.
+        VrPlaySession.Stage(game, bridge, id.Replace('f', 'e'), session);
+        File.WriteAllBytes(Path.Combine(game, "system", "flow.bin"), [9]);
+        Check(Throws<IOException>(() => VrPlaySession.Recover(game)) && File.Exists(Path.Combine(game, Installation.PlayLease)));
+        File.WriteAllBytes(Path.Combine(game, "system", "flow.bin"), guarded);
+        Check(VrPlaySession.Recover(game) && File.ReadAllBytes(Path.Combine(game, "system", "flow.bin")).SequenceEqual(stockFlow));
+        Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(game)))!, true);
+    }
+
     private static void Form(string output)
     {
         using var form = new MainForm(null, null, null) { ShowInactive = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) };
@@ -144,6 +275,11 @@ internal static class SelfTests
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Meta Quest 3"));
+        // Session: Normal by default; Practice enables car, track and laps; Race also the opponents.
+        Check(Find<ComboBox>(form, "LaunchMode").Text == "Normal" && !Find<ComboBox>(form, "SessionCar").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);
+        form.UseCatalog(new([new("sls", "Mercedes-Benz SLS AMG GT3", "Endurance", ["user", "03"]), new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])],
+            [new("cities/san_francisco/route_0", "cities", "san_francisco", "route_0", "San Francisco — route 0 (street)"), new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
+        Check(Find<ComboBox>(form, "SessionCar").Text.StartsWith("Mercedes") && Find<ComboBox>(form, "SessionTrack").Text.StartsWith("San Francisco"));
         form.Show();
         Application.DoEvents();
         try
@@ -158,6 +294,22 @@ internal static class SelfTests
             Check(Find<Button>(form, "SaveSettings").Enabled && Find<Label>(form, "VrResolutionSummary").Text.Contains("4608 × 4896 per eye at 150%"));
             Find<Button>(form, "SaveSettings").PerformClick();
             Check(LauncherSettings.Load().VrRenderScale == 150);
+            var mode = Find<ComboBox>(form, "LaunchMode");
+            mode.SelectedIndex = 1;
+            Check(Find<ComboBox>(form, "SessionCar").Enabled && Find<NumericUpDown>(form, "Laps").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);
+            Check(Find<Label>(form, "SessionSummary").Text.StartsWith("Practice: Mercedes-Benz SLS AMG GT3 at San Francisco"));
+            mode.SelectedIndex = 2;
+            Find<ComboBox>(form, "SessionTrack").SelectedIndex = 1;
+            Find<ComboBox>(form, "OpponentCars").SelectedIndex = 1;
+            Find<NumericUpDown>(form, "Opponents").Value = 4;
+            Check(Find<NumericUpDown>(form, "Opponents").Enabled && Find<Label>(form, "SessionSummary").Text.Contains("Mount Panorama") &&
+                  Find<Label>(form, "SessionSummary").Text.Contains("4 AI opponents (same discipline). Discipline: Endurance."));
+            Find<Button>(form, "SaveSettings").PerformClick();
+            Check(LauncherSettings.Load() is { LaunchMode: "Race", Car: "sls", Track: "circuits/bathurst/route_0", Opponents: 4, OpponentCars: "class" });
+            // A saved car that is no longer installed stays chosen and is named in the summary.
+            form.UseCatalog(new([new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])], [new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
+            Check(Find<ComboBox>(form, "SessionCar").SelectedItem is null && !Find<Button>(form, "SaveSettings").Enabled);
+            Check(Find<Label>(form, "SessionSummary").Text.StartsWith("Race: sls at Mount Panorama"));
             // Changing the recenter key: click, then press it. System shortcuts are refused.
             var key = Find<Button>(form, "RecenterKey");
             form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Controls");
@@ -168,7 +320,7 @@ internal static class SelfTests
             Check(form.CaptureRecenterKey(Keys.F9 | Keys.Control) && key.Text == "Ctrl+F9" && Find<Button>(form, "SaveSettings").Enabled);
             Find<CheckBox>(form, "KeepHorizonLevel").Checked = false;
             Find<Button>(form, "SaveSettings").PerformClick();
-            Check(LauncherSettings.Load() is { RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false });
+            Check(LauncherSettings.Load() is { RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false, LaunchMode: "Race", Car: "sls" });
             // Collapsing a section is remembered by title and restored.
             var headset = form.SectionHeaders.Single(h => h.Title == "Headset check");
             form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Settings");

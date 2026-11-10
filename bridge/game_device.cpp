@@ -13,6 +13,7 @@ const BYTE* image;
 wchar_t directory[MAX_PATH]{};
 bool headset;
 bool regularPlay;
+bool practiceSession; // A play session started with its own -benchmarkAttract file (launcher Practice / Race).
 bool hudFollowsView;
 unsigned eyeWidth, eyeHeight;
 bool keepActive = true;
@@ -54,9 +55,18 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
         const size_t length = wcscspn(value, L" \t");
         const wchar_t* xr = wcsstr(cmd, L" -gasvrmode=openxr");
         if (length != 32 || !xr || wcscspn(xr + 1, L" \t") != wcslen(L"-gasvrmode=openxr") ||
-            wcsstr(value, playArg) || wcsstr(cmd, L" -benchmark") || wcsstr(cmd, L" -gasvrdir=")) return false;
+            wcsstr(value, playArg) || wcsstr(cmd, L" -gasvrdir=")) return false;
         wchar_t token[33]{}, localData[MAX_PATH]{};
         wmemcpy(token, value, length);
+        // Launcher Practice / Race: only this session's own file through the attract flow.
+        if (const wchar_t* bench = wcsstr(cmd, L" -benchmark")) {
+            wchar_t expected[80]{};
+            swprintf_s(expected, L" -benchmarkAttract GASVR_%s.xml", token);
+            const size_t size = wcslen(expected);
+            if (wcsncmp(bench, expected, size) || (bench[size] && bench[size] != L' ' && bench[size] != L'\t') ||
+                wcsstr(bench + size, L" -benchmark")) return false;
+            practiceSession = true;
+        }
         DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", localData, ARRAYSIZE(localData));
         if (!count || count >= ARRAYSIZE(localData) || !AutosportPlayDirectory(token, localData, directory)) return false;
         const wchar_t* follow = wcsstr(cmd, L" -gasvrhudfollow=1");
@@ -199,8 +209,8 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
         D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context) {
     hookVideoLogging();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
-    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u",
-                 hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime);
+    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d",
+                 hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession);
     return hr;
 }
 

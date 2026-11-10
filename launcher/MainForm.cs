@@ -28,6 +28,15 @@ internal sealed class MainForm : LauncherForm
     private readonly Button desktop = Button("Launch", "LaunchDesktop"), vr = Button("Launch VR", "LaunchVR"),
         save = Button("Save settings", "SaveSettings"), recover = Button("Restore original files", "RestoreOriginalFiles"),
         logs = Button("Open logs", "OpenLogs");
+    // Launcher Practice / Race (RaceSession): the event the next Launch VR starts.
+    private sealed record Option(string Id, string Label) { public override string ToString() => Label; }
+    private readonly ComboBox launchMode = Choice("LaunchMode"), car = Choice("SessionCar"), track = Choice("SessionTrack"), opponentCars = Choice("OpponentCars");
+    private readonly NumericUpDown laps = Count("Laps", RaceSession.MaxLaps), opponents = Count("Opponents", RaceSession.MaxOpponents);
+    private readonly Label sessionSummary = TextLabel("");
+    private ContentCatalog catalog = ContentCatalog.Empty;
+    private string? catalogFolder;
+    private string chosenCar = RaceSession.DefaultCar, chosenTrack = RaceSession.DefaultTrack;
+    private bool applying;
     private readonly ToolTip tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 15000, ShowAlways = true };
     private readonly List<SectionHeader> sectionHeaders = [];
     private LauncherWindow window = new();
@@ -62,9 +71,18 @@ internal sealed class MainForm : LauncherForm
 
         var launcherColumns = Columns(Page(Tabs, "Launcher")); var launcher = launcherColumns.First;
         Section(launcher, "Session");
-        Field(launcher, "Launch mode", TextLabel("Normal — the game's own menus"));
-        launcher.Controls.Add(TextLabel("Launch VR starts GRID Autosport through Steam with the VR renderer. The startup videos and menus appear on a screen in front of your seat; races are in stereo with head tracking. Choose cars and events in the game's menus."));
-        launcher.Controls.Add(TextLabel("Finish with Quit in the game: the launcher then restores the original game files. After an interrupted session, choose Restore original files."));
+        launchMode.Items.AddRange([new Option("Normal", "Normal"), new Option("Practice", "Practice"), new Option("Race", "Race")]);
+        opponentCars.Items.AddRange([new Option("same", "Same car"), new Option("class", "Same discipline"), new Option("mixed", "Mixed")]);
+        Field(launcher, "Launch mode", launchMode);
+        Field(launcher, "Car", car);
+        Field(launcher, "Track", track);
+        Field(launcher, "Laps", laps);
+        Field(launcher, "Opponents", opponents);
+        Field(launcher, "Opponent cars", opponentCars);
+        sessionSummary.Name = "SessionSummary"; sessionSummary.Tag = "hint";
+        launcher.Controls.Add(sessionSummary);
+        launcher.Controls.Add(TextLabel("Normal opens the game's own menus, where you choose cars and events. Practice starts the selected car and track on your own; Race adds 1–11 computer-controlled opponents. Practice and Race apply to Launch VR; the desktop Launch always opens the menus."));
+        launcher.Controls.Add(TextLabel("Launch VR starts GRID Autosport through Steam with the VR renderer. The startup videos, loading screens and menus appear on a screen in front of your seat; races are in stereo with head tracking. Finish with Quit in the game: the launcher then restores the original game files. After an interrupted session, choose Restore original files."));
         launcher = launcherColumns.Second;
         Section(launcher, "Before you launch");
         launcher.Controls.Add(TextLabel("Connect your headset to its 32-bit OpenXR runtime, for example Virtual Desktop, before Launch VR. The launcher checks the runtime first and stops if no headset answers."));
@@ -138,6 +156,10 @@ internal sealed class MainForm : LauncherForm
         recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
         recenter.LostFocus += (_, _) => { if (capturingRecenter) { capturingRecenter = false; UpdateRecenterLabel(); EnableActions(); } };
         keepHorizonLevel.CheckedChanged += (_, _) => ChoiceEdited();
+        foreach (var combo in new[] { launchMode, car, track, opponentCars })
+            combo.SelectedIndexChanged += (_, _) => SessionEdited();
+        laps.ValueChanged += (_, _) => SessionEdited();
+        opponents.ValueChanged += (_, _) => SessionEdited();
         modernInterface.CheckedChanged += (_, _) =>
         {
             LauncherAppearance.Modern = modernInterface.Checked;
@@ -149,7 +171,61 @@ internal sealed class MainForm : LauncherForm
         RefreshInstallation();
     }
 
-    private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked);
+    private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
+        (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
+        (opponentCars.SelectedItem as Option)?.Id ?? "same");
+
+    // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
+    private void SessionEdited()
+    {
+        if (applying) return;
+        if (car.SelectedItem is CarItem c) chosenCar = c.Id;
+        if (track.SelectedItem is TrackItem t) chosenTrack = t.Id;
+        ChoiceEdited();
+    }
+
+    internal void UseCatalog(ContentCatalog value)
+    {
+        catalog = value;
+        applying = true;
+        try
+        {
+            car.Items.Clear(); car.Items.AddRange([.. catalog.Cars]);
+            track.Items.Clear(); track.Items.AddRange([.. catalog.Tracks]);
+            SelectSession();
+        }
+        finally { applying = false; }
+        EnableActions();
+    }
+
+    private void SelectSession()
+    {
+        car.SelectedItem = catalog.Cars.FirstOrDefault(c => c.Id == chosenCar);
+        track.SelectedItem = catalog.Tracks.FirstOrDefault(t => t.Id == chosenTrack);
+    }
+
+    private void LoadCatalog()
+    {
+        if (string.Equals(catalogFolder, gameFolder, StringComparison.OrdinalIgnoreCase) && catalog.Cars.Count > 0) return;
+        catalogFolder = gameFolder;
+        try { UseCatalog(Installation.GameExists(gameFolder) ? RaceSession.Load(gameFolder!) : ContentCatalog.Empty); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            UseCatalog(ContentCatalog.Empty);
+            notice.Text = "Could not read the installed cars and tracks. " + error.Message;
+        }
+    }
+
+    // Why Launch VR cannot start the chosen Practice / Race event, if it cannot.
+    private string? SessionProblem()
+    {
+        var choices = Current;
+        if (choices.LaunchMode == "Normal") return null;
+        if (catalog.Cars.Count == 0 || catalog.Tracks.Count == 0) return "No installed cars or tracks were found for Practice or Race.";
+        if (!catalog.Cars.Any(c => c.Id == choices.Car)) return $"Choose a car: {choices.Car} is not installed.";
+        if (!catalog.Tracks.Any(t => t.Id == choices.Track)) return $"Choose a track: {choices.Track} is not installed.";
+        return null;
+    }
 
     private void LoadChoices()
     {
@@ -169,6 +245,16 @@ internal sealed class MainForm : LauncherForm
         renderScale.Value = choices.VrRenderScale;
         recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
         keepHorizonLevel.Checked = choices.KeepHorizonLevel;
+        applying = true;
+        try
+        {
+            launchMode.SelectedItem = launchMode.Items.Cast<Option>().First(o => o.Id == choices.LaunchMode);
+            opponentCars.SelectedItem = opponentCars.Items.Cast<Option>().First(o => o.Id == choices.OpponentCars);
+            laps.Value = choices.Laps; opponents.Value = choices.Opponents;
+            chosenCar = choices.Car; chosenTrack = choices.Track;
+            SelectSession();
+        }
+        finally { applying = false; }
         LauncherAppearance.Modern = choices.ModernInterface;
         UpdateVrSummary();
         EnableActions();
@@ -250,7 +336,7 @@ internal sealed class MainForm : LauncherForm
         var pending = Installation.SessionPending(gameFolder);
         var playLease = valid && File.Exists(Path.Combine(gameFolder!, Installation.PlayLease));
         desktop.Enabled = idle && valid && recoveryError is null && !pending;
-        var problem = recoveryError ?? Installation.VrLaunchProblem(gameFolder, probePath, rendererPath);
+        var problem = recoveryError ?? Installation.VrLaunchProblem(gameFolder, probePath, rendererPath) ?? SessionProblem();
         vr.Enabled = idle && problem is null;
         vr.AccessibleDescription = problem ?? "Start GRID Autosport in VR through Steam.";
         save.Enabled = idle && Current != saved;
@@ -258,6 +344,12 @@ internal sealed class MainForm : LauncherForm
         browse.Enabled = idle;
         query.Enabled = pattern.Enabled = refreshHeadset.Enabled = idle && File.Exists(probePath);
         defaults.Enabled = idle;
+        var mode = (launchMode.SelectedItem as Option)?.Id ?? "Normal";
+        launchMode.Enabled = idle;
+        car.Enabled = track.Enabled = laps.Enabled = idle && mode != "Normal" && catalog.Cars.Count > 0;
+        opponents.Enabled = opponentCars.Enabled = idle && mode == "Race" && catalog.Cars.Count > 0;
+        sessionSummary.Text = RaceSession.Summary(Current, catalog) + (mode == "Race" && opponentCars.SelectedItem is Option { Id: "class" } && car.SelectedItem is CarItem c
+            ? $" Discipline: {c.Class}{(catalog.Cars.Any(o => o.Id != c.Id && o.Class == c.Class && c.Class != "Other") ? "" : "; no other installed car shares it, so opponents use your car")}." : "");
         recenter.Enabled = !testing && !supervising && !recovering;
         state.Text = supervising ? "VR session in progress. Quit the game normally; the launcher then restores the original game files."
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
@@ -271,6 +363,7 @@ internal sealed class MainForm : LauncherForm
     private void RefreshInstallation()
     {
         recoveryError = null;
+        LoadCatalog();
         var recovered = false;
         if (Installation.GameExists(gameFolder))
         {
@@ -303,7 +396,8 @@ internal sealed class MainForm : LauncherForm
         EnableActions();
         try
         {
-            notice.Text = $"Checking the headset, then Steam opens the game. Put on your headset. Press {RecenterShortcut.Label(recenterKey, recenterModifiers)} in the game to recenter.";
+            notice.Text = (Current.LaunchMode == "Normal" ? "" : RaceSession.Summary(Current, catalog) + " ") +
+                $"Checking the headset, then Steam opens the game. Put on your headset. Press {RecenterShortcut.Label(recenterKey, recenterModifiers)} in the game to recenter.";
             using var worker = Process.Start(Installation.VrStartInfo(gameFolder)) ?? throw new IOException("The VR session supervisor did not start.");
             var errors = worker.StandardError.ReadToEndAsync();
             await worker.WaitForExitAsync();
@@ -443,9 +537,17 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(recover, "Remove the VR files left by an interrupted session and restore the original game executable.");
         tips.SetToolTip(logs, "Open the folder with VR session and headset-check logs to attach to a report.");
         tips.SetToolTip(refreshHeadset, "Read the connected headset''s recommended resolution through the 32-bit OpenXR runtime.");
+        tips.SetToolTip(launchMode, "Normal opens the game's menus. Practice starts the selected car and track on your own. Race adds computer-controlled opponents. Practice and Race apply to Launch VR.");
+        tips.SetToolTip(car, "Your car for Practice or Race. The discipline after the name groups Same discipline opponents.");
+        tips.SetToolTip(track, "The circuit or street route for Practice or Race.");
+        tips.SetToolTip(laps, $"Laps for Practice or Race, 1–{RaceSession.MaxLaps}.");
+        tips.SetToolTip(opponents, $"Race only: 1–{RaceSession.MaxOpponents} computer-controlled opponents. You start on pole.");
+        tips.SetToolTip(opponentCars, "Race only. Same car uses your car in its other liveries. Same discipline picks other installed cars of your car's discipline. Mixed picks any installed cars.");
         tips.SetToolTip(recenter, "Click, then press the key (with Ctrl, Alt or Shift) that recenters your view in VR.");
     }
 
+    private static ComboBox Choice(string name) => new() { Name = name, DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, MaxDropDownItems = 20 };
+    private static NumericUpDown Count(string name, int maximum) => new() { Name = name, Minimum = 1, Maximum = maximum, Value = 1, Width = 80 };
     private static Button Button(string text, string name) => new() { Text = text, Name = name, AutoSize = true, Padding = new Padding(5, 2, 5, 2) };
     private static Label TextLabel(string text) => new() { Text = text, AutoSize = true, UseMnemonic = false, Margin = new Padding(0, 4, 0, 10) };
     private static VerticalStack Page(TabControl tabs, string title)
