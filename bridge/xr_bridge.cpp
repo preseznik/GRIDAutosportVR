@@ -210,7 +210,7 @@ struct Bridge {
         if (instance) { checked(xrDestroyInstance(instance), "xrDestroyInstance"); instance = {}; }
         return outcome;
     }
-    void copySource(ID3D11Texture2D* source, unsigned subresource, const RECT (&r)[2], D3D11_TEXTURE2D_DESC& desc);
+    void copySource(ID3D11Texture2D* source, unsigned subresource, const RECT (&r)[2], unsigned used, D3D11_TEXTURE2D_DESC& desc);
     void createChain(Chain& chain, UINT width, UINT height, DXGI_FORMAT format);
     void convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RECT& rect);
     bool submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePresentation presentation);
@@ -387,7 +387,8 @@ bool Bridge::locate() {
     return true;
 }
 
-void Bridge::copySource(ID3D11Texture2D* source, unsigned subresource, const RECT (&r)[2],
+// used=1: only r[0] is presented (a flat screen, which may cover the whole texture).
+void Bridge::copySource(ID3D11Texture2D* source, unsigned subresource, const RECT (&r)[2], unsigned used,
                         D3D11_TEXTURE2D_DESC& desc) {
     require(source, "no_packed_source");
     ComPtr<ID3D11Device> sourceDevice;
@@ -397,10 +398,12 @@ void Bridge::copySource(ID3D11Texture2D* source, unsigned subresource, const REC
     require(desc.MipLevels && desc.ArraySize && subresource/desc.MipLevels < desc.ArraySize, "invalid_source_subresource");
     const UINT mip = subresource % desc.MipLevels;
     const UINT width = std::max(1u, desc.Width>>mip), height = std::max(1u, desc.Height>>mip);
-    for (const auto& rect : r)
+    for (unsigned i = 0; i < used; ++i) {
+        const RECT& rect = r[i];
         require(rect.left >= 0 && rect.top >= 0 && rect.left < rect.right && rect.top < rect.bottom &&
                 UINT(rect.right) <= width && UINT(rect.bottom) <= height, "invalid_eye_viewport");
-    require(r[0].right <= r[1].left || r[1].right <= r[0].left || r[0].bottom <= r[1].top ||
+    }
+    require(used < 2 || r[0].right <= r[1].left || r[1].right <= r[0].left || r[0].bottom <= r[1].top ||
             r[1].bottom <= r[0].top, "overlapping_eye_viewports");
     const DXGI_FORMAT format = typedFormat(desc.Format);
     D3D11_TEXTURE2D_DESC previous{};
@@ -643,7 +646,7 @@ BridgeEndResult AutosportEndViews(ID3D11Texture2D* packed, unsigned subresource,
         }
         PredicateScope unpredicated(b.context.Get());
         D3D11_TEXTURE2D_DESC desc{};
-        b.copySource(packed,subresource,rects,desc);
+        b.copySource(packed,subresource,rects,(flat && !saveSource) ? 1u : 2u,desc);
         const auto format = typedFormat(desc.Format);
         char dumpFailure[200]{};
         if (saveSource) {

@@ -205,7 +205,9 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
 bool AutosportUseHeadset() { return headset; }
 bool AutosportRegularPlay() { return regularPlay; }
 bool AutosportHudFollowsView() { return uiComparison ? captures == 1 : hudFollowsView; }
-bool AutosportKeepActive() { return keepActive && headset; }
+// Every bridge session (headset play and the capture benchmark) keeps the game running when its
+// window is inactive; the game otherwise drops to ~18 fps and pauses its startup videos.
+bool AutosportKeepActive() { return keepActive; }
 bool AutosportUiComparison() { return uiComparison; }
 bool AutosportCompareSlate() { return compareSlate; }
 const char* AutosportTransitionSample() {

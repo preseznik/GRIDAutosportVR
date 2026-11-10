@@ -229,8 +229,9 @@ double clockSeconds() {
 
 // The main window procedure (RVA 4E0E50) sets the game window's inactive flag (+0x1D9) on
 // WM_ACTIVATEAPP and clears it on WM_ACTIVATE; the startup videos stop advancing while it is
-// set. A headset player rarely has the game window focused, so headset sessions withhold the
-// deactivations (-gasvrkeepactive=0 opts out). Every activation change is logged.
+// set, and the rest of the game drops to ~18 fps. A headset player rarely has the game window
+// focused, and test runs share the desktop, so bridge sessions withhold the deactivations
+// (-gasvrkeepactive=0 opts out). Every activation change is logged.
 WNDPROC stockWndProc = nullptr;
 LRESULT CALLBACK gameWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     const bool keep = AutosportKeepActive();
@@ -267,31 +268,35 @@ void watchGameWindow(HWND window) {
 
 // Shortly after the title scene appears (native frame ~2300 on xr-sim), the game stops calling
 // the HMD frame path and draws the menus with its own swap-chain Present, uncapped (~1200/s).
-// Log when that starts and every 10 s after; presentMirror's own Present is excluded.
+// While that lasts, each game Present is shown on the seated screen (showMenuPresent), which
+// also paces the menu to the headset. presentMirror's own Present is excluded.
 using PresentFn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 PresentFn stockPresent = nullptr;
 thread_local bool mirrorPresenting = false;
+uint64_t hmdBegins = 0; // Native BeginFrame calls; unchanged between two Presents = HMD path idle.
+bool showMenuPresent(IDXGISwapChain* chain);
 HRESULT STDMETHODCALLTYPE watchedPresent(IDXGISwapChain* chain, UINT sync, UINT flags) {
     if (!mirrorPresenting) {
         static ULONGLONG since;
-        static unsigned count;
-        static uint64_t startFrame = UINT64_MAX;
+        static unsigned count, transitions;
+        static uint64_t startBegins = UINT64_MAX;
         const ULONGLONG now = GetTickCount64();
-        static unsigned transitions;
-        if (startFrame != frame) {
+        if (startBegins != hmdBegins) {
             // Capped, in case a mode interleaves HMD frames and presents every frame.
             if (++transitions <= 40) {
-                if (startFrame != UINT64_MAX && count)
+                if (startBegins != UINT64_MAX && count)
                     AutosportLog("Game Presents ended: %u in %llums", count, now - since);
                 AutosportLog("Game Present without the HMD path from native frame=%llu sync=%u", frame, sync);
             }
-            startFrame = frame; since = now; count = 0;
+            startBegins = hmdBegins; since = now; count = 0;
         }
         if (++count % 10000 == 0)
             AutosportLog("Game Presents continuing: %u in %llums nativeFrame=%llu", count, now - since, frame);
+        showMenuPresent(chain);
     }
     return stockPresent(chain, sync, flags);
-}void watchPresent(IDXGISwapChain* chain) {
+}
+void watchPresent(IDXGISwapChain* chain) {
     if (stockPresent || !chain) return;
     void** table = *reinterpret_cast<void***>(chain);
     DWORD protection{};
@@ -422,6 +427,7 @@ Timing* __cdecl beginFrame(Timing* timing, Hmd* target, unsigned) {
     *timing = {};
     if (target != &hmd || !descriptors) return timing;
     closeFrame();
+    ++hmdBegins;
     ++frame; // GRID passes frameIndex=0 on every call. This serial identifies one native begin/end pair.
     AutosportBeginLoadingOverlayFrame(frame, !AutosportFlatScreen());
     BridgeView views[2]{};
@@ -487,6 +493,43 @@ void presentMirror(ID3D11Texture2D* packed) {
     mirrorPresenting = false;
 }
 
+// A game Present while the HMD path is idle carries a finished flat frame (the menus). End
+// the HMD frame the game abandoned, then show the back buffer on the seated screen. The
+// bridge's xrWaitFrame paces these presents to the headset.
+bool showMenuPresent(IDXGISwapChain* chain) {
+    static uint64_t seenBegins = UINT64_MAX;
+    static bool showing;
+    if (!AutosportUseHeadset() || !descriptors || chain != config.chain) return false;
+    const bool hmdIdle = seenBegins == hmdBegins;
+    seenBegins = hmdBegins;
+    if (!hmdIdle) {
+        if (showing) AutosportLog("Menu presents on the seated screen ended at native frame=%llu", frame);
+        showing = false;
+        return false;
+    }
+    if (frameOpen) closeFrame();
+    ID3D11Texture2D* back = nullptr;
+    if (FAILED(chain->GetBuffer(0, IID_PPV_ARGS(&back))) || !back) return false;
+    D3D11_TEXTURE2D_DESC desc{};
+    back->GetDesc(&desc);
+    BridgeView views[2]{};
+    BridgeEndResult result{};
+    ++frame;
+    if (AutosportBeginViews(config.device, config.context, true, frame, views)) {
+        const RECT full{0, 0, LONG(desc.Width), LONG(desc.Height)};
+        const RECT rects[2]{full, full};
+        result = AutosportEndViews(back, 0, rects, frame, nullptr, BridgePresentation::FlatScreen);
+    }
+    back->Release();
+    static unsigned reported;
+    if (!showing || (!result.submitted && reported < 20)) {
+        if (!result.submitted) ++reported;
+        AutosportLog("Menu present native frame=%llu back=%ux%u format=%u submitted=%u status=%s", frame,
+                     desc.Width, desc.Height, unsigned(desc.Format), unsigned(result.submitted), AutosportBridgeStatus());
+    }
+    showing = true;
+    return result.submitted;
+}
 void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
     if (target != &hmd) return;
     if (frameOpen && eyes && eyes[0].api == 5 && eyes[1].api == 5 && eyes[0].texture &&
