@@ -15,5 +15,6 @@ First packaged build of GRID Autosport VR for the Steam game (AVX renderer, buil
 
 - End session (beside Launch VR while a session runs) closes the game and restores the original files.
 - Practice and Race in VR start in the cockpit view (Launcher → Session → Camera, on by default).
+- The pre-race intro shots appear on the seated screen instead of as a broken panel in the headset.
 
 Known limits: menus are shown flat. Practice and Race start from Launch VR only, in day and dry conditions, and you start on pole; they have no pause menu, so stop them with End session. Controller/wheel recenter buttons are not available yet.

@@ -474,6 +474,7 @@ Timing* __cdecl beginFrame(Timing* timing, Hmd* target, unsigned) {
     closeFrame();
     ++hmdBegins;
     ++frame; // GRID passes frameIndex=0 on every call. This serial identifies one native begin/end pair.
+    AutosportSampleVehicleCamera(); // Fixes this frame's presentation (stereo or seated screen).
     AutosportBeginLoadingOverlayFrame(frame, !AutosportFlatScreen());
     BridgeView views[2]{};
     frameOpen = AutosportBeginViews(config.device, config.context, AutosportUseHeadset(), frame, views);
@@ -691,6 +692,7 @@ void __cdecl finishBenchmark() {
 using ViewLookupFn = int (__thiscall*)(void*, const char*);
 ViewLookupFn stockViewLookup = nullptr;
 int __fastcall raceStartView(void* manager, void*, const char* requested) {
+    AutosportSetVehicleViews(manager);
     if (AutosportStartInCockpit() && AutosportUseHeadset() && AutosportPracticeSession()) {
         const int cockpit = stockViewLookup(manager, "head-cam");
         if (cockpit >= 0) {

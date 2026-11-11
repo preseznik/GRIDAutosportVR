@@ -36,7 +36,9 @@ void* __fastcall AutosportSlateVisibility(void* message, void*, unsigned int vis
     const bool shown = (visible & 0xff) != 0;
     // ScreenSessionIntroSlateShow retains its stock timing and native hide/flow callbacks.
     // This message addresses only the pre_race_slate child of fe/overlay.
-    const bool hideInScene = shown && !AutosportCompareSlate() && !AutosportFlatScreen();
+    // Decided by the race scene, not by this frame's presentation: an intro shot (seated screen)
+    // can be on screen when the slate is requested, and the slate then stays up in stereo.
+    const bool hideInScene = shown && !AutosportCompareSlate() && AutosportRaceScene();
     void* result = makeVisibility(message, hideInScene ? 0u : visible);
     slateSuppressed.store(hideInScene);
     if (slateVisible.exchange(shown) != shown) {

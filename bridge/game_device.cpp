@@ -20,6 +20,11 @@ bool hudFollowsView;
 unsigned eyeWidth, eyeHeight;
 bool keepActive = true;
 bool testPad; // -gasvrtestpad=1: harness-driven virtual gamepad (hookTestPad).
+// The vehicle view manager the race-start view request used (forgotten on every loading state),
+// and whether this native frame is an intro shot: its byte +0x834 is clear while the game shows
+// a pre-race (or finish) camera shot instead of the player's car camera.
+const BYTE* vehicleViews;
+bool introShot;
 bool startInCockpit; // -gasvrcockpit=1: headset races start in the driver cockpit view (native_ovr raceStartView).
 bool uiComparison;
 bool compareSlate;
@@ -377,9 +382,26 @@ bool AutosportStartupFromBackBuffer() {
     static const bool eye = wcsstr(GetCommandLineW(), L" -gasvrstartupsource=eye") != nullptr;
     return regularPlay && headset && !eye && phase.load() == Phase::Startup;
 }
+void AutosportSetVehicleViews(const void* manager) { vehicleViews = static_cast<const BYTE*>(manager); }
+// Once per native frame. Headset play shows intro shots on the seated screen: the game draws
+// them as a 2D broadcast layout (a dark info panel down the left side, black wipes), which
+// does not work as a stereo world. Capture benchmarks keep their stereo shots.
+void AutosportSampleVehicleCamera() {
+    bool intro = false;
+    if (regularPlay && headset && phase.load() == Phase::Scene && vehicleViews) {
+        __try { intro = vehicleViews[0x834] == 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { vehicleViews = nullptr; }
+    }
+    if (intro != introShot) {
+        introShot = intro;
+        static unsigned changes;
+        if (++changes <= 200) AutosportLog("Race scene camera: %s", intro ? "intro shot on the seated screen" : "car camera in stereo");
+    }
+}
+bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
-    if (current != Phase::Startup) return current == Phase::Loading;
+    if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && introShot);
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
     const BYTE* state = image + benchmark;
@@ -392,6 +414,8 @@ bool AutosportFlatScreen() {
 using LoadingDispatch = void (__thiscall*)(void*, const void*);
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event) {
     phase.store(Phase::Loading);
+    vehicleViews = nullptr;
+    introShot = false;
     AutosportLog("StateLoading entered");
     reinterpret_cast<LoadingDispatch>(image + 0x9f6c80)(dispatcher, event);
 }
