@@ -135,6 +135,7 @@ internal static partial class VrPlaySession
          .. choices.VrCockpit ? new[] { "-gasvrcockpit=1" } : [],
          "-gasvrhudparts=" + choices.HudParts, "-gasvrhuddistance=" + (int)(choices.HudDistance * 100m),
          "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
+         .. choices.Intro3D ? new[] { "-gasvrintro3d=1" } : [],
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : []];
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).

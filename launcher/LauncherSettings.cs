@@ -12,7 +12,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     string LaunchMode = "Normal", string Car = RaceSession.DefaultCar, string Track = RaceSession.DefaultTrack,
     int Laps = 3, int Opponents = 7, string OpponentCars = "same", bool VrCockpit = true,
     bool HudShow = true, bool HudDial = true, bool HudMinimap = true, bool HudCounters = true, bool HudPositions = true,
-    decimal HudDistance = 1m, decimal ScreenDistance = 3m)
+    decimal HudDistance = 1m, decimal ScreenDistance = 3m, bool Intro3D = false)
 {
     // The bridge's -gasvrhudparts mask: 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position info.
     internal int HudParts => (HudShow ? 1 : 0) | (HudDial ? 2 : 0) | (HudMinimap ? 4 : 0) | (HudCounters ? 8 : 0) | (HudPositions ? 16 : 0);
@@ -122,7 +122,8 @@ internal static class LauncherSettings
             ReadFlag(document, "hudMinimap", true, fileName), ReadFlag(document, "hudCounters", true, fileName),
             ReadFlag(document, "hudPositions", true, fileName),
             ReadDistance(document, "hudDistance", 1m, DistanceSlider.HudMinimum, DistanceSlider.HudMaximum, fileName),
-            ReadDistance(document, "screenDistance", 3m, DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, fileName));
+            ReadDistance(document, "screenDistance", 3m, DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, fileName),
+            ReadFlag(document, "intro3d", false, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -154,6 +155,7 @@ internal static class LauncherSettings
         document["hudDistance"] = choices.HudDistance;
         if (!DistanceSlider.ValidScreen(choices.ScreenDistance)) throw new ArgumentException("Unsupported screen distance.");
         document["screenDistance"] = choices.ScreenDistance;
+        document["intro3d"] = choices.Intro3D;
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
     }
 

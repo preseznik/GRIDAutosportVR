@@ -568,7 +568,10 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         D3D11_TEXTURE2D_DESC canvas{};
         snapshot->GetDesc(&canvas);
         const auto& f = located[0].fov;
-        const float tangentAspect = (std::tan(-f.angleLeft) + std::tan(f.angleRight)) / (std::tan(f.angleUp) + std::tan(-f.angleDown));
+        // The field of view the game rendered the flat frame with (native_ovr applyViews):
+        // centred and at least 16:9.
+        const float tangentAspect = (std::max)((std::tan(-f.angleLeft) + std::tan(f.angleRight)) /
+                                               (std::tan(f.angleUp) + std::tan(-f.angleDown)), 16.f / 9.f);
         const bool wholeTexture = UINT(rects[0].right - rects[0].left) == canvas.Width && UINT(rects[0].bottom - rects[0].top) == canvas.Height;
         const float aspect = wholeTexture || !(tangentAspect > .2f && tangentAspect < 5.f) ? float(canvas.Width) / float(canvas.Height) : tangentAspect;
         // At most 2.4 m wide and 1.8 m tall at any distance (further away it covers less of the

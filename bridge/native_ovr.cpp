@@ -2,6 +2,7 @@
 #include "loading_overlay.h"
 #include "bridge_api.h"
 #include "xr_bridge.h"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -485,7 +486,13 @@ void applyViews(const BridgeView (&views)[2], bool flat) {
         poses[eye] = {multiply(originYaw, q), rotate(originYaw, sub(center, originPosition))};
         Fov fov{std::tan(v.fov[2]), -std::tan(v.fov[3]), -std::tan(v.fov[0]), std::tan(v.fov[1])};
         if (flat) {
-            const float horizontal = .5f * (fov.left + fov.right), vertical = .5f * (fov.up + fov.down);
+            // Centred, and at least 16:9: the game lays its menus, loading cards and intro
+            // broadcast layout out for a widescreen frame, and a headset's own field of view
+            // (about 0.94:1 on a Quest 3) cut their sides off. The seated screen shows the image
+            // at this field of view's aspect, so the pixels need not be square.
+            constexpr float widescreen = 16.f / 9.f;
+            const float vertical = .5f * (fov.up + fov.down);
+            const float horizontal = (std::max)(.5f * (fov.left + fov.right), vertical * widescreen);
             fov = {vertical, vertical, horizontal, horizontal};
         }
         setOptics(eye, fov, rotate(conjugate(q), sub(center, pos)));
@@ -811,7 +818,8 @@ bool AutosportInstallNativeOvr() noexcept {
         site(0x2B29A3, 0x49E8E0, prepareGameExit),
         site(0x685011, 0x4EE040, finishBenchmark, 0x68506B),
         site(0x6851F4, 0x4EE040, finishBenchmark, 0x68505C),
-        site(0x1B7B63, 0x720B80, AutosportDrawFrontendOverlay),
+        site(0x1B7B63, 0x720B80, AutosportDrawFrontendOverlay), site(0x1B7B98, 0x720B80, AutosportDrawFrontendOverlay),
+        site(0x1B7C09, 0x720B80, AutosportDrawFrontendOverlay),
         site(0x1D5221, 0x9FFBC0, AutosportSlateVisibility), site(0x1D5482, 0x9FFBC0, AutosportSlateVisibility),
         site(0x243F26, 0x9F6C80, AutosportLoadingEntered), site(0x243FC9, 0x9F6C80, AutosportLoadingExited),
         site(0x4DBFCB, 0xA9E420, endFrame), site(0x4DC25D, 0xA9E3B0, beginFrame),

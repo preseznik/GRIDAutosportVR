@@ -8,6 +8,7 @@ bool AutosportPracticeSession();
 void AutosportSetVehicleViews(const void* manager);
 void AutosportSampleVehicleCamera();
 void AutosportSetPauseState(const void* state);
+bool AutosportPreRaceIntro3D();
 bool AutosportPauseMenuShown();
 bool AutosportRaceScene();
 bool AutosportHudFollowsView();

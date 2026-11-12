@@ -51,6 +51,10 @@ void* __fastcall AutosportSlateVisibility(void* message, void*, unsigned int vis
 
 void __cdecl AutosportDrawFrontendOverlay(void* renderer, void* root, void* camera,
                                           unsigned int flags, unsigned int mask) {
+    // 3D pre-race intro: the shots stay in stereo, so the 2D broadcast layer drawn over them
+    // (info panel, wipes) would be stuck to the view. The FE manager's three non-HUD passes
+    // (RVA 1B7B63, 1B7B98, 1B7C09) all come here; skip them for those shots only.
+    if (AutosportPreRaceIntro3D()) return;
     const Sample current = sample.load();
     if (current != Sample::None && slateVisible.load()) {
         draws.fetch_add(1);

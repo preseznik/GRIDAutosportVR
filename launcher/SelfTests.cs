@@ -69,13 +69,13 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file) == race);
         // VR HUD: everything shown at 1 m by default; parts and distance round-trip and are validated.
         Check(new Choices() is { HudShow: true, HudDial: true, HudMinimap: true, HudCounters: true, HudPositions: true, HudDistance: 1m, ScreenDistance: 3m } && new Choices().HudParts == 31);
-        var hudChoices = new Choices(HudShow: true, HudDial: false, HudMinimap: true, HudCounters: false, HudPositions: true, HudDistance: 7.5m, ScreenDistance: 5.5m);
+        var hudChoices = new Choices(HudShow: true, HudDial: false, HudMinimap: true, HudCounters: false, HudPositions: true, HudDistance: 7.5m, ScreenDistance: 5.5m, Intro3D: true);
         Check(hudChoices.HudParts == 1 + 4 + 16 && (new Choices(HudShow: false)).HudParts == 30);
         LauncherSettings.Save(hudChoices, file);
         Check(LauncherSettings.Load(file) == hudChoices);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(HudDistance: 1.25m), file)));
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(ScreenDistance: 7m), file)));
-        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}" })
+        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}", "{\"intro3d\": \"yes\"}" })
         {
             File.WriteAllText(file, bad);
             Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
@@ -159,6 +159,8 @@ internal static class SelfTests
         var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
         Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
+        Check(!new Choices().Intro3D && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrintro3d=1"));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(Intro3D: true), null).Contains("-gasvrintro3d=1"));
         Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(VrCockpit: false), null).Contains("-gasvrcockpit=1"));
         var shortcut = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(RecenterKey: 120, RecenterModifiers: 5, KeepHorizonLevel: false), null);
         Check(shortcut.Contains("-gasvrrecenterkey=120") && shortcut.Contains("-gasvrrecentermods=5") && shortcut.Contains("-gasvrkeephorizon=0") && !shortcut.Any(a => a.StartsWith("-gasvreyesize")));
@@ -326,8 +328,9 @@ internal static class SelfTests
             Find<CheckBox>(form, "HudMinimap").Checked = false;
             Find<DistanceSlider>(form, "HudDistance").Value = 3.5m;
             Find<DistanceSlider>(form, "ScreenDistance").Value = 4m;
+            Find<CheckBox>(form, "Intro3D").Checked = true;
             Find<Button>(form, "SaveSettings").PerformClick();
-            Check(LauncherSettings.Load() is { HudShow: true, HudMinimap: false, HudDial: true, HudDistance: 3.5m, ScreenDistance: 4m });
+            Check(LauncherSettings.Load() is { HudShow: true, HudMinimap: false, HudDial: true, HudDistance: 3.5m, ScreenDistance: 4m, Intro3D: true });
             var mode = Find<ComboBox>(form, "LaunchMode");
             mode.SelectedIndex = 1;
             Check(Find<ComboBox>(form, "SessionCar").Enabled && Find<NumericUpDown>(form, "Laps").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);

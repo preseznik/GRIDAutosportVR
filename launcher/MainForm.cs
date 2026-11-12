@@ -29,6 +29,7 @@ internal sealed class MainForm : LauncherForm
     private HeadsetResolution? headsetResolution = HeadsetResolution.Load();
     private readonly Button recenter = Button("F10", "RecenterKey");
     private readonly Label recenterHint = TextLabel("");
+    private readonly CheckBox intro3d = new() { Name = "Intro3D", AccessibleName = "Show the pre-race intro in 3D", Text = "Show the pre-race intro in 3D", AutoSize = true };
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
     private bool capturingRecenter;
@@ -116,7 +117,8 @@ internal sealed class MainForm : LauncherForm
         graphics.Controls.Add(TextLabel(HudHelp));
         Section(graphics, "VR screen");
         Field(graphics, "Distance", screenDistance);
-        graphics.Controls.Add(TextLabel("Startup videos, loading screens, menus and the pre-race intro shots appear on a screen fixed in front of your seat, up to 2.4 m wide. Further back makes it smaller in view. It stays in place until you recenter. Applies to the next VR launch."));
+        Field(graphics, "Intro shots", intro3d);
+        graphics.Controls.Add(TextLabel("Startup videos, loading screens, menus and the pause menu appear on a 16:9 screen fixed in front of your seat, up to 2.4 m wide; further back makes it smaller in view, and it stays in place until you recenter. The pre-race intro shots use it too, unless Intro shots is on: then they are shown in 3D, without the game's 2D info panel. Finish cameras and results always use the screen. Applies to the next VR launch."));
 
         // GRID2VR's Controls tab: VR now; Seat and Driving join it with their own launcher items.
         var controlPage = new TabPage("Controls") { Name = "ControlsPage", Padding = new Padding(8) };
@@ -175,6 +177,7 @@ internal sealed class MainForm : LauncherForm
             hud.CheckedChanged += (_, _) => ChoiceEdited();
         hudDistance.ValueChanged += (_, _) => ChoiceEdited();
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
+        intro3d.CheckedChanged += (_, _) => ChoiceEdited();
         renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); ChoiceEdited(); };
         refreshHeadset.Click += async (_, _) => await RunProbeAsync(false);
         recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
@@ -199,7 +202,7 @@ internal sealed class MainForm : LauncherForm
     private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
-        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value);
+        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -269,7 +272,7 @@ internal sealed class MainForm : LauncherForm
         hudFollow.Checked = choices.HudFollowView;
         hudShow.Checked = choices.HudShow; hudDial.Checked = choices.HudDial; hudMinimap.Checked = choices.HudMinimap;
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
-        screenDistance.Value = choices.ScreenDistance;
+        screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D;
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
         recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
@@ -607,6 +610,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(hudMinimap, "The track map.");
         tips.SetToolTip(hudCounters, "The lap and time counters.");
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
+        tips.SetToolTip(intro3d, "On: the camera shots before a race starts are shown in 3D around you, without the game's 2D info panel and wipes. Off: they play on the screen ahead of you. Finish cameras and results always use the screen. Applies to the next VR launch.");
         tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 3 m. Applies to the next VR launch.");
         tips.SetToolTip(hudDistance, "How far ahead of your seat the HUD appears, 1–20 m in 0.5 m steps. Its apparent size stays the same. Default: 1 m. Applies to the next VR launch.");
     }

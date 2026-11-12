@@ -31,6 +31,11 @@ bool testPad; // -gasvrtestpad=1: harness-driven virtual gamepad (hookTestPad).
 // a pre-race (or finish) camera shot instead of the player's car camera.
 const BYTE* vehicleViews;
 bool introShot;
+// -gasvrintro3d=1 (launcher Graphics → Flat screen in VR, unticked): the pre-race intro shots,
+// until the player's car camera is first live in a race scene, stay in stereo without the game's
+// 2D broadcast layer. Later shots (finish cameras, results) still use the seated screen.
+bool intro3d;
+bool carCameraSeen;
 // The game object whose byte +0x1301 is set while the in-race pause menu is open (recorded at
 // pause entry, forgotten on every loading state), and whether this native frame shows it.
 const BYTE* pauseState;
@@ -85,6 +90,7 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     keepActive = !wcsstr(cmd, L" -gasvrkeepactive=0");
     testPad = wcsstr(cmd, L" -gasvrtestpad=1") != nullptr;
     startInCockpit = wcsstr(cmd, L" -gasvrcockpit=1") != nullptr;
+    intro3d = wcsstr(cmd, L" -gasvrintro3d=1") != nullptr;
     constexpr wchar_t playArg[] = L" -gasvrplay=";
     if (const wchar_t* flag = wcsstr(cmd, playArg)) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
@@ -421,10 +427,24 @@ void AutosportSampleVehicleCamera() {
         __try { intro = vehicleViews[0x834] == 0; }
         __except (EXCEPTION_EXECUTE_HANDLER) { vehicleViews = nullptr; }
     }
+    // The pre-race intro ends once the car camera has been live for five seconds in a row: the
+    // game cuts to it briefly at scene start and between intro shots (Practice / Race).
+    static ULONGLONG carLiveSince;
+    if (regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !intro) {
+        const ULONGLONG now = GetTickCount64();
+        if (!carLiveSince) carLiveSince = now;
+        if (!carCameraSeen && now - carLiveSince >= 5000) {
+            carCameraSeen = true;
+            AutosportLog("Race scene: car camera live for 5 s; the pre-race intro is over");
+        }
+    } else {
+        carLiveSince = 0;
+    }
     if (intro != introShot) {
         introShot = intro;
         static unsigned changes;
-        if (++changes <= 200) AutosportLog("Race scene camera: %s", intro ? "intro shot on the seated screen" : "car camera in stereo");
+        if (++changes <= 200) AutosportLog("Race scene camera: %s", !intro ? "car camera in stereo"
+            : AutosportPreRaceIntro3D() ? "pre-race intro shot in stereo, 2D overlay hidden" : "intro shot on the seated screen");
     }
     // The pause menu is laid out for the whole flat frame: in stereo it is head-locked and runs
     // past the bottom of the field of view. Show it on the seated screen, with the centred field
@@ -440,12 +460,13 @@ void AutosportSampleVehicleCamera() {
         if (++changes <= 200) AutosportLog("Race pause menu %s", paused ? "open: seated screen" : "closed");
     }
 }
+bool AutosportPreRaceIntro3D() { return intro3d && introShot && !carCameraSeen; }
 void AutosportSetPauseState(const void* state) { pauseState = static_cast<const BYTE*>(state); }
 bool AutosportPauseMenuShown() { return pauseMenu; }
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
-    if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && (introShot || pauseMenu));
+    if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && ((introShot && !AutosportPreRaceIntro3D()) || pauseMenu));
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
     const BYTE* state = image + benchmark;
@@ -460,6 +481,7 @@ void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* eve
     phase.store(Phase::Loading);
     vehicleViews = nullptr;
     introShot = false;
+    carCameraSeen = false;
     pauseState = nullptr;
     pauseMenu = false;
     AutosportLog("StateLoading entered");
