@@ -67,6 +67,19 @@ internal static class SelfTests
         var race = new Choices(LaunchMode: "Race", Car: "pag", Track: "circuits/bathurst/route_1", Laps: 20, Opponents: 11, OpponentCars: "class");
         LauncherSettings.Save(race, file);
         Check(LauncherSettings.Load(file) == race);
+        // VR HUD: everything shown at 1 m by default; parts and distance round-trip and are validated.
+        Check(new Choices() is { HudShow: true, HudDial: true, HudMinimap: true, HudCounters: true, HudPositions: true, HudDistance: 1m, ScreenDistance: 3m } && new Choices().HudParts == 31);
+        var hudChoices = new Choices(HudShow: true, HudDial: false, HudMinimap: true, HudCounters: false, HudPositions: true, HudDistance: 7.5m, ScreenDistance: 5.5m);
+        Check(hudChoices.HudParts == 1 + 4 + 16 && (new Choices(HudShow: false)).HudParts == 30);
+        LauncherSettings.Save(hudChoices, file);
+        Check(LauncherSettings.Load(file) == hudChoices);
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(HudDistance: 1.25m), file)));
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(ScreenDistance: 7m), file)));
+        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}" })
+        {
+            File.WriteAllText(file, bad);
+            Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
+        }
         Check(new Choices().VrCockpit); // Practice / Race start in the cockpit by default.
         LauncherSettings.Save(race with { VrCockpit = false }, file);
         Check(!LauncherSettings.Load(file).VrCockpit);
@@ -141,7 +154,11 @@ internal static class SelfTests
         File.Delete(HeadsetResolution.StorePath);
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
-             "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1"]));
+             "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1",
+             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300"]));
+        var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
+        Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
         Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(VrCockpit: false), null).Contains("-gasvrcockpit=1"));
         var shortcut = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(RecenterKey: 120, RecenterModifiers: 5, KeepHorizonLevel: false), null);
         Check(shortcut.Contains("-gasvrrecenterkey=120") && shortcut.Contains("-gasvrrecentermods=5") && shortcut.Contains("-gasvrkeephorizon=0") && !shortcut.Any(a => a.StartsWith("-gasvreyesize")));
@@ -276,7 +293,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "Keyboard shortcuts", "Recenter alignment", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "VR screen", "Keyboard shortcuts", "Recenter alignment", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);
@@ -301,6 +318,16 @@ internal static class SelfTests
             Check(Find<Button>(form, "SaveSettings").Enabled && Find<Label>(form, "VrResolutionSummary").Text.Contains("4608 × 4896 per eye at 150%"));
             Find<Button>(form, "SaveSettings").PerformClick();
             Check(LauncherSettings.Load().VrRenderScale == 150);
+            // VR HUD: Show HUD off disables the parts; parts and distance are saved.
+            Check(Find<FlowLayoutPanel>(form, "HudParts").Enabled && Find<DistanceSlider>(form, "HudDistance").Value == 1m);
+            Find<CheckBox>(form, "HudShow").Checked = false;
+            Check(!Find<FlowLayoutPanel>(form, "HudParts").Enabled && Find<Button>(form, "SaveSettings").Enabled);
+            Find<CheckBox>(form, "HudShow").Checked = true;
+            Find<CheckBox>(form, "HudMinimap").Checked = false;
+            Find<DistanceSlider>(form, "HudDistance").Value = 3.5m;
+            Find<DistanceSlider>(form, "ScreenDistance").Value = 4m;
+            Find<Button>(form, "SaveSettings").PerformClick();
+            Check(LauncherSettings.Load() is { HudShow: true, HudMinimap: false, HudDial: true, HudDistance: 3.5m, ScreenDistance: 4m });
             var mode = Find<ComboBox>(form, "LaunchMode");
             mode.SelectedIndex = 1;
             Check(Find<ComboBox>(form, "SessionCar").Enabled && Find<NumericUpDown>(form, "Laps").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);

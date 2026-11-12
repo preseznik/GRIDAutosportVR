@@ -120,7 +120,8 @@ bool seatedHud(Matrix& hud, const Matrix& projection, int eye) {
     const Pose& pose = poses[eye];
     const Rotation inverseEye = conjugate(pose.q);
     const Vec adjust = descriptors[eye].viewAdjust; // Eye-to-head offset in eye axes.
-    constexpr float distance = 1.f; // GRID2VR's default seated HUD distance in metres.
+    // Metres; 1 m is GRID2VR's default. Every point scales with it, so the HUD keeps its angular size.
+    const float distance = AutosportHudDistance();
     for (int c = 0; c < 4; ++c) {
         const float w = hud.m[3][c];
         // Convert the authored perspective HUD's clip coordinates to a common seat plane.
@@ -205,6 +206,30 @@ void __fastcall updateUiCamera(void* camera, const void* drawCaller, const BYTE*
             static LONG notified;
             if (InterlockedCompareExchange(&notified, 1, 0) == 0)
                 AutosportLog("Seated HUD applied to osd/osd_layout draw RVA 1B7AEB");
+        }
+    }
+    // The in-race pause menu, shown on the seated screen, hangs from the bottom of its FE camera's
+    // orthographic frame (clip y about -0.8 to -2.2 here), below the eye image. Scale this draw's
+    // clip x and y about the centre of the (centred) field of view and lift it, so the whole menu
+    // fits under the paused scene. Only in the stereo pass, where the native draw restores this
+    // field after the batch (0x720BB9 / 0x720D34), so the change never accumulates.
+    if (drawCaller != osdLayoutReturn && AutosportPauseMenuShown()) {
+        auto* bytes = static_cast<BYTE*>(camera);
+        const bool stereo = *reinterpret_cast<const DWORD*>(renderer + 0x52e8) && renderer[0x52f1];
+        if (stereo) {
+            constexpr float fit = .55f, lift = .3f; // clip y' = fit*y + lift*w
+            auto& m = *reinterpret_cast<Matrix*>(bytes + 0x110);
+            static const void* logged[8]{};
+            static unsigned count;
+            bool seen = false;
+            for (unsigned i = 0; i < count; ++i) if (logged[i] == drawCaller) seen = true;
+            if (!seen && count < 8) {
+                logged[count++] = drawCaller;
+                AutosportLog("Pause menu FE draw callerRVA=%X perspective=%u xy=(%.4g,%.4g) w=(%.4g,%.4g) scaled by %.2f",
+                             unsigned(static_cast<const BYTE*>(drawCaller)-gameImage-5), unsigned(bytes[0xe0]),
+                             m.m[0][0], m.m[1][1], m.m[2][3], m.m[3][3], fit);
+            }
+            for (int r = 0; r < 4; ++r) { m.m[r][0] *= fit; m.m[r][1] = m.m[r][1]*fit + lift*m.m[r][3]; }
         }
     }
     stockCameraUpdate(camera);
@@ -707,6 +732,59 @@ int __fastcall raceStartView(void* manager, void*, const char* requested) {
     return stockViewLookup(manager, requested);
 }
 
+// HUD parts. The OSD manager's per-player setup (RVA 149480, __thiscall(manager, player)) reads
+// the profile's HUD options: entire_OSD through RVA 2C1250 (call at 14949B), then dial_OSD,
+// minimap_OSD, counters_OSD and positions_OSD through the settings lookup RVA 9F0F90
+// (__thiscall(container, category, name) returning a setting whose vtable +8 gives its value),
+// and sets the manager's part flags from them. With -gasvrhudparts the launcher's choices
+// answer those five reads instead; the profile itself is never written, so the game's own HUD
+// options are unchanged outside the session. Changing them in the game's pause menu still
+// applies until the next race start.
+using HudEnabledFn = int (__thiscall*)(void*);
+using SettingLookupFn = void* (__thiscall*)(void*, void*, const char*);
+HudEnabledFn stockHudEnabled = nullptr;
+SettingLookupFn stockSettingLookup = nullptr;
+struct ForcedSetting { void* const* vtable; int value; };
+int __fastcall forcedSettingValue(const ForcedSetting* self, void*) { return self->value; }
+void* forcedSettingTable[4]{};
+ForcedSetting forcedOff{forcedSettingTable, 0}, forcedOn{forcedSettingTable, 1};
+// The RVAs of the interned setting names the four lookups pass, and the launcher's bit for each.
+constexpr struct { UINT name; unsigned bit; } hudPartNames[] = {
+    {0xCD6A68, 2}, {0xCD6A5C, 4}, {0xCD6A4C, 8}, {0xCD6A3C, 16}}; // dial, minimap, counters, positions_OSD
+int __fastcall hudEnabled(void* settings, void*) {
+    unsigned mask;
+    if (!AutosportHudParts(mask)) return stockHudEnabled(settings);
+    static LONG logged;
+    if (InterlockedIncrement(&logged) <= 20) AutosportLog("HUD parts from the launcher: entire HUD %s, mask=%u, frame=%llu", mask & 1 ? "on" : "off", mask, frame);
+    return mask & 1;
+}
+void* __fastcall hudPartSetting(void* container, void*, void* category, const char* name) {
+    unsigned mask;
+    if (AutosportHudParts(mask))
+        for (const auto& part : hudPartNames)
+            if (name == reinterpret_cast<const char*>(gameImage + part.name)) return mask & part.bit ? &forcedOn : &forcedOff;
+    return stockSettingLookup(container, category, name);
+}
+
+// In-race pause. The pause state's entry (around RVA 255E8B: it plays hud_pause_on) sets byte
+// +0x1301 of a game service, [[state+0xC]+4][*RVA E5749C], and then calls RVA 247C60
+// (__thiscall(state), no stack arguments; this is its only caller). The pause exit clears the
+// byte (RVA 26AD11). The bridge records the service here; each native frame reads the byte.
+using PauseEntryFn = int (__thiscall*)(void*);
+PauseEntryFn stockPauseEntry = nullptr;
+int __fastcall pauseEntered(void* state, void*) {
+    __try {
+        const BYTE* context = *reinterpret_cast<BYTE* const*>(static_cast<BYTE*>(state) + 0xC);
+        BYTE* const* services = *reinterpret_cast<BYTE* const* const*>(context + 4);
+        const unsigned index = *reinterpret_cast<const unsigned*>(gameImage + 0xE5749C);
+        AutosportSetPauseState(services[index]);
+        AutosportLog("Race pause entered at frame=%llu flag=%u", frame, unsigned(services[index][0x1301]));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        AutosportLog("Race pause entered at frame=%llu; its pause flag was not readable", frame);
+    }
+    return stockPauseEntry(state);
+}
+
 template<class F> Site site(UINT call, UINT target, F callback, UINT resume = 0) {
     return {call, target, reinterpret_cast<void (__cdecl*)()>(callback), resume};
 }
@@ -744,7 +822,11 @@ bool AutosportInstallNativeOvr() noexcept {
         site(0x59E92B, 0xA9DEA0, recenterTracking), site(0x5C52EE, 0xA9DED0, configureRenderer),
         site(0x5C5306, 0xA9DE40, setCaps), site(0x5C5316, 0xA9DE60, configureTracking),
         site(0x680311, 0x678000, selectProjectionEye), site(0x6803E9, 0xA9E6D0, hudOrtho),
-        site(0x720C4A, 0x11D4D0, uiCameraCall), site(0x2D4AE5, 0x830300, raceStartView)
+        site(0x720C4A, 0x11D4D0, uiCameraCall), site(0x2D4AE5, 0x830300, raceStartView),
+        site(0x14949B, 0x2C1250, hudEnabled),
+        site(0x1494E8, 0x9F0F90, hudPartSetting), site(0x149538, 0x9F0F90, hudPartSetting),
+        site(0x149586, 0x9F0F90, hudPartSetting), site(0x1495D1, 0x9F0F90, hudPartSetting),
+        site(0x255EB2, 0x247C60, pauseEntered)
     };
     // Original worker return: clear both active flags, pop EBX (only on the
     // results path), then the common pop ESI / pop EBP / ret 4.
@@ -786,6 +868,10 @@ bool AutosportInstallNativeOvr() noexcept {
     gameImage = base;
     osdLayoutReturn = base + 0x1B7AF0;
     stockViewLookup = reinterpret_cast<ViewLookupFn>(base + 0x830300);
+    stockHudEnabled = reinterpret_cast<HudEnabledFn>(base + 0x2C1250);
+    stockSettingLookup = reinterpret_cast<SettingLookupFn>(base + 0x9F0F90);
+    forcedSettingTable[2] = reinterpret_cast<void*>(&forcedSettingValue);
+    stockPauseEntry = reinterpret_cast<PauseEntryFn>(base + 0x247C60);
     for (auto& s : sites) {
         if (s.resume && AutosportRegularPlay()) continue;
         UINT delta = reinterpret_cast<UINT>(s.replacement) - reinterpret_cast<UINT>(base + s.call + 5);

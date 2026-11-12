@@ -17,6 +17,12 @@ bool headset;
 bool regularPlay;
 bool practiceSession; // A play session started with its own -benchmarkAttract file (launcher Practice / Race).
 bool hudFollowsView;
+// -gasvrhudparts=MASK (launcher VR HUD): 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position
+// info, forced over the profile's own HUD options for this session. Without it the game decides.
+bool hudPartsForced;
+unsigned hudParts;
+float hudDistance = 1.f; // -gasvrhuddistance=CM, 100-2000: the seated HUD plane's distance in metres.
+float screenDistance = 2.f; // -gasvrscreendistance=CM, 150-600: the seated screen's distance in metres.
 unsigned eyeWidth, eyeHeight;
 bool keepActive = true;
 bool testPad; // -gasvrtestpad=1: harness-driven virtual gamepad (hookTestPad).
@@ -25,6 +31,10 @@ bool testPad; // -gasvrtestpad=1: harness-driven virtual gamepad (hookTestPad).
 // a pre-race (or finish) camera shot instead of the player's car camera.
 const BYTE* vehicleViews;
 bool introShot;
+// The game object whose byte +0x1301 is set while the in-race pause menu is open (recorded at
+// pause entry, forgotten on every loading state), and whether this native frame shows it.
+const BYTE* pauseState;
+bool pauseMenu;
 bool startInCockpit; // -gasvrcockpit=1: headset races start in the driver cockpit view (native_ovr raceStartView).
 bool uiComparison;
 bool compareSlate;
@@ -54,9 +64,24 @@ bool supportedHost() {
            !memcmp(image + 0x6792ec, "\xc5\xfa\x11\x89\xec\x45\x00\x00", 8);
 }
 
+// The decimal value of " -NAME=DIGITS" ending at a space, tab or the end; false if absent or malformed.
+bool numberArg(const wchar_t* cmd, const wchar_t* flag, unsigned& value) {
+    const wchar_t* at = wcsstr(cmd, flag);
+    if (!at) return false;
+    at += wcslen(flag);
+    const size_t digits = wcsspn(at, L"0123456789");
+    if (!digits || digits > 4 || (at[digits] && at[digits] != L' ' && at[digits] != L'\t')) return false;
+    value = wcstoul(at, nullptr, 10);
+    return true;
+}
+
 bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     // Steam starts the renderer itself and does not inherit the test runner's environment.
     const wchar_t* cmd = GetCommandLineW();
+    unsigned number;
+    if (numberArg(cmd, L" -gasvrhudparts=", number) && number < 32) { hudPartsForced = true; hudParts = number; }
+    if (numberArg(cmd, L" -gasvrhuddistance=", number) && number >= 100 && number <= 2000) hudDistance = number / 100.f;
+    if (numberArg(cmd, L" -gasvrscreendistance=", number) && number >= 150 && number <= 600) screenDistance = number / 100.f;
     keepActive = !wcsstr(cmd, L" -gasvrkeepactive=0");
     testPad = wcsstr(cmd, L" -gasvrtestpad=1") != nullptr;
     startInCockpit = wcsstr(cmd, L" -gasvrcockpit=1") != nullptr;
@@ -305,8 +330,9 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     hookVideoLogging();
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
-    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d",
-                 hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession);
+    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f",
+                 hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession,
+                 hudPartsForced, hudParts, hudDistance, screenDistance);
     return hr;
 }
 
@@ -353,6 +379,9 @@ bool AutosportEyeSizeRequest(unsigned& width, unsigned& height) {
     return true;
 }
 bool AutosportHudFollowsView() { return uiComparison ? captures == 1 : hudFollowsView; }
+bool AutosportHudParts(unsigned& mask) { mask = hudParts; return hudPartsForced; }
+float AutosportHudDistance() { return hudDistance; }
+float AutosportScreenDistance() { return screenDistance; }
 // Every bridge session (headset play and the capture benchmark) keeps the game running when its
 // window is inactive; the game otherwise drops to ~18 fps and pauses its startup videos.
 bool AutosportKeepActive() { return keepActive; }
@@ -397,11 +426,26 @@ void AutosportSampleVehicleCamera() {
         static unsigned changes;
         if (++changes <= 200) AutosportLog("Race scene camera: %s", intro ? "intro shot on the seated screen" : "car camera in stereo");
     }
+    // The pause menu is laid out for the whole flat frame: in stereo it is head-locked and runs
+    // past the bottom of the field of view. Show it on the seated screen, with the centred field
+    // of view loading screens use, until the game clears its pause flag.
+    bool paused = false;
+    if (regularPlay && headset && phase.load() == Phase::Scene && pauseState) {
+        __try { paused = pauseState[0x1301] != 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { pauseState = nullptr; }
+    }
+    if (paused != pauseMenu) {
+        pauseMenu = paused;
+        static unsigned changes;
+        if (++changes <= 200) AutosportLog("Race pause menu %s", paused ? "open: seated screen" : "closed");
+    }
 }
+void AutosportSetPauseState(const void* state) { pauseState = static_cast<const BYTE*>(state); }
+bool AutosportPauseMenuShown() { return pauseMenu; }
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
-    if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && introShot);
+    if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && (introShot || pauseMenu));
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
     const BYTE* state = image + benchmark;
@@ -416,6 +460,8 @@ void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* eve
     phase.store(Phase::Loading);
     vehicleViews = nullptr;
     introShot = false;
+    pauseState = nullptr;
+    pauseMenu = false;
     AutosportLog("StateLoading entered");
     reinterpret_cast<LoadingDispatch>(image + 0x9f6c80)(dispatcher, event);
 }

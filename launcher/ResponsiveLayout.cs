@@ -144,6 +144,7 @@ internal class SettingRow : Panel
             var editorWidth = Math.Max(1, stacked ? width : width - labelWidth - gap);
             if (editor is Label label) label.MaximumSize = new Size(editorWidth, 0);
             var editorHeight = editor is RenderScaleSlider slider ? Px(slider.HasMarker ? 62 : 42)
+                : editor is DistanceSlider ? Px(42)
                 : Math.Max(Px(28), editor.GetPreferredSize(new Size(editorWidth, 0)).Height);
             var labelHeight = string.IsNullOrEmpty(caption.Text) ? 0 : TextRenderer.MeasureText(caption.Text, Font,
                 new Size(Math.Max(1, (stacked ? width : labelWidth) - caption.Padding.Horizontal), 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;

@@ -10,7 +10,13 @@ namespace GRIDAutosportVR;
 internal sealed record Choices(bool HudFollowView = false, bool ModernInterface = true, int VrRenderScale = 100,
     int RecenterKey = 121, int RecenterModifiers = 0, bool KeepHorizonLevel = true,
     string LaunchMode = "Normal", string Car = RaceSession.DefaultCar, string Track = RaceSession.DefaultTrack,
-    int Laps = 3, int Opponents = 7, string OpponentCars = "same", bool VrCockpit = true);
+    int Laps = 3, int Opponents = 7, string OpponentCars = "same", bool VrCockpit = true,
+    bool HudShow = true, bool HudDial = true, bool HudMinimap = true, bool HudCounters = true, bool HudPositions = true,
+    decimal HudDistance = 1m, decimal ScreenDistance = 3m)
+{
+    // The bridge's -gasvrhudparts mask: 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position info.
+    internal int HudParts => (HudShow ? 1 : 0) | (HudDial ? 2 : 0) | (HudMinimap ? 4 : 0) | (HudCounters ? 8 : 0) | (HudPositions ? 16 : 0);
+}
 
 internal static class LauncherSettings
 {
@@ -86,6 +92,13 @@ internal static class LauncherSettings
         throw new JsonException($"{key} must be a whole number from 1 to {maximum} in {fileName}");
     }
 
+    private static decimal ReadDistance(JsonObject document, string key, decimal fallback, decimal minimum, decimal maximum, string fileName)
+    {
+        if (!document.TryGetPropertyValue(key, out var node)) return fallback;
+        if (node is JsonValue value && value.TryGetValue(out decimal metres) && DistanceSlider.Valid(metres, minimum, maximum)) return metres;
+        throw new JsonException($"{key} must be {minimum:0.#}–{maximum:0.#} metres in 0.5 m steps in {fileName}");
+    }
+
     internal static bool ValidCar(string text) => System.Text.RegularExpressions.Regex.IsMatch(text, @"\A[a-z0-9_]{1,32}\z");
     internal static bool ValidTrack(string text) => System.Text.RegularExpressions.Regex.IsMatch(text, @"\A(circuits|cities)/[a-z0-9_]{1,40}/route_\d{1,2}\z");
 
@@ -104,7 +117,12 @@ internal static class LauncherSettings
             ReadCount(document, "laps", 3, RaceSession.MaxLaps, fileName),
             ReadCount(document, "opponents", 7, RaceSession.MaxOpponents, fileName),
             ReadText(document, "opponentCars", "same", RaceSession.OpponentChoices.Contains, fileName),
-            ReadFlag(document, "vrCockpit", true, fileName));
+            ReadFlag(document, "vrCockpit", true, fileName),
+            ReadFlag(document, "hudShow", true, fileName), ReadFlag(document, "hudDial", true, fileName),
+            ReadFlag(document, "hudMinimap", true, fileName), ReadFlag(document, "hudCounters", true, fileName),
+            ReadFlag(document, "hudPositions", true, fileName),
+            ReadDistance(document, "hudDistance", 1m, DistanceSlider.HudMinimum, DistanceSlider.HudMaximum, fileName),
+            ReadDistance(document, "screenDistance", 3m, DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -127,6 +145,15 @@ internal static class LauncherSettings
         document["opponents"] = choices.Opponents;
         document["opponentCars"] = choices.OpponentCars;
         document["vrCockpit"] = choices.VrCockpit;
+        if (!DistanceSlider.ValidHud(choices.HudDistance)) throw new ArgumentException("Unsupported HUD distance.");
+        document["hudShow"] = choices.HudShow;
+        document["hudDial"] = choices.HudDial;
+        document["hudMinimap"] = choices.HudMinimap;
+        document["hudCounters"] = choices.HudCounters;
+        document["hudPositions"] = choices.HudPositions;
+        document["hudDistance"] = choices.HudDistance;
+        if (!DistanceSlider.ValidScreen(choices.ScreenDistance)) throw new ArgumentException("Unsupported screen distance.");
+        document["screenDistance"] = choices.ScreenDistance;
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
     }
 

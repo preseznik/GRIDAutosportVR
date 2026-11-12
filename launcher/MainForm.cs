@@ -6,7 +6,7 @@ namespace GRIDAutosportVR;
 // the Autosport actions: Steam game folder, normal VR play through the bridge, runtime checks.
 internal sealed class MainForm : LauncherForm
 {
-    private const string HudHelp = "Off keeps the race HUD one metre ahead of your seated position. On moves it with your head, as the game's own HUD does. Loading screens stay in place in both modes. Applies to the next VR launch.";
+    private const string HudHelp = "Follow view off keeps the race HUD in place ahead of your seated position. On moves it with your head, as the game's own HUD does. Loading screens stay in place in both modes. Applies to the next VR launch.";
     private string? gameFolder;
     private readonly string? probePath, rendererPath;
     private readonly SelectableStatusText state = new() { Name = "SessionStatus", AccessibleName = "Session status" },
@@ -15,6 +15,13 @@ internal sealed class MainForm : LauncherForm
     private readonly Button browse = Button("Choose game folder…", "BrowseGame"), query = Button("Check runtime", "CheckRuntime"),
         pattern = Button("Show eye markers", "EyeMarkers"), defaults = Button("Restore defaults", "LauncherDefaults");
     private readonly CheckBox hudFollow = new() { Name = "HudFollowView", AccessibleName = "HUD follows view", AccessibleDescription = HudHelp, Text = "On", AutoSize = true };
+    private const string HudPartsHelp = "Show HUD and the HUD parts replace the game's own HUD options (Options → HUD Options) in VR sessions; your game settings stay as they are. Distance sets how far ahead of your seat the HUD appears; it keeps the same apparent size.";
+    private readonly CheckBox hudShow = new() { Name = "HudShow", AccessibleName = "Show HUD", Text = "On", Checked = true, AutoSize = true },
+        hudDial = HudPart("HudDial", "Dial"), hudMinimap = HudPart("HudMinimap", "Minimap"),
+        hudCounters = HudPart("HudCounters", "Counters"), hudPositions = HudPart("HudPositions", "Position info");
+    private readonly FlowLayoutPanel hudParts = new() { Name = "HudParts", AccessibleName = "HUD parts", AutoSize = true, WrapContents = true, Margin = Padding.Empty };
+    private readonly DistanceSlider hudDistance = new("HudDistance", "HUD distance", DistanceSlider.HudMinimum, DistanceSlider.HudMaximum, 1m),
+        screenDistance = new("ScreenDistance", "Screen distance", DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, 3m);
     private readonly AppearanceSwitch modernInterface = new();
     private readonly RenderScaleSlider renderScale = new() { Name = "VrRenderScale", AccessibleName = "VR render scale" };
     private readonly Button refreshHeadset = Button("Refresh headset", "RefreshHeadset");
@@ -100,8 +107,16 @@ internal sealed class MainForm : LauncherForm
         graphics.Controls.Add(TextLabel("100% renders each eye at the connected headset's recommended resolution. Lower values trade detail for performance; higher values sharpen the image and use more GPU time and memory. Headset output stays at 100%. The launcher reads the headset's resolution before every VR launch."));
         graphics = graphicsColumns.Second;
         Section(graphics, "VR HUD");
+        Field(graphics, "Show HUD", hudShow);
+        hudParts.Controls.AddRange([hudDial, hudMinimap, hudCounters, hudPositions]);
+        Field(graphics, "HUD parts", hudParts);
+        Field(graphics, "Distance", hudDistance);
         Field(graphics, "Follow view", hudFollow);
+        graphics.Controls.Add(TextLabel(HudPartsHelp));
         graphics.Controls.Add(TextLabel(HudHelp));
+        Section(graphics, "VR screen");
+        Field(graphics, "Distance", screenDistance);
+        graphics.Controls.Add(TextLabel("Startup videos, loading screens, menus and the pre-race intro shots appear on a screen fixed in front of your seat, up to 2.4 m wide. Further back makes it smaller in view. It stays in place until you recenter. Applies to the next VR launch."));
 
         // GRID2VR's Controls tab: VR now; Seat and Driving join it with their own launcher items.
         var controlPage = new TabPage("Controls") { Name = "ControlsPage", Padding = new Padding(8) };
@@ -156,6 +171,10 @@ internal sealed class MainForm : LauncherForm
         pattern.Click += async (_, _) => await RunProbeAsync(true);
         defaults.Click += (_, _) => { ApplyChoices(new Choices()); notice.Text = "Launcher defaults restored. Save settings or launch to keep them."; };
         hudFollow.CheckedChanged += (_, _) => ChoiceEdited();
+        foreach (var hud in new[] { hudShow, hudDial, hudMinimap, hudCounters, hudPositions })
+            hud.CheckedChanged += (_, _) => ChoiceEdited();
+        hudDistance.ValueChanged += (_, _) => ChoiceEdited();
+        screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); ChoiceEdited(); };
         refreshHeadset.Click += async (_, _) => await RunProbeAsync(false);
         recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
@@ -179,7 +198,8 @@ internal sealed class MainForm : LauncherForm
 
     private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
-        (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked);
+        (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
+        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -247,6 +267,9 @@ internal sealed class MainForm : LauncherForm
     private void ApplyChoices(Choices choices)
     {
         hudFollow.Checked = choices.HudFollowView;
+        hudShow.Checked = choices.HudShow; hudDial.Checked = choices.HudDial; hudMinimap.Checked = choices.HudMinimap;
+        hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
+        screenDistance.Value = choices.ScreenDistance;
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
         recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
@@ -356,6 +379,7 @@ internal sealed class MainForm : LauncherForm
         launchMode.Enabled = idle;
         car.Enabled = track.Enabled = laps.Enabled = idle && mode != "Normal" && catalog.Cars.Count > 0;
         vrCockpit.Enabled = idle && mode != "Normal";
+        hudParts.Enabled = hudShow.Checked;
         opponents.Enabled = opponentCars.Enabled = idle && mode == "Race" && catalog.Cars.Count > 0;
         sessionSummary.Text = RaceSession.Summary(Current, catalog) + (mode == "Race" && opponentCars.SelectedItem is Option { Id: "class" } && car.SelectedItem is CarItem c
             ? $" Discipline: {c.Class}{(catalog.Cars.Any(o => o.Id != c.Id && o.Class == c.Class && c.Class != "Other") ? "" : "; no other installed car shares it, so opponents use your car")}." : "");
@@ -578,7 +602,15 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(vrCockpit, "Practice and Race in VR start in the driver's seat (the game's head camera) instead of the chase camera. The game's change-camera button still switches views. Normal races keep the camera you last used.");
         tips.SetToolTip(opponentCars, "Race only. Same car uses your car in its other liveries. Same discipline picks other installed cars of your car's discipline. Mixed picks any installed cars.");
         tips.SetToolTip(recenter, "Click, then press the key (with Ctrl, Alt or Shift) that recenters your view in VR.");
+        tips.SetToolTip(hudShow, "Show the race HUD in VR, even if the game's HUD options or difficulty settings turn it off. Off hides it. Applies to the next VR launch.");
+        tips.SetToolTip(hudDial, "The rev dial with speed and gear.");
+        tips.SetToolTip(hudMinimap, "The track map.");
+        tips.SetToolTip(hudCounters, "The lap and time counters.");
+        tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
+        tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 3 m. Applies to the next VR launch.");
+        tips.SetToolTip(hudDistance, "How far ahead of your seat the HUD appears, 1–20 m in 0.5 m steps. Its apparent size stays the same. Default: 1 m. Applies to the next VR launch.");
     }
+    private static CheckBox HudPart(string name, string text) => new() { Name = name, AccessibleName = text, Text = text, Checked = true, AutoSize = true, Margin = new Padding(0, 0, 16, 4) };
 
     private static ComboBox Choice(string name) => new() { Name = name, DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, MaxDropDownItems = 20 };
     private static NumericUpDown Count(string name, int maximum) => new() { Name = name, Minimum = 1, Maximum = maximum, Value = 1, Width = 80 };

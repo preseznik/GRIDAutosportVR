@@ -77,9 +77,11 @@ struct PredicateScope {
     }
     ~PredicateScope() { if (old) ctx->SetPredication(old.Get(), value); }
 };
-// Match GRID2VR's seated screen: two metres forward in LOCAL, level with the
-// head at first placement. Projecting the forward axis removes pitch and roll.
+// The seated screen: AutosportScreenDistance() forward in LOCAL (GRID2VR's is two metres; the
+// launcher's default is three), level with the head at placement, fixed in place until the next
+// recenter. Projecting the forward axis removes pitch and roll.
 bool levelAnchor(const XrPosef& head, XrPosef& anchor) {
+    const double distance = AutosportScreenDistance();
     const auto& p = head.position;
     const auto& q = head.orientation;
     const double norm = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w;
@@ -96,7 +98,7 @@ bool levelAnchor(const XrPosef& head, XrPosef& anchor) {
     x /= length; z /= length;
     const double yaw = std::atan2(-x,-z);
     anchor = {{0,float(std::sin(.5*yaw)),0,float(std::cos(.5*yaw))},
-              {p.x+float(2*x),p.y,p.z+float(2*z)}};
+              {p.x+float(distance*x),p.y,p.z+float(distance*z)}};
     return true;
 }
 struct Bridge {
@@ -569,7 +571,8 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         const float tangentAspect = (std::tan(-f.angleLeft) + std::tan(f.angleRight)) / (std::tan(f.angleUp) + std::tan(-f.angleDown));
         const bool wholeTexture = UINT(rects[0].right - rects[0].left) == canvas.Width && UINT(rects[0].bottom - rects[0].top) == canvas.Height;
         const float aspect = wholeTexture || !(tangentAspect > .2f && tangentAspect < 5.f) ? float(canvas.Width) / float(canvas.Height) : tangentAspect;
-        // At most 2.4 m wide and 1.8 m tall, two metres away: 4:3 keeps the original 2.4 x 1.8 m.
+        // At most 2.4 m wide and 1.8 m tall at any distance (further away it covers less of the
+        // view): 4:3 keeps the original 2.4 x 1.8 m.
         screen.size = aspect >= 2.4f / 1.8f ? XrExtent2Df{2.4f, 2.4f / aspect} : XrExtent2Df{1.8f * aspect, 1.8f};
         end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screen));
         return true;

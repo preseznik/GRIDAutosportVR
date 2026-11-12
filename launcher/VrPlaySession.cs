@@ -133,6 +133,8 @@ internal static partial class VrPlaySession
          "-gasvrrecenterkey=" + choices.RecenterKey, "-gasvrrecentermods=" + choices.RecenterModifiers, "-gasvrkeephorizon=" + (choices.KeepHorizonLevel ? "1" : "0"),
          .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : [],
          .. choices.VrCockpit ? new[] { "-gasvrcockpit=1" } : [],
+         "-gasvrhudparts=" + choices.HudParts, "-gasvrhuddistance=" + (int)(choices.HudDistance * 100m),
+         "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : []];
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
