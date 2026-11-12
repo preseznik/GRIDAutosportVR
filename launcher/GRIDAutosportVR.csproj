@@ -28,6 +28,7 @@
     <EmbeddedResource Include="assets\logo-display.png" LogicalName="GRIDAutosportVR.logo-display.png" />
     <EmbeddedResource Include="assets\logo.ico" LogicalName="GRIDAutosportVR.logo.ico" />
     <Content Condition="Exists('..\artifacts\probe\AutosportXRProbe.exe')" Include="..\artifacts\probe\AutosportXRProbe.exe" Link="probe\AutosportXRProbe.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <Content Condition="Exists('..\artifacts\driving-input-build\Release\driving_input.dll')" Include="..\artifacts\driving-input-build\Release\driving_input.dll" Link="driving_input.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <Content Condition="Exists('..\artifacts\bridge-build\Release\gasxr.dll')" Include="..\artifacts\bridge-build\Release\gasxr.dll" Link="renderer\gasxr.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

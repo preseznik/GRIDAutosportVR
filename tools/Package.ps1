@@ -70,6 +70,11 @@ foreach ($native in @(@{ Folder = 'bridge'; Target = 'gasxr' }, @{ Folder = 'pro
 }
 Copy-Item -LiteralPath (Join-Path $build 'bridge\Release\gasxr.dll') -Destination "$stage\renderer"
 Copy-Item -LiteralPath (Join-Path $build 'probe\Release\AutosportXRProbe.exe') -Destination "$stage\probe"
+# The launcher's controller / wheel reader (DirectInput + XInput, from GRID2VR), x64 like the launcher.
+$drivingInput = Join-Path $build 'driving-input'
+Invoke-Checked 'Configure driving-input' { cmake -S (Join-Path $root 'tools\driving-input') -B $drivingInput -G 'Visual Studio 17 2022' -A x64 }
+Invoke-Checked 'Build driving-input' { cmake --build $drivingInput --config Release --target driving_input -- /m /v:minimal }
+Copy-Item -LiteralPath (Join-Path $drivingInput 'Release\driving_input.dll') -Destination $stage
 
 # Launcher, stamped for Help / About and future update checks.
 $publish = Join-Path $build 'launcher'

@@ -139,6 +139,16 @@ def run(args):
     session_file = GAME / ("GASVR_" + token + ".xml")
     session_data = Path(args.session).read_bytes() if args.session else b""
     session_staged = False
+    # --stage input/x.xml=SOURCE: a game file swapped in for this run (e.g. a launcher session input
+    # preset), backed up into the run folder and restored afterwards.
+    staged_files = []
+    stage_requests = []
+    for request in args.stage:
+        relative, _, source = request.partition("=")
+        relative = relative.replace("\\", "/")
+        if not relative.startswith("input/") or ".." in relative or not Path(source).is_file():
+            raise RuntimeError(f"--stage expects input/NAME.xml=SOURCE: {request}")
+        stage_requests.append((GAME / relative, Path(source).read_bytes()))
     try:
         exclusive(DLL, dll)
         if args.benchmark:
@@ -163,6 +173,20 @@ def run(args):
             shutil.copy2(args.flow, staged_flow)
             os.replace(staged_flow, FLOW)
             report["flow"] = {"source": str(args.flow), "sha256": file_sha(FLOW)}
+        for target, data in stage_requests:
+            backup = folder / ("stage-original-" + target.name)
+            original = target.read_bytes() if target.exists() else None
+            if original is not None:
+                backup.write_bytes(original)
+                if sha(backup.read_bytes()) != sha(original):
+                    raise RuntimeError("Stage backup failed verification: " + str(backup))
+            staged_files.append((target, backup, original, data))
+            temporary = target.with_name(target.name + ".gasvr-stage.tmp")
+            temporary.write_bytes(data)
+            os.replace(temporary, target)
+            if sha(target.read_bytes()) != sha(data):
+                raise RuntimeError("Staged file failed verification: " + str(target))
+        report["staged"] = [str(t) for t, _, _, _ in staged_files]
         if not APPID.exists():
             # Without it the Steam API restarts the game through Steam, which drops XR_RUNTIME_JSON.
             exclusive(APPID, b"255220")
@@ -295,13 +319,31 @@ def run(args):
                 if file_sha(session_file) != sha(session_data):
                     raise RuntimeError("Preserving independently changed " + str(session_file))
                 session_file.unlink()
+        def restore_staged():
+            for target, backup, original, data in staged_files:
+                current = target.read_bytes() if target.exists() else None
+                if current is not None and sha(current) not in (sha(data), sha(original) if original is not None else None):
+                    raise RuntimeError("Preserving independently changed " + str(target))
+                if original is None:
+                    if current is not None:
+                        target.unlink()
+                    continue
+                restoring = target.with_name(target.name + ".gasvr-restore.tmp")
+                restoring.write_bytes(backup.read_bytes())
+                if sha(restoring.read_bytes()) != sha(original):
+                    raise RuntimeError("Stage restore copy failed verification: " + str(target))
+                os.replace(restoring, target)
+                if sha(target.read_bytes()) != sha(original):
+                    raise RuntimeError(str(target) + " could not be restored; the backup is " + str(backup))
+            report["stagedRestored"] = True
         def remove_appid():
             if wrote_appid and APPID.read_bytes() == b"255220":
                 APPID.unlink()
         def restore_game():
             cleanup()
             report["stockRestored"] = True
-        for step in ([restore_flow] if flow_staged else []) + ([remove_session] if session_staged else []) + [remove_appid, restore_game]:
+        for step in ([restore_flow] if flow_staged else []) + ([remove_session] if session_staged else []) + \
+                ([restore_staged] if staged_files else []) + [remove_appid, restore_game]:
             try:
                 step()
             except Exception as error:
@@ -332,6 +374,7 @@ if __name__ == "__main__":
     parser.add_argument("--cycle-camera", action="store_true", help="Benchmark: let the game cycle its cameras")
     parser.add_argument("--race-seconds", type=int, default=30, help="Benchmark: race second of the bridge's own eye capture")
     parser.add_argument("--script", help='JSON list of {"at": s after the race scene, "cmds": [...], "shot": "tag"}')
+    parser.add_argument("--stage", action="append", default=[], help="input/NAME.xml=SOURCE: swap a game input file in for this run")
     parser.add_argument("--game-arg", action="append", default=[], help="Extra -gasvr... argument for the game (repeatable)")
     parser.add_argument("--shots", default="10,20,30,40,50,60", help="Seconds at which xr-sim captures what the headset is shown")
     parser.add_argument("--no-keep-active", action="store_true", help="Start with -gasvrkeepactive=0 (game sees deactivations)")

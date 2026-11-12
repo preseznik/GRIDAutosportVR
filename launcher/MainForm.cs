@@ -29,6 +29,8 @@ internal sealed class MainForm : LauncherForm
     private HeadsetResolution? headsetResolution = HeadsetResolution.Load();
     private readonly Button recenter = Button("F10", "RecenterKey");
     private readonly Label recenterHint = TextLabel("");
+    private readonly Button drivingBindings = Button("Driving controls…", "DrivingControls"), drivingLive = Button("Live input…", "DrivingLiveInputMain");
+    private readonly Label drivingSummary = TextLabel("");
     private readonly CheckBox intro3d = new() { Name = "Intro3D", AccessibleName = "Show the pre-race intro in 3D", Text = "Show the pre-race intro in 3D", AutoSize = true };
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
@@ -132,6 +134,16 @@ internal sealed class MainForm : LauncherForm
         Section(controls, "Recenter alignment");
         controls.Controls.Add(keepHorizonLevel);
         controls.Controls.Add(TextLabel("Reset your position and forward direction without changing the horizon. Untick to align pitch and roll to your current head pose too. Applies on the next VR launch."));
+        // GRID2VR's Driving page: bindings window (wizard, calibration, profiles) and live input.
+        var driving = Page(controlTabs, "Driving");
+        Section(driving, "Driving controls");
+        drivingSummary.Name = "DrivingSummary"; drivingSummary.Tag = "hint";
+        Field(driving, "Launcher bindings", drivingSummary);
+        var drivingActions = new FlowLayoutPanel { Name = "DrivingActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
+        drivingActions.Controls.AddRange([drivingBindings, drivingLive]);
+        driving.Controls.Add(drivingActions);
+        driving.Controls.Add(TextLabel(DrivingControls.RuntimeNotice));
+        driving.Controls.Add(TextLabel("Driving controls… opens the bindings: the binding wizard, one action at a time with Key… or Device…, calibration (deadzone, saturation, direction), the Xbox preset and saved profiles. Live input… shows every connected controller, wheel and pedal set as you move it, with a rumble / force feedback test."));
 
         var settingColumns = Columns(Page(Tabs, "Settings")); var settings = settingColumns.First;
         Section(settings, "Paths and runtime");
@@ -178,6 +190,26 @@ internal sealed class MainForm : LauncherForm
         hudDistance.ValueChanged += (_, _) => ChoiceEdited();
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
+        drivingBindings.Click += (_, _) =>
+        {
+            try
+            {
+                using var dialog = new DrivingControlsForm();
+                if (dialog.ShowDialog(this) == DialogResult.OK) notice.Text = "Driving controls saved. They apply on the next VR launch.";
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Driving controls: " + error.Message; }
+            UpdateDrivingSummary();
+        };
+        drivingLive.Click += (_, _) =>
+        {
+            try
+            {
+                using var monitor = new DrivingInputMonitor(DrivingControls.Load().Bindings);
+                monitor.ShowDialog(this);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Live input: " + error.Message; }
+        };
+        UpdateDrivingSummary();
         renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); ChoiceEdited(); };
         refreshHeadset.Click += async (_, _) => await RunProbeAsync(false);
         recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
@@ -383,6 +415,7 @@ internal sealed class MainForm : LauncherForm
         car.Enabled = track.Enabled = laps.Enabled = idle && mode != "Normal" && catalog.Cars.Count > 0;
         vrCockpit.Enabled = idle && mode != "Normal";
         hudParts.Enabled = hudShow.Checked;
+        drivingBindings.Enabled = !supervising && !recovering;
         opponents.Enabled = opponentCars.Enabled = idle && mode == "Race" && catalog.Cars.Count > 0;
         sessionSummary.Text = RaceSession.Summary(Current, catalog) + (mode == "Race" && opponentCars.SelectedItem is Option { Id: "class" } && car.SelectedItem is CarItem c
             ? $" Discipline: {c.Class}{(catalog.Cars.Any(o => o.Id != c.Id && o.Class == c.Class && c.Class != "Other") ? "" : "; no other installed car shares it, so opponents use your car")}." : "");
@@ -571,6 +604,18 @@ internal sealed class MainForm : LauncherForm
         UpdateRecenterLabel(); ChoiceEdited();
         notice.Text = "Recenter shortcut changed. Save settings or launch to keep it.";
         return true;
+    }
+
+    internal void UpdateDrivingSummary()
+    {
+        try
+        {
+            var controls = DrivingControls.Load();
+            var devices = controls.Bindings.Select(b => b.Device).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            drivingSummary.Text = controls.Bindings.Count == 0 ? "None: the game's own controls are used."
+                : $"{(controls.Enabled ? "On" : "Off")}: {controls.Bindings.Count} {(controls.Bindings.Count == 1 ? "binding" : "bindings")} on {string.Join(", ", devices)}.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { drivingSummary.Text = "Could not read the driving controls: " + error.Message; }
     }
 
     internal void UpdateVrSummary() => vrSummary.Text = headsetResolution?.Summary(renderScale.Value) ??

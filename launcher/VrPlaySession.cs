@@ -28,6 +28,14 @@ internal static partial class VrPlaySession
         // Practice / Race: the session file in the game folder and the swapped system/flow.bin.
         public string? SessionHash { get; set; }
         public bool Flow { get; set; }
+        // Driving bindings: game input presets changed (or added) for this session (SessionInputMaps).
+        public List<InputFile>? Inputs { get; set; }
+    }
+    private sealed class InputFile
+    {
+        public string? Path { get; set; }
+        public string? OriginalHash { get; set; } // null: a preset added for the session.
+        public string? StagedHash { get; set; }
     }
 
     private static string SessionFile(string id) => "GASVR_" + id + ".xml";
@@ -154,9 +162,10 @@ internal static partial class VrPlaySession
             RestoreLease(folder);
             var id = Guid.NewGuid().ToString("N");
             var session = sessionXml?.Invoke(choices);
+            var inputs = SessionInputMaps.Plan(folder, DrivingControls.Load());
             try
             {
-                Stage(folder, bridgePath, id, session);
+                Stage(folder, bridgePath, id, session, inputs);
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
                 foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null)) start.ArgumentList.Add(arg);
                 if (renderNote is not null) Record(id, renderNote);
@@ -183,8 +192,9 @@ internal static partial class VrPlaySession
 
     // The marker and stock backup are committed before the lease. The lease is
     // committed before either game file is changed, including on an interrupted launch.
-    internal static void Stage(string folder, string bridgePath, string id, byte[]? session = null)
+    internal static void Stage(string folder, string bridgePath, string id, byte[]? session = null, IReadOnlyList<SessionInputMaps.Change>? inputs = null)
     {
+        inputs ??= [];
         var executable = Path.Combine(folder, Avx);
         var dll = Path.Combine(folder, BridgeName);
         if (File.Exists(dll) || File.Exists(Path.Combine(folder, Installation.PlayLease)))
@@ -198,7 +208,15 @@ internal static partial class VrPlaySession
         Encoding.ASCII.GetBytes(BridgeName).CopyTo(candidate, ImportNameOffset);
         if (Hash(candidate) != VrSha256) throw new IOException("The VR executable verification failed.");
         var payload = File.ReadAllBytes(bridgePath);
-        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), SessionHash = session is null ? null : Hash(session), Flow = session is not null };
+        var inputOriginals = inputs.Select(change =>
+        {
+            if (!SessionInputMaps.ValidPath(change.RelativePath)) throw new IOException("Unexpected game input file " + change.RelativePath);
+            var target = Path.Combine(folder, change.RelativePath);
+            return File.Exists(target) ? File.ReadAllBytes(target) : null;
+        }).ToList();
+        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), SessionHash = session is null ? null : Hash(session), Flow = session is not null,
+            Inputs = inputs.Count == 0 ? null : inputs.Select((change, i) => new InputFile { Path = change.RelativePath,
+                OriginalHash = inputOriginals[i] is { } original ? Hash(original) : null, StagedHash = Hash(change.Content) }).ToList() };
         var saved = SessionFolder(id);
         Directory.CreateDirectory(saved);
         WriteNew(Path.Combine(saved, "session.id"), Encoding.ASCII.GetBytes(id));
@@ -209,6 +227,12 @@ internal static partial class VrPlaySession
             WriteNew(Path.Combine(saved, "original-flow.bin"), stockFlow);
             if (FileHash(Path.Combine(saved, "original-flow.bin")) != PracticeFlow.StockSha256) throw new IOException("The flow backup verification failed.");
         }
+        for (var i = 0; i < inputs.Count; ++i)
+            if (inputOriginals[i] is { } original)
+            {
+                WriteNew(InputBackup(saved, i), original);
+                if (FileHash(InputBackup(saved, i)) != info.Inputs![i].OriginalHash) throw new IOException("The input preset backup verification failed.");
+            }
         var prefix = Path.Combine(folder, "gasvr-play-" + id);
         WriteNew(prefix + ".lease.tmp", JsonSerializer.SerializeToUtf8Bytes(info));
         File.Move(prefix + ".lease.tmp", Path.Combine(folder, Installation.PlayLease));
@@ -228,6 +252,27 @@ internal static partial class VrPlaySession
             if (FileHash(FlowFile(folder)) != PracticeFlow.GuardedSha256) throw new IOException("The installed Practice/Race flow verification failed.");
             Record(id, "Staged session file " + info.SessionHash + " and guarded flow " + PracticeFlow.GuardedSha256 + ".");
         }
+        for (var i = 0; i < inputs.Count; ++i)
+        {
+            var entry = info.Inputs![i];
+            var target = Path.Combine(folder, inputs[i].RelativePath);
+            var temporary = prefix + ".input-" + i + ".tmp";
+            WriteNew(temporary, inputs[i].Content);
+            if (FileHash(temporary) != entry.StagedHash) throw new IOException("The staged input preset verification failed.");
+            EnsureIdle(folder);
+            if (entry.OriginalHash is null)
+            {
+                if (File.Exists(target)) throw new IOException("A game input preset appeared during staging: " + inputs[i].RelativePath);
+                File.Move(temporary, target);
+            }
+            else
+            {
+                if (FileHash(target) != entry.OriginalHash) throw new IOException("A game input preset changed during staging: " + inputs[i].RelativePath);
+                File.Replace(temporary, target, null);
+            }
+            if (FileHash(target) != entry.StagedHash) throw new IOException("The installed input preset verification failed: " + inputs[i].RelativePath);
+        }
+        if (inputs.Count > 0) Record(id, "Staged driving bindings in " + string.Join(", ", inputs.Select(c => c.RelativePath)) + ".");
         WriteNew(prefix + ".exe.tmp", candidate);
         EnsureIdle(folder);
         if (FileHash(executable) != StockSha256 || FileHash(prefix + ".exe.tmp") != VrSha256) throw new IOException("The game files changed during staging.");
@@ -310,6 +355,7 @@ internal static partial class VrPlaySession
         }
         if (FileHash(executable) != StockSha256) throw new IOException("Stock restoration could not be verified.");
         if (info.Flow) RestoreFlow(folder, saved, prefix, id);
+        if (info.Inputs is not null) RestoreInputs(folder, saved, prefix, id, info.Inputs);
         RemoveMatching(Path.Combine(folder, BridgeName), info.BridgeHash!, id);
         if (info.SessionHash is not null)
         {
@@ -324,7 +370,44 @@ internal static partial class VrPlaySession
         File.Delete(Path.Combine(saved, "session.id"));
         File.Delete(backup);
         if (info.Flow) File.Delete(Path.Combine(saved, "original-flow.bin"));
+        for (var i = 0; i < (info.Inputs?.Count ?? 0); ++i) File.Delete(InputBackup(saved, i));
         return true;
+    }
+
+    private static string InputBackup(string saved, int index) => Path.Combine(saved, "original-input-" + index + ".xml");
+
+    // Each preset goes back to its original (or, if the session added it, is removed). One that
+    // changed independently is preserved with its backup, and the lease stays.
+    private static void RestoreInputs(string folder, string saved, string prefix, string id, List<InputFile> inputs)
+    {
+        for (var i = 0; i < inputs.Count; ++i)
+        {
+            var entry = inputs[i];
+            if (entry.Path is null || !SessionInputMaps.ValidPath(entry.Path) || !Sha256Text().IsMatch(entry.StagedHash ?? "") ||
+                (entry.OriginalHash is not null && !Sha256Text().IsMatch(entry.OriginalHash))) throw new IOException("Invalid input preset entry in the VR play lease. The game files were preserved.");
+            var target = Path.Combine(folder, entry.Path);
+            var current = File.Exists(target) ? FileHash(target) : null;
+            if (current == entry.StagedHash)
+            {
+                if (entry.OriginalHash is null) RemoveMatching(target, entry.StagedHash!, id);
+                else
+                {
+                    var backup = InputBackup(saved, i);
+                    if (FileHash(backup) != entry.OriginalHash) throw new IOException("The input preset backup failed verification. The game files were preserved: " + entry.Path);
+                    var restoreTemp = prefix + ".input-restore-" + i + ".tmp";
+                    if (File.Exists(restoreTemp) && FileHash(restoreTemp) != entry.OriginalHash) restoreTemp = prefix + ".input-restore-" + Guid.NewGuid().ToString("N") + ".tmp";
+                    if (!File.Exists(restoreTemp)) WriteNew(restoreTemp, File.ReadAllBytes(backup));
+                    if (FileHash(restoreTemp) != entry.OriginalHash) throw new IOException("The input preset restore copy failed verification.");
+                    File.Replace(restoreTemp, target, null);
+                }
+            }
+            else if (current != entry.OriginalHash)
+                throw new IOException("A game input preset changed independently. The current file and backup were preserved: " + entry.Path);
+            if ((File.Exists(target) ? FileHash(target) : null) != entry.OriginalHash) throw new IOException("Input preset restoration could not be verified: " + entry.Path);
+            RemoveStageTemp(prefix + ".input-" + i + ".tmp", entry.StagedHash!, id);
+            if (entry.OriginalHash is not null) RemoveStageTemp(prefix + ".input-restore-" + i + ".tmp", entry.OriginalHash, id);
+        }
+        Record(id, "Restored and verified the game's input presets.");
     }
 
     private static void RestoreFlow(string folder, string saved, string prefix, string id)

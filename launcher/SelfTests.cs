@@ -28,6 +28,7 @@ internal static class SelfTests
             Sessions();
             ApplicationConfiguration.Initialize();
             Application.SetColorMode(SystemColorMode.System);
+            DrivingControlsTests.Run(data, (condition, detail) => Check(condition, detail));
             Form(output);
         }
         catch (Exception error)
@@ -282,6 +283,7 @@ internal static class SelfTests
         Check(Throws<IOException>(() => VrPlaySession.Recover(game)) && File.Exists(Path.Combine(game, Installation.PlayLease)));
         File.WriteAllBytes(Path.Combine(game, "system", "flow.bin"), guarded);
         Check(VrPlaySession.Recover(game) && File.ReadAllBytes(Path.Combine(game, "system", "flow.bin")).SequenceEqual(stockFlow));
+        DrivingControlsTests.Installed(real, game, bridge, (condition, detail) => Check(condition, detail));
         Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(game)))!, true);
     }
 
@@ -295,7 +297,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "VR screen", "Keyboard shortcuts", "Recenter alignment", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "VR screen", "Keyboard shortcuts", "Recenter alignment", "Driving controls", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);
@@ -384,6 +386,32 @@ internal static class SelfTests
                     }
                 }
             }
+            // Controls → Driving and the bindings window with the Xbox preset.
+            LauncherAppearance.Modern = true; LauncherAppearance.Apply(form);
+            form.ClientSize = new Size(LauncherAppearance.Px(form, 900), LauncherAppearance.Px(form, 720));
+            var preset = new DrivingControls { Enabled = true };
+            preset.ApplyXboxPreset(); preset.Save();
+            form.UpdateDrivingSummary();
+            form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Controls");
+            var controlTabs = Find<TabControl>(form, "ControlTabs");
+            controlTabs.SelectedTab = controlTabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Driving");
+            form.PerformLayout(); Application.DoEvents();
+            Check(Find<Label>(form, "DrivingSummary").Text.StartsWith("On: ") && Find<Label>(form, "DrivingSummary").Text.Contains("Xbox controller"));
+            using (var driving = new Bitmap(form.Width, form.Height))
+            {
+                form.DrawToBitmap(driving, new Rectangle(Point.Empty, form.Size));
+                driving.Save(Path.Combine(output, "launcher-controls-driving-modern-900.png"));
+            }
+            using (var bindings = new DrivingControlsForm { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) })
+            {
+                LauncherAppearance.Apply(bindings);
+                bindings.Show(); bindings.PerformLayout(); Application.DoEvents();
+                using var image = new Bitmap(bindings.Width, bindings.Height);
+                bindings.DrawToBitmap(image, new Rectangle(Point.Empty, bindings.Size));
+                image.Save(Path.Combine(output, "driving-controls-modern.png"));
+                bindings.Hide();
+            }
+            File.Delete(DrivingControls.SettingsPath);
         }
         finally { form.Hide(); }
     }

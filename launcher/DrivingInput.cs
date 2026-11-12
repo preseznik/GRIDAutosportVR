@@ -1,0 +1,281 @@
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace GRIDAutosportVR;
+
+// Launcher-only, nonexclusive capture. It never injects or synthesizes game input.
+internal sealed class DrivingInput : IDisposable
+{
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Sample
+    {
+        public uint Connected, Axes;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)] public float[] Values;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128)] public byte[] Buttons;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)] public uint[] Pov;
+        public static Sample Empty() => new() { Values = new float[8], Buttons = new byte[128], Pov = [uint.MaxValue, uint.MaxValue, uint.MaxValue, uint.MaxValue] };
+        public readonly Sample Copy() => new() { Connected = Connected, Axes = Axes, Values = (float[])Values.Clone(), Buttons = (byte[])Buttons.Clone(), Pov = (uint[])Pov.Clone() };
+    }
+    internal sealed record Device(uint Index, string Id, string Name, string Product)
+    {
+        public bool Xbox => Product == "xinput_pad";
+        public override string ToString() => Name;
+    }
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate nint OpenFn(nint window);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void CloseFn(nint handle);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate uint CountFn(nint handle);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)] private delegate int NameFn(nint handle, uint index, StringBuilder id, uint idSize, StringBuilder name, uint nameSize);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)] private delegate int ProductFn(nint handle, uint index, StringBuilder product, uint size);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int ReadFn(nint handle, uint index, ref Sample sample);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int FeedbackFn(nint handle, uint index, uint milliseconds);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate uint FeedbackErrorFn(nint handle, out int result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate uint FeedbackShapesFn(nint handle, [Out] int[] results, uint capacity);
+    private nint library, handle;
+    private CloseFn? close;
+    private ReadFn? read;
+    private FeedbackFn? feedback;
+    private FeedbackErrorFn? feedbackError;
+    private FeedbackShapesFn? feedbackShapes;
+    public List<Device> Devices { get; } = [];
+    private T Export<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
+    public DrivingInput(nint window)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "driving_input.dll");
+        if (!File.Exists(path)) throw new IOException("Controller capture is not installed. Rebuild the complete launcher; keyboard binding remains available.");
+        try
+        {
+            library = NativeLibrary.Load(path);
+            close = Export<CloseFn>("CaptureClose"); read = Export<ReadFn>("CaptureRead");
+            // An older helper without the feedback test still captures input.
+            if (NativeLibrary.TryGetExport(library, "CaptureFeedback", out var test)) feedback = Marshal.GetDelegateForFunctionPointer<FeedbackFn>(test);
+            if (NativeLibrary.TryGetExport(library, "CaptureFeedbackError", out var error)) feedbackError = Marshal.GetDelegateForFunctionPointer<FeedbackErrorFn>(error);
+            if (NativeLibrary.TryGetExport(library, "CaptureFeedbackShapes", out var shapes)) feedbackShapes = Marshal.GetDelegateForFunctionPointer<FeedbackShapesFn>(shapes);
+            handle = Export<OpenFn>("CaptureOpen")(window);
+            if (handle == 0) throw new IOException("Windows controller capture could not start.");
+            var count = Export<CountFn>("CaptureCount")(handle);
+            if (count > 256) throw new IOException("Unexpected controller count.");
+            var name = Export<NameFn>("CaptureName"); var product = Export<ProductFn>("CaptureProduct");
+            for (uint index = 0; index < count; ++index)
+            {
+                var id = new StringBuilder(128); var label = new StringBuilder(512); var type = new StringBuilder(128);
+                if (name(handle, index, id, 128, label, 512) != 0 && product(handle, index, type, 128) != 0)
+                    Devices.Add(new(index, id.ToString(), label.ToString(), type.ToString()));
+            }
+        }
+        catch { Dispose(); throw; }
+    }
+    public Sample Read(Device device)
+    {
+        ObjectDisposedException.ThrowIf(handle == 0, this);
+        var sample = Sample.Empty(); read!(handle, device.Index, ref sample); return sample;
+    }
+    public bool FeedbackAvailable => feedback is not null;
+    // Plays (milliseconds > 0) or stops (0) the helper's short test effect.
+    public int Feedback(Device device, uint milliseconds)
+    {
+        ObjectDisposedException.ThrowIf(handle == 0, this);
+        return feedback is null ? 0 : feedback(handle, device.Index, milliseconds);
+    }
+    // The Windows call that refused the last test and its HRESULT; null with an older helper.
+    public (uint Step, int Result)? FeedbackError()
+    {
+        if (handle == 0 || feedbackError is null) return null;
+        var step = feedbackError(handle, out var result);
+        return step == 0 ? null : (step, result);
+    }
+    // CreateEffect results of the last test's shapes, in FeedbackShapes order; empty with an older helper.
+    public int[] FeedbackShapeResults()
+    {
+        if (handle == 0 || feedbackShapes is null) return [];
+        var results = new int[FeedbackShapes.Length];
+        var count = feedbackShapes(handle, results, (uint)results.Length);
+        return results[..(int)Math.Min(count, (uint)results.Length)];
+    }
+    internal static readonly string[] FeedbackSteps = ["", "GetCapabilities", "CreateDevice", "SetDataFormat", "SetCooperativeLevel", "Acquire", "CreateEffect", "Start", "XInputSetState"];
+    internal static readonly string[] FeedbackShapes = ["sine", "sine on X", "constant force"];
+    internal static string FeedbackMessage(Device device, int result, (uint Step, int Result)? error = null, int[]? shapes = null)
+    {
+        var message = result switch
+        {
+            1 => device.Xbox ? $"Rumbling {device.Name} for one second." : $"Playing a force-feedback shake on {device.Name} for one second.",
+            -1 => $"{device.Name} reports no force feedback.",
+            -2 => $"{device.Name} is in use by another program. Close GRID Autosport (or other games) and try again.",
+            -3 => $"Windows could not start force feedback on {device.Name}.",
+            _ => $"The feedback test is unavailable for {device.Name}."
+        };
+        // Name the refusing Windows call (and every refused effect shape) so a report identifies it.
+        shapes ??= [];
+        if (result < 0 && error is { } detail && detail.Step < FeedbackSteps.Length)
+            message += detail.Step == 6 && shapes.Length > 1
+                ? $" (CreateEffect: {string.Join(", ", shapes.Select((code, i) => $"{FeedbackShapes[i]} 0x{code:X8}"))})"
+                : $" ({FeedbackSteps[detail.Step]} returned 0x{detail.Result:X8})";
+        else if (result == 1 && shapes.Length > 1)
+            message += $" (using {FeedbackShapes[shapes.Length - 1]})";
+        return message;
+    }
+    internal static int PovDirection(uint value)
+    {
+        // Ignore diagonals so one gesture cannot silently bind two directions.
+        if (PovNeutral(value)) return -1;
+        return value switch { <= 2250 or >= 33750 and < 36000 => 0, >= 6750 and <= 11250 => 1, >= 15750 and <= 20250 => 2, >= 24750 and <= 29250 => 3, _ => -1 };
+    }
+    internal static bool PovNeutral(uint value) => (value & 0xffff) == 0xffff;
+    internal static bool IsAxis(DrivingBinding binding) => DrivingControls.DirectAxes.Contains(binding.Input) || DrivingControls.XboxAxes.Contains(binding.Input);
+    internal static bool IsHat(DrivingBinding binding) => binding.Input.StartsWith("di_dpad_", StringComparison.Ordinal);
+    public static DrivingBinding? Detect(string action, Device device, Sample baseline, Sample current, bool axesOnly = false, bool buttonsOnly = false)
+    {
+        if (baseline.Connected == 0 || current.Connected == 0) return null;
+        var result = new DrivingBinding { Action = action, DeviceId = device.Id, Device = device.Name, DeviceType = device.Product };
+        // A fresh button/hat gesture is more specific than incidental axis travel.
+        // Automatic mode must not let a moving pedal hide a button press.
+        if (!axesOnly)
+        {
+            // A wheel's shifter button may change with, or remain held during,
+            // a deliberate D-pad press. Prefer the newly pressed hat.
+            if (!device.Xbox)
+                for (var i = 0; i < 4; ++i)
+                {
+                    var direction = PovDirection(current.Pov[i]);
+                    if (PovNeutral(baseline.Pov[i]) && direction >= 0)
+                        return result with { Input = $"di_dpad_{i}_" + new[] { "up", "right", "down", "left" }[direction] };
+                }
+            for (var i = 0; i < 128; ++i)
+            {
+                if (current.Buttons[i] == 0 || baseline.Buttons[i] != 0) continue;
+                if (device.Xbox && (i >= DrivingControls.XboxButtons.Length || DrivingControls.XboxButtons[i].Length == 0)) continue;
+                return result with { Input = device.Xbox ? DrivingControls.XboxButtons[i] : "di_button_" + i };
+            }
+        }
+        if (!buttonsOnly)
+        {
+            var best = -1; var movement = 0f; var steering = action.StartsWith("Steer ", StringComparison.Ordinal);
+            for (var i = 0; i < 8; ++i)
+            {
+                if ((current.Axes & baseline.Axes & (1u << i)) == 0) continue;
+                var delta = Math.Abs(current.Values[i] - baseline.Values[i]);
+                var centered = Math.Abs(baseline.Values[i]) < .35f;
+                if (steering && (!centered || device.Xbox && i >= 4)) continue;
+                var threshold = steering && !device.Xbox ? .15f : centered || device.Xbox ? .55f : .9f;
+                if (float.IsFinite(delta) && delta >= threshold && delta > movement) { best = i; movement = delta; }
+            }
+            if (best >= 0 && (!device.Xbox || best < 6))
+            {
+                var centered = steering || Math.Abs(baseline.Values[best]) < .35f;
+                var negative = current.Values[best] < baseline.Values[best];
+                var valid = true;
+                if (steering) { valid = Math.Abs(current.Values[best]) >= .15f; negative = current.Values[best] < 0; }
+                if (device.Xbox)
+                {
+                    if (best >= 4) { valid &= baseline.Values[best] <= .15f && current.Values[best] >= .4f; centered = false; negative = false; }
+                    else { valid &= Math.Abs(baseline.Values[best]) <= .25f; centered = true; negative = current.Values[best] < 0; }
+                    // The game's stock Menu Up uses biDirUpper: XInput Y is already up-positive.
+                }
+                if (valid) return result with { Input = (device.Xbox ? DrivingControls.XboxAxes : DrivingControls.DirectAxes)[best],
+                    Calibration = centered ? negative ? "biDirLower" : "biDirUpper" : negative ? "uniDirNeg" : "uniDirPos",
+                    DeadZone = 0 };
+            }
+        }
+        return null;
+    }
+    public static string Description(DrivingBinding? binding)
+    {
+        if (binding is null) return "Use game binding";
+        return binding.Keyboard ? InputDescription(binding) : binding.Device + " · " + InputDescription(binding);
+    }
+    public static string InputDescription(DrivingBinding binding)
+    {
+        if (binding.Keyboard) return new KeysConverter().ConvertToString((Keys)Convert.ToInt32(binding.Input[10..], 16)) ?? binding.Input;
+        var direction = binding.Calibration switch { "biDirLower" => " (−)", "biDirUpper" => " (+)", "uniDirNeg" => " (inverted)", _ => "" };
+        return binding.Input.Replace("xinput_", "").Replace("di_", "").Replace('_', ' ') + direction;
+    }
+    public void Dispose()
+    {
+        if (handle != 0) { close!(handle); handle = 0; }
+        if (library != 0) { NativeLibrary.Free(library); library = 0; }
+    }
+}
+
+// Learn stable rest, require deliberate movement and release. A held switch,
+// noisy unused pedal, lost focus or disconnect cannot assign a stale gesture.
+internal sealed class DrivingCapture(DrivingInput.Device device, string action)
+{
+    private DrivingInput.Sample baseline;
+    private bool initialized;
+    private uint presentAxes;
+    private readonly long[] axisSince = new long[8];
+    private long candidateSince, releaseSince = -1;
+    private DrivingBinding? candidate;
+    public bool AxesOnly { get; init; }
+    public bool ButtonsOnly { get; init; }
+    public bool Ready { get; private set; }
+    public bool AxesReady => initialized && !ButtonsOnly && baseline.Axes != 0;
+    public bool WaitingForRelease { get; private set; }
+    public DrivingBinding? Completed { get; private set; }
+    public DrivingBinding? Detected => candidate;
+    public static DrivingCapture? ChooseActive(IEnumerable<DrivingCapture> captures, DrivingCapture? current)
+    {
+        static bool Digital(DrivingCapture capture) => capture.WaitingForRelease && capture.Detected is not null && !DrivingInput.IsAxis(capture.Detected);
+        static bool Hat(DrivingCapture capture) => Digital(capture) && DrivingInput.IsHat(capture.Detected!);
+        if (current is not null && Hat(current)) return current;
+        var hat = captures.FirstOrDefault(Hat);
+        if (hat is not null) return hat;
+        if (current is not null && Digital(current)) return current;
+        return captures.FirstOrDefault(Digital) ?? (current?.WaitingForRelease == true ? current : captures.FirstOrDefault(c => c.WaitingForRelease));
+    }
+    public void Reset() { initialized = Ready = WaitingForRelease = false; Completed = candidate = null; releaseSince = -1; }
+    public void Update(DrivingInput.Sample current, long now)
+    {
+        if (current.Connected == 0) { Reset(); return; }
+        if (Completed is not null) return;
+        if (!initialized)
+        {
+            baseline = current.Copy(); presentAxes = current.Axes; baseline.Axes = 0;
+            // Released digital inputs are armed immediately. Inputs already held
+            // at startup remain blocked until released, independently of axes.
+            Array.Fill(axisSince, now); initialized = true; Ready = !AxesOnly; return;
+        }
+        if (presentAxes != current.Axes) { Reset(); return; }
+        for (var i = 0; i < 8; ++i)
+        {
+            var bit = 1u << i;
+            if (ButtonsOnly || (presentAxes & bit) == 0 || (baseline.Axes & bit) != 0) continue;
+            var shifted = !float.IsFinite(baseline.Values[i]) || !float.IsFinite(current.Values[i]) || Math.Abs(current.Values[i] - baseline.Values[i]) > .06f;
+            if (device.Xbox && i < 6 && Math.Abs(current.Values[i]) > (i < 4 ? .25f : .15f)) shifted = true;
+            if (shifted) { baseline.Values[i] = current.Values[i]; axisSince[i] = now; }
+            if (float.IsFinite(current.Values[i]) && now - axisSince[i] >= 600) baseline.Axes |= bit;
+        }
+        Ready = !ButtonsOnly && baseline.Axes != 0 || !AxesOnly;
+        if (!Ready) return;
+        for (var i = 0; i < 128; ++i) if (current.Buttons[i] == 0) baseline.Buttons[i] = 0;
+        for (var i = 0; i < 4; ++i) if (DrivingInput.PovNeutral(current.Pov[i])) baseline.Pov[i] = uint.MaxValue;
+        if (WaitingForRelease && !AxesOnly && candidate is not null && !DrivingInput.IsHat(candidate))
+        {
+            // An axis can remain displaced on a noisy wheel/pedal set. A later
+            // digital gesture can replace it; a hat can also replace a held
+            // shifter button, without waiting for that gear to be released.
+            var digital = DrivingInput.Detect(action, device, baseline, current, buttonsOnly: true);
+            if (digital is not null && (DrivingInput.IsAxis(candidate) || DrivingInput.IsHat(digital))) { candidate = digital; releaseSince = -1; }
+        }
+        if (!WaitingForRelease)
+        {
+            var detected = DrivingInput.Detect(action, device, baseline, current, AxesOnly, ButtonsOnly);
+            if (detected is null) { candidate = null; return; }
+            if (candidate != detected) { candidate = detected; candidateSince = now; }
+            var analog = DrivingInput.IsAxis(candidate);
+            if (analog && now - candidateSince < 100) return;
+            WaitingForRelease = true;
+        }
+        var axis = Array.IndexOf(device.Xbox ? DrivingControls.XboxAxes : DrivingControls.DirectAxes, candidate!.Input);
+        bool released;
+        if (axis >= 0) released = Math.Abs(current.Values[axis] - baseline.Values[axis]) < .12f;
+        else if (DrivingInput.IsHat(candidate)) released = DrivingInput.PovNeutral(current.Pov[candidate.Input[8] - '0']);
+        else
+        {
+            var button = device.Xbox ? Array.IndexOf(DrivingControls.XboxButtons, candidate.Input) : int.Parse(candidate.Input[10..]);
+            released = button >= 0 && current.Buttons[button] == 0;
+        }
+        if (!released) { releaseSince = -1; return; }
+        if (releaseSince < 0) releaseSince = now;
+        if (now - releaseSince >= 160) Completed = candidate;
+    }
+}

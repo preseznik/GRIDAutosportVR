@@ -6,7 +6,7 @@ namespace GRIDAutosportVR;
 internal static class Program
 {
     private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | (--play-vr | --restore-play) --game-dir FOLDER | --self-test [OUTPUT]" +
-        " | --discover OUTPUT | --end-session --game-dir FOLDER | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
+        " | --discover OUTPUT | --end-session --game-dir FOLDER | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | --write-input-maps --game-dir FOLDER --controls FILE OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
 
     [STAThread]
     private static int Main(string[] args)
@@ -22,6 +22,23 @@ internal static class Program
         }
         if (args is ["--write-session", "--game-dir", var sessionGame, var sessionOut]) return WriteSession(sessionGame, null, sessionOut);
         if (args is ["--write-session", "--game-dir", var testGame, "--settings", var testSettings, var testOut]) return WriteSession(testGame, testSettings, testOut);
+        if (args is ["--write-input-maps", "--game-dir", var mapsGame, "--controls", var mapsControls, var mapsOut])
+        {
+            // The input presets the next VR launch would stage for these driving controls; nothing is staged.
+            try
+            {
+                var changes = SessionInputMaps.Plan(Path.TrimEndingDirectorySeparator(Path.GetFullPath(mapsGame)), DrivingControls.LoadFile(mapsControls));
+                foreach (var change in changes)
+                {
+                    var target = Path.Combine(Path.GetFullPath(mapsOut), change.RelativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    File.WriteAllBytes(target, change.Content);
+                    Console.WriteLine(change.RelativePath);
+                }
+                return 0;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Console.Error.WriteLine(error.Message); return 1; }
+        }
         if (args is ["--check-install" or "--check-uninstall", "--game", var game, "--error-log", var errorLog])
             return CheckForInstaller(args[0] == "--check-install", game, errorLog);
         var inspect = args.Length > 0 && args[0] == "--inspect";
