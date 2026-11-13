@@ -9,3 +9,14 @@ __pycache__/
 *.user
 *.log
 .vs/
+
+# Development only, not needed to build: test harnesses and research scripts, and the cockpit
+# texture pack tooling (the pack is published separately; its catalog is launcher/assets).
+capture/
+baseline/
+bridge/run.py
+tools/practice_flow.py
+tools/Export-CockpitTextures.ps1
+tools/build_cockpit_texture_pack.py
+tools/redraw_cockpit_atlases.py
+tools/data/

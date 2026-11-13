@@ -7,7 +7,7 @@ For normal play, connect the headset and choose **Launch VR** in the Autosport l
 With MSVC 2022 and a local Khronos OpenXR-SDK checkout, build from the project root:
 
 ```powershell
-cmake -S bridge -B artifacts/bridge-build -G "Visual Studio 17 2022" -A Win32 -DOPENXR_SDK=F:/Coding/Codex/Mods/GRID2VR/.deps/OpenXR-SDK
+cmake -S bridge -B artifacts/bridge-build -G "Visual Studio 17 2022" -A Win32 -DOPENXR_SDK=<path to your OpenXR-SDK checkout>
 cmake --build artifacts/bridge-build --config Release --target gasxr -- /m:1
 ```
 

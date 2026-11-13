@@ -1,6 +1,0 @@
-[
-  {"at": 100, "cmds": ["head pose 0 1.6 0 0 0 0"], "shot": "c100"},
-  {"at": 104, "shot": "base"},
-  {"at": 105, "cmds": ["head rot 30 0 0"], "shot": "yaw30"},
-  {"at": 106, "cmds": ["head rot 0 0 0"], "shot": "base-again"}
-]

@@ -1,9 +1,0 @@
-[
-  {"at": 102, "cmds": ["head pose 0 1.6 0 0 0 0"], "shot": "base"},
-  {"at": 103.5, "cmds": ["head rot 30 0 0"], "shot": "yaw30"},
-  {"at": 105, "key": "F10", "shot": "yaw30-after-key"},
-  {"at": 106.5, "cmds": ["head rot 0 0 0"], "shot": "forward-after-key"},
-  {"at": 108, "cmds": ["head rot 0 0 20"], "shot": "roll20"},
-  {"at": 109.5, "key": "F10", "shot": "roll20-after-key"},
-  {"at": 111, "cmds": ["head rot 0 0 0"], "shot": "level-after-roll-key"}
-]
