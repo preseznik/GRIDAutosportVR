@@ -11,6 +11,10 @@ void AutosportSetPauseState(const void* state);
 bool AutosportPreRaceIntro3D();
 bool AutosportPauseMenuShown();
 bool AutosportRaceScene();
+// The game executable's loaded base.
+const BYTE* AutosportGameImage();
+// Replaces the LOD selector's apply call (RVA 5FE647): nearby opponents keep their best model in VR.
+void __fastcall AutosportOpponentLodApply(void* manager, void*);
 bool AutosportHudFollowsView();
 bool AutosportHudParts(unsigned& mask);
 float AutosportHudDistance();
@@ -23,6 +27,8 @@ bool AutosportUiComparison();
 bool AutosportCompareSlate();
 const char* AutosportTransitionSample();
 bool AutosportFlatScreen();
+// A career discipline / DLC championship intro video state is active (seated screen from the back buffer).
+bool AutosportIntroVideo();
 bool AutosportStartupFromBackBuffer();
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event);
 void __fastcall AutosportLoadingExited(void* dispatcher, void*, const void* event);

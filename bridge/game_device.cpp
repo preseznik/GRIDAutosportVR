@@ -250,6 +250,56 @@ void hookVideoLogging() {
     AutosportLog("Native video logging open=%d close=%d", open, close);
 }
 
+// The career's discipline intro video (StateDisciplineIntroVideo, after a career or a new
+// discipline starts) and the DLC championship intro (StateDLCChampIntroVideo) play once the race
+// scene has loaded; the headset otherwise kept showing the race's stale first frame. While either
+// state is active the seated screen shows the game's own back buffer, as for the startup videos.
+// Their vtables (RVA CFD178 and CFD1C0): slot 3 enters (__thiscall, one argument, ret 4), slot 12
+// leaves (StateVideoBase's, no argument).
+std::atomic<int> introVideo{0};
+using StateEnterFn = void (__thiscall*)(void*, unsigned);
+using StateLeaveFn = void (__thiscall*)(void*);
+StateEnterFn stockDisciplineEnter, stockChampEnter;
+StateLeaveFn stockVideoLeave;
+void enteredIntroVideo(const char* name) {
+    introVideo.store(1);
+    AutosportLog("%s entered: seated screen from the back buffer", name);
+}
+void __fastcall disciplineEnter(void* state, void*, unsigned argument) {
+    enteredIntroVideo("StateDisciplineIntroVideo");
+    stockDisciplineEnter(state, argument);
+}
+void __fastcall champEnter(void* state, void*, unsigned argument) {
+    enteredIntroVideo("StateDLCChampIntroVideo");
+    stockChampEnter(state, argument);
+}
+void __fastcall introVideoLeave(void* state, void*) {
+    stockVideoLeave(state);
+    if (introVideo.exchange(0)) AutosportLog("Intro video state left");
+}
+bool patchSlot(DWORD vtableRva, unsigned slot, DWORD expectedRva, void* replacement, void** stock) {
+    void** entry = reinterpret_cast<void**>(const_cast<BYTE*>(image) + vtableRva) + slot;
+    if (*entry != image + expectedRva && *entry != replacement) return false;
+    if (*entry == replacement) return true;
+    DWORD old{};
+    if (!VirtualProtect(entry, sizeof(void*), PAGE_READWRITE, &old)) return false;
+    *stock = *entry;
+    *entry = replacement;
+    VirtualProtect(entry, sizeof(void*), old, &old);
+    return true;
+}
+void hookIntroVideoStates() {
+    static bool attempted;
+    if (attempted || !regularPlay || !headset) return;
+    attempted = true;
+    StateLeaveFn champLeave = nullptr;
+    const bool discipline = patchSlot(0xCFD178, 3, 0x25A7D0, reinterpret_cast<void*>(&disciplineEnter), reinterpret_cast<void**>(&stockDisciplineEnter)) &&
+                            patchSlot(0xCFD178, 12, 0x239E20, reinterpret_cast<void*>(&introVideoLeave), reinterpret_cast<void**>(&stockVideoLeave));
+    const bool champ = patchSlot(0xCFD1C0, 3, 0x23F560, reinterpret_cast<void*>(&champEnter), reinterpret_cast<void**>(&stockChampEnter)) &&
+                       patchSlot(0xCFD1C0, 12, 0x239E20, reinterpret_cast<void*>(&introVideoLeave), reinterpret_cast<void**>(&champLeave));
+    AutosportLog("Intro video states watched discipline=%d champ=%d", discipline, champ);
+}
+
 // Test only, never passed by the launcher: with -gasvrtestpad=1 controller 0 is a virtual
 // gamepad whose buttons the xr-sim harness sets by writing pad.txt (hex XINPUT_GAMEPAD
 // wButtons) into the session folder. The game reads the keyboard through Raw Input and
@@ -335,6 +385,7 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
         UINT flags, const D3D_FEATURE_LEVEL* levels, UINT count, UINT sdk, ID3D11Device** device,
         D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context) {
     hookVideoLogging();
+    hookIntroVideoStates();
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
     if (SUCCEEDED(hr) && device && *device && regularPlay) {
@@ -438,8 +489,9 @@ const char* AutosportTransitionSample() {
 // the HMD eye texture as the seated screen's source there (the pre-2026-11-10 behaviour).
 bool AutosportStartupFromBackBuffer() {
     static const bool eye = wcsstr(GetCommandLineW(), L" -gasvrstartupsource=eye") != nullptr;
-    return regularPlay && headset && !eye && phase.load() == Phase::Startup;
+    return regularPlay && headset && !eye && (phase.load() == Phase::Startup || introVideo.load());
 }
+bool AutosportIntroVideo() { return introVideo.load() != 0; }
 void AutosportSetVehicleViews(const void* manager) { vehicleViews = static_cast<const BYTE*>(manager); }
 // Once per native frame. Headset play shows intro shots on the seated screen: the game draws
 // them as a 2D broadcast layout (a dark info panel down the left side, black wipes), which
@@ -486,9 +538,11 @@ void AutosportSampleVehicleCamera() {
 bool AutosportPreRaceIntro3D() { return intro3d && introShot && !carCameraSeen; }
 void AutosportSetPauseState(const void* state) { pauseState = static_cast<const BYTE*>(state); }
 bool AutosportPauseMenuShown() { return pauseMenu; }
+const BYTE* AutosportGameImage() { return image; }
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
+    if (introVideo.load()) return true;
     if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && ((introShot && !AutosportPreRaceIntro3D()) || pauseMenu));
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
@@ -502,6 +556,7 @@ bool AutosportFlatScreen() {
 using LoadingDispatch = void (__thiscall*)(void*, const void*);
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event) {
     phase.store(Phase::Loading);
+    if (introVideo.exchange(0)) AutosportLog("Intro video state forgotten at StateLoading");
     vehicleViews = nullptr;
     introShot = false;
     carCameraSeen = false;

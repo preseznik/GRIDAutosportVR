@@ -684,6 +684,10 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
                 AutosportLog("Startup seated screen from the back buffer %ux%u format=%u frame=%llu submitted=%u",
                              desc.Width, desc.Height, unsigned(desc.Format), frame, unsigned(result.submitted));
             }
+            static unsigned introFrames;
+            if (AutosportIntroVideo() && introFrames++ % 180 == 0 && introFrames < 180 * 60)
+                AutosportLog("Intro video on the seated screen from the back buffer %ux%u native frame=%llu submitted=%u",
+                             desc.Width, desc.Height, frame, unsigned(result.submitted));
         } else {
             result = AutosportEndViews(eyes[0].texture, 0, rects, frame,
                                        (capture || transition || overlay) ? AutosportRunDirectory() : nullptr, mode);
@@ -866,7 +870,7 @@ bool AutosportInstallNativeOvr() noexcept {
         site(0x14949B, 0x2C1250, hudEnabled),
         site(0x1494E8, 0x9F0F90, hudPartSetting), site(0x149538, 0x9F0F90, hudPartSetting),
         site(0x149586, 0x9F0F90, hudPartSetting), site(0x1495D1, 0x9F0F90, hudPartSetting),
-        site(0x255EB2, 0x247C60, pauseEntered)
+        site(0x255EB2, 0x247C60, pauseEntered), site(0x5FE647, 0x5FDB40, AutosportOpponentLodApply)
     };
     // Original worker return: clear both active flags, pop EBX (only on the
     // results path), then the common pop ESI / pop EBP / ret 4.
