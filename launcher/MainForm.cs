@@ -319,6 +319,7 @@ internal sealed class MainForm : LauncherForm
         LoadChoices();
         RefreshInstallation();
         Shown += async (_, _) => await RefreshCockpitTexturesAsync();
+        Shown += async (_, _) => { if (!SelfTesting) await CheckUpdatesAtStartup(); };
     }
 
     private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
@@ -759,8 +760,15 @@ internal sealed class MainForm : LauncherForm
     }
 
     // Key capture as in GRID2VR: the next key press (with Ctrl, Alt, Shift) becomes the shortcut.
-    protected override bool ProcessCmdKey(ref Message message, Keys keyData) =>
-        capturingRecenter ? CaptureRecenterKey(keyData) : capturingSeatKey >= 0 ? CaptureSeatKey(keyData) : base.ProcessCmdKey(ref message, keyData);
+    protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+    {
+        if (capturingRecenter) return CaptureRecenterKey(keyData);
+        if (capturingSeatKey >= 0) return CaptureSeatKey(keyData);
+        if (keyData == Keys.F1) { ShowAbout(); return true; }
+        return base.ProcessCmdKey(ref message, keyData);
+    }
+    // Self-tests build the form without network checks.
+    internal static bool SelfTesting { get; set; }
 
     // The next key press becomes the seat key being changed: one key, no modifiers, not used by another.
     internal bool CaptureSeatKey(Keys keyData)
@@ -818,11 +826,25 @@ internal sealed class MainForm : LauncherForm
 
     private void ShowAbout()
     {
-        MessageBox.Show(this,
-            $"{Branding.Title} {BuildInfo.Version} ({BuildInfo.Channel})\nBuild: {BuildInfo.Built}, {BuildInfo.Revision}\n\n" +
-            "Connect your headset, choose Launch VR, and finish with Quit in the game so the launcher can restore the original files.\n\n" +
-            Branding.Repository,
-            "Help / About", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        using var about = new AboutForm(gameFolder, !supervising && !recovering && !testing);
+        about.ShowDialog(this);
+    }
+
+    // At startup (Help / About → Check for updates at startup): a quiet check that only reports a
+    // newer release. Failures, including the release list not being public, are not shown.
+    private async Task CheckUpdatesAtStartup()
+    {
+        try
+        {
+            var prefs = UpdatePreferences.Load();
+            if (!prefs.CheckAtStartup) return;
+            using var http = Updates.CreateClient();
+            var release = await new Updates(http).Check(prefs.Experimental, CancellationToken.None);
+            if (release is not null && !IsDisposed && !supervising)
+                notice.Text = $"Update available: {release.Tag}. Open Help / About (? or F1) to download and install it.";
+        }
+        catch (Exception error) when (error is IOException or System.Net.Http.HttpRequestException or System.Text.Json.JsonException or TaskCanceledException
+                                          or KeyNotFoundException or InvalidOperationException or UnauthorizedAccessException) { }
     }
 
     private void ConfigureTooltips(Control help)

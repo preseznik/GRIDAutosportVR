@@ -19,6 +19,7 @@ internal static class SelfTests
         if (Directory.Exists(data)) Directory.Delete(data, true);
         Directory.CreateDirectory(data);
         LauncherSettings.UseDataDirectory(data);
+        MainForm.SelfTesting = true;
         try
         {
             Settings(data);
@@ -30,6 +31,7 @@ internal static class SelfTests
             Application.SetColorMode(SystemColorMode.System);
             DrivingControlsTests.Run(data, (condition, detail) => Check(condition, detail));
             CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
+            UpdateTests.Run(output, (condition, detail) => Check(condition, detail));
             Form(output);
         }
         catch (Exception error)
