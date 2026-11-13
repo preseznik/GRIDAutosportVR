@@ -253,8 +253,9 @@ void __fastcall updateUiCamera(void* camera, const void* drawCaller, const BYTE*
             for (unsigned i = 0; i < count; ++i) if (logged[i] == drawCaller) seen = true;
             if (!seen && count < 16) {
                 logged[count++] = drawCaller;
-                AutosportLog("Seated-screen FE draw callerRVA=%X perspective=%u clip x scaled by %.3f (eye %.3f:1, screen %.3f:1)",
-                             unsigned(static_cast<const BYTE*>(drawCaller)-gameImage-5), unsigned(bytes[0xe0]), fit, pixels, tangents);
+                AutosportLog("Seated-screen FE draw callerRVA=%X perspective=%u clip x scaled by %.3f (eye %.3f:1, screen %.3f:1, camera xy=(%.4g,%.4g) layout %.3f:1)",
+                             unsigned(static_cast<const BYTE*>(drawCaller)-gameImage-5), unsigned(bytes[0xe0]), fit, pixels, tangents,
+                             m.m[0][0], m.m[1][1], m.m[0][0] != 0 ? m.m[1][1] / m.m[0][0] : 0.f);
             }
             for (int r = 0; r < 4; ++r) m.m[r][0] *= fit;
         }

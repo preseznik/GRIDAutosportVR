@@ -6,10 +6,12 @@
 //
 // -gasvrcockpittextures=observe  logs every texture shape and each 512x512 BC3 atlas's hash
 //                                (cockpit-textures.log in the session folder);
-// -gasvrcockpittextures=replace  also swaps in <game>\GRIDAutosportVR\addons\cockpit-textures\
-//                                <car>.dds for each atlas listed in catalog.txt there
-//                                ("car sourceSha256 ddsSha256" per line; the launcher verifies
-//                                the pack before launch, the bridge checks each file again).
+// -gasvrcockpittextures=replace:<version>
+//                                also swaps in <data>\addons\cockpit-textures\<version>\<car>.dds
+//                                (<data> = the launcher's data folder) for each atlas listed in
+//                                catalog.txt there ("car sourceSha256 ddsSha256" per line; the
+//                                launcher verifies the pack before launch, the bridge checks each
+//                                file's hash again when the game first loads that car).
 // Hooks: ID3D11Device CreateTexture2D (vtable slot 5) and CreateShaderResourceView (slot 7).
 #include <windows.h>
 #include <d3d11.h>
@@ -227,13 +229,33 @@ void AutosportConfigureCockpitTextures(ID3D11Device* device, const wchar_t* sess
     static bool done;
     if (done || !device) return;
     done = true;
+    (void)gameFolder;
     const wchar_t* cmd = GetCommandLineW();
-    if (wcsstr(cmd, L" -gasvrcockpittextures=observe")) mode = Mode::Observe;
-    else if (wcsstr(cmd, L" -gasvrcockpittextures=replace")) mode = Mode::Replace;
+    const wchar_t* replace = wcsstr(cmd, L" -gasvrcockpittextures=replace:");
+    wchar_t version[33]{};
+    if (replace) {
+        replace += wcslen(L" -gasvrcockpittextures=replace:");
+        const size_t length = wcsspn(replace, L"0123456789abcdefghijklmnopqrstuvwxyz.-");
+        if (length == 0 || length >= _countof(version) || (replace[length] && replace[length] != L' ')) return;
+        wcsncpy_s(version, replace, length);
+        mode = Mode::Replace;
+    } else if (wcsstr(cmd, L" -gasvrcockpittextures=observe")) mode = Mode::Observe;
     else return;
-    if (sessionFolder && *sessionFolder) swprintf_s(logPath, L"%s\\cockpit-textures.log", sessionFolder);
-    swprintf_s(packFolder, L"%s\\GRIDAutosportVR\\addons\\cockpit-textures", gameFolder);
-    loadCatalog();
+    if (!sessionFolder || !*sessionFolder) { mode = Mode::Off; return; }
+    swprintf_s(logPath, L"%s\\cockpit-textures.log", sessionFolder);
+    // The pack sits in the launcher's data folder, two levels above the session folder
+    // (<data>\sessions\<id>): <data>\addons\cockpit-textures\<version>.
+    wchar_t data[MAX_PATH];
+    wcscpy_s(data, sessionFolder);
+    for (int up = 0; up < 2; ++up) {
+        wchar_t* slash = wcsrchr(data, L'\\');
+        if (!slash) { mode = Mode::Off; return; }
+        *slash = 0;
+    }
+    if (mode == Mode::Replace) {
+        swprintf_s(packFolder, L"%s\\addons\\cockpit-textures\\%s", data, version);
+        loadCatalog();
+    }
     if (mode == Mode::Replace && atlases.empty()) {
         mode = Mode::Off;
         AutosportLog("Cockpit textures: no pack catalog in %ls; stock textures", packFolder);

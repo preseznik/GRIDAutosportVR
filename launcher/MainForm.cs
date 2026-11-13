@@ -32,6 +32,12 @@ internal sealed class MainForm : LauncherForm
     private readonly Button drivingBindings = Button("Driving controls…", "DrivingControls"), drivingLive = Button("Live input…", "DrivingLiveInputMain");
     private readonly Label drivingSummary = TextLabel("");
     private readonly CheckBox intro3d = new() { Name = "Intro3D", AccessibleName = "Show the pre-race intro in 3D", Text = "Show the pre-race intro in 3D", AutoSize = true };
+    // Optional redrawn cockpit textures (CockpitTexturePack), shown when this build has a pack.
+    private readonly CheckBox newCockpitTextures = new() { Name = "NewCockpitTextures", AccessibleName = "Use redrawn cockpit textures", Text = "Use redrawn cockpit textures", AutoSize = true };
+    private readonly Button installCockpitTextures = Button("Download now", "InstallCockpitTextures"), removeCockpitTextures = Button("Remove", "RemoveCockpitTextures"),
+        installCockpitFile = Button("Install from file…", "InstallCockpitTexturesFile");
+    private readonly Label cockpitTextureStatus = TextLabel("");
+    private bool cockpitTexturesInstalled, cockpitTextureBusy;
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
     // GRID2VR's controller / wheel recenter button (DeviceRecenter).
@@ -112,6 +118,17 @@ internal sealed class MainForm : LauncherForm
         vrSummary.Name = "VrResolutionSummary"; vrSummary.Tag = "hint";
         Field(graphics, "Next VR launch", vrSummary);
         graphics.Controls.Add(TextLabel("100% renders each eye at the connected headset's recommended resolution. Lower values trade detail for performance; higher values sharpen the image and use more GPU time and memory. Headset output stays at 100%. The launcher reads the headset's resolution before every VR launch."));
+        if (CockpitTexturePack.Current is { } pack)
+        {
+            Section(graphics, "Cockpit textures");
+            Field(graphics, "Cockpit", newCockpitTextures);
+            cockpitTextureStatus.Name = "CockpitTextureStatus"; cockpitTextureStatus.Tag = "hint";
+            graphics.Controls.Add(cockpitTextureStatus);
+            var cockpitActions = new FlowLayoutPanel { Name = "CockpitTextureActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
+            cockpitActions.Controls.AddRange([installCockpitTextures, installCockpitFile, removeCockpitTextures]);
+            graphics.Controls.Add(cockpitActions);
+            graphics.Controls.Add(TextLabel($"Sharper, AI-redrawn cockpit artwork for {pack.Cars} cars at 2048 x 2048 (the originals are 512 x 512). It is an optional {pack.SizeLabel} download from this project's GitHub releases, made the first time you launch VR with it on (or Download now); Install from file… takes a copy of {pack.Asset} instead. Markings and materials can differ slightly from the originals. Game files are not changed: the VR renderer swaps the textures in memory, and untick to use the originals again. Applies to the next VR launch."));
+        }
         graphics = graphicsColumns.Second;
         Section(graphics, "VR HUD");
         Field(graphics, "Show HUD", hudShow);
@@ -200,6 +217,14 @@ internal sealed class MainForm : LauncherForm
         hudDistance.ValueChanged += (_, _) => ChoiceEdited();
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
+        newCockpitTextures.CheckedChanged += (_, _) => ChoiceEdited();
+        installCockpitTextures.Click += async (_, _) => await EnsureCockpitTexturesAsync();
+        installCockpitFile.Click += async (_, _) =>
+        {
+            using var open = new OpenFileDialog { Title = "Cockpit texture pack", Filter = $"{CockpitTexturePack.Current?.Asset}|{CockpitTexturePack.Current?.Asset}|ZIP files (*.zip)|*.zip" };
+            if (open.ShowDialog(this) == DialogResult.OK) await EnsureCockpitTexturesAsync(open.FileName);
+        };
+        removeCockpitTextures.Click += async (_, _) => await RemoveCockpitTexturesAsync();
         drivingBindings.Click += (_, _) =>
         {
             try
@@ -251,12 +276,14 @@ internal sealed class MainForm : LauncherForm
         ConfigureTooltips(help);
         LoadChoices();
         RefreshInstallation();
+        Shown += async (_, _) => await RefreshCockpitTexturesAsync();
     }
 
     private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
-        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice);
+        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
+        newCockpitTextures.Checked);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -327,6 +354,7 @@ internal sealed class MainForm : LauncherForm
         hudShow.Checked = choices.HudShow; hudDial.Checked = choices.HudDial; hudMinimap.Checked = choices.HudMinimap;
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D;
+        newCockpitTextures.Checked = choices.NewCockpitTextures;
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
         recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
@@ -445,6 +473,8 @@ internal sealed class MainForm : LauncherForm
         recenter.Enabled = !testing && !supervising && !recovering;
         bindRecenterDevice.Enabled = !testing && !supervising && !recovering && !capturingRecenter;
         clearRecenterDevice.Enabled = bindRecenterDevice.Enabled && recenterDevice is not null;
+        installCockpitTextures.Enabled = installCockpitFile.Enabled = idle && !cockpitTextureBusy && !cockpitTexturesInstalled;
+        removeCockpitTextures.Enabled = idle && !cockpitTextureBusy && cockpitTexturesInstalled;
         state.Text = supervising ? (Current.LaunchMode == "Normal"
                 ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
                 : $"{Current.LaunchMode} in progress. It has no pause menu: choose End session to stop; the launcher then restores the original game files.")
@@ -488,6 +518,7 @@ internal sealed class MainForm : LauncherForm
     private async Task RunVrAsync()
     {
         if (supervising || testing || gameFolder is null || !SaveChoices(false)) return;
+        if (Current.NewCockpitTextures && CockpitTexturePack.Current is not null && !await EnsureCockpitTexturesAsync()) return;
         supervising = true;
         EnableActions();
         try
@@ -508,6 +539,65 @@ internal sealed class MainForm : LauncherForm
             supervising = false;
             if (!IsDisposed) RefreshInstallation();
         }
+    }
+
+    // Downloads and installs the pack if it is missing. False when it is not installed afterwards.
+    private async Task<bool> EnsureCockpitTexturesAsync(string? localZip = null)
+    {
+        if (CockpitTexturePack.Current is not { } pack || cockpitTextureBusy) return false;
+        cockpitTextureBusy = true; EnableActions();
+        try
+        {
+            cockpitTextureStatus.Text = "Checking the installed cockpit textures…";
+            if (await Task.Run(() => CockpitTexturePack.Installed(pack))) return cockpitTexturesInstalled = true;
+            using var dialog = new CockpitTextureForm(pack, localZip);
+            var result = dialog.ShowDialog(this);
+            cockpitTexturesInstalled = await Task.Run(() => CockpitTexturePack.Installed(pack));
+            if (!IsDisposed && !cockpitTexturesInstalled)
+                notice.Text = result == DialogResult.Cancel ? "Cockpit texture download cancelled. Launch again to retry, or untick Use redrawn cockpit textures to launch with the originals."
+                    : "Cockpit textures: " + (dialog.Failure?.Message ?? "not installed.") + " Untick Use redrawn cockpit textures to launch with the originals.";
+            else if (!IsDisposed) notice.Text = "Cockpit textures installed.";
+            return cockpitTexturesInstalled;
+        }
+        finally
+        {
+            cockpitTextureBusy = false;
+            if (!IsDisposed) { UpdateCockpitTextureStatus(); EnableActions(); }
+        }
+    }
+
+    private async Task RemoveCockpitTexturesAsync()
+    {
+        if (CockpitTexturePack.Current is not { } pack || cockpitTextureBusy) return;
+        cockpitTextureBusy = true; EnableActions();
+        try
+        {
+            await Task.Run(() => CockpitTexturePack.Remove(pack));
+            notice.Text = "Cockpit textures removed. VR launches use the original textures" + (newCockpitTextures.Checked ? " until they are downloaded again." : ".");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Cockpit textures: " + error.Message; }
+        finally
+        {
+            cockpitTexturesInstalled = await Task.Run(() => CockpitTexturePack.Installed(pack));
+            cockpitTextureBusy = false;
+            if (!IsDisposed) { UpdateCockpitTextureStatus(); EnableActions(); }
+        }
+    }
+
+    // Reads whether the pack is installed (hashing it) off the UI thread at startup.
+    private async Task RefreshCockpitTexturesAsync()
+    {
+        if (CockpitTexturePack.Current is not { } pack) return;
+        cockpitTextureStatus.Text = "Checking the installed cockpit textures…";
+        cockpitTexturesInstalled = await Task.Run(() => CockpitTexturePack.Installed(pack));
+        if (!IsDisposed) { UpdateCockpitTextureStatus(); EnableActions(); }
+    }
+
+    private void UpdateCockpitTextureStatus()
+    {
+        if (CockpitTexturePack.Current is not { } pack) return;
+        cockpitTextureStatus.Text = cockpitTexturesInstalled ? $"Pack {pack.Version} installed ({pack.InstalledBytes / 1_000_000:0} MB)."
+            : $"Pack {pack.Version} not installed: a {pack.SizeLabel} download.";
     }
 
     private async Task EndSessionAsync()

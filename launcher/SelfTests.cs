@@ -29,6 +29,7 @@ internal static class SelfTests
             ApplicationConfiguration.Initialize();
             Application.SetColorMode(SystemColorMode.System);
             DrivingControlsTests.Run(data, (condition, detail) => Check(condition, detail));
+            CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
             Form(output);
         }
         catch (Exception error)
@@ -56,6 +57,9 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file).RecenterDevice == hat);
         LauncherSettings.Save(new Choices(), file);
         Check(LauncherSettings.Load(file).RecenterDevice is null && !File.ReadAllText(file).Contains("recenterDevice"));
+        Check(!LauncherSettings.Load(file).NewCockpitTextures);
+        LauncherSettings.Save(new Choices(NewCockpitTextures: true), file);
+        Check(LauncherSettings.Load(file).NewCockpitTextures);
         Check(Throws<IOException>(() => DeviceRecenter.Validate(padButton with { Input = "xinput_left_trigger" })));
         Check(Throws<IOException>(() => DeviceRecenter.Validate(padButton with { Action = "Gear Up" })));
         var edge = new RecenterEdge();
@@ -320,7 +324,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);

@@ -138,7 +138,7 @@ internal static partial class VrPlaySession
     // A Practice / Race session adds -benchmarkAttract with its session file, and the devices the
     // bridge may make the player's controller (-gasvrdevice, DeviceClaim) in place of Press Start.
     internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize, bool session = false,
-        IReadOnlyList<string>? claim = null) =>
+        IReadOnlyList<string>? claim = null, string? cockpitPack = null) =>
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (choices.HudFollowView ? "1" : "0"),
          "-gasvrrecenterkey=" + choices.RecenterKey, "-gasvrrecentermods=" + choices.RecenterModifiers, "-gasvrkeephorizon=" + (choices.KeepHorizonLevel ? "1" : "0"),
          .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : [],
@@ -146,6 +146,7 @@ internal static partial class VrPlaySession
          "-gasvrhudparts=" + choices.HudParts, "-gasvrhuddistance=" + (int)(choices.HudDistance * 100m),
          "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
          .. choices.Intro3D ? new[] { "-gasvrintro3d=1" } : [],
+         .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
          .. session && claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
@@ -168,6 +169,17 @@ internal static partial class VrPlaySession
         return families.Take(8).ToList();
     }
 
+    // The installed, verified cockpit texture pack's version when the choice is on (else stock textures).
+    internal static string? CockpitPack(Choices choices, out string? note)
+    {
+        note = null;
+        if (!choices.NewCockpitTextures) return null;
+        if (CockpitTexturePack.Current is not { } pack) { note = "Cockpit textures: this build has no pack; original textures."; return null; }
+        if (!CockpitTexturePack.Installed(pack)) { note = $"Cockpit textures {pack.Version}: not installed or failed verification; original textures."; return null; }
+        note = $"Cockpit textures {pack.Version}: verified, {pack.Cars} cars.";
+        return pack.Version;
+    }
+
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
     public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null)
     {
@@ -187,11 +199,13 @@ internal static partial class VrPlaySession
             var controls = DrivingControls.Load();
             var inputs = SessionInputMaps.Plan(folder, controls);
             var claim = session is null ? null : DeviceClaim(controls);
+            var cockpitPack = CockpitPack(choices, out var cockpitNote);
             try
             {
                 Stage(folder, bridgePath, id, session, inputs);
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
-                foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null, claim)) start.ArgumentList.Add(arg);
+                foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack)) start.ArgumentList.Add(arg);
+                if (cockpitNote is not null) Record(id, cockpitNote);
                 if (claim is not null) Record(id, "Practice / Race controller: the first connected of " + string.Join(", ", claim) + ".");
                 if (renderNote is not null) Record(id, renderNote);
                 if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
