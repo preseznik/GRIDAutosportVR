@@ -6,7 +6,7 @@ Play GRID Autosport in native stereo VR with head tracking.
 
 You need **Windows 10/11 (64-bit)**, the **Steam** version of GRID Autosport, and a headset connected through a **32-bit OpenXR runtime** such as Virtual Desktop (VDXR).
 
-1. Close GRID Autosport, then run `GRIDAutosportVR-<version>-Setup.exe` and keep (or choose) your GRID Autosport Steam folder.
+1. Download `GRIDAutosportVR-<version>-Setup.exe` from [Releases](https://github.com/preseznik/GRIDAutosportVR/releases). Close GRID Autosport, run the installer and keep (or choose) your GRID Autosport Steam folder.
 2. Open **GRID Autosport VR** from the Start menu.
 3. Choose a **Launch mode** under **Launcher → Session**: **Normal** opens the game's menus; **Practice** puts your chosen car on your chosen track; **Race** adds 1–11 AI opponents.
 4. Connect your headset, then click **Launch VR**. The launcher checks the headset, adds its VR files and starts the game through Steam.
