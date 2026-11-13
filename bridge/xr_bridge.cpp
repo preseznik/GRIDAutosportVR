@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <share.h>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -145,9 +146,9 @@ struct Bridge {
         info.layers = layer ? layers : nullptr;
         checked(xrEndFrame(session, &info), "xrEndFrame");
     }
-    // The in-game seat panel (seat.cpp): a small quad in front of the seat, redrawn with GDI only
-    // when its text changes.
-    static constexpr UINT panelWidth = 640, panelHeight = 400;
+    // The in-game seat panel (seat.cpp, picture from seat_panel.cpp): a quad in front of the seat,
+    // redrawn only when its contents change.
+    static constexpr UINT panelWidth = 768, panelHeight = 1024;
     XrSwapchain panelChain{};
     std::vector<XrSwapchainImageD3D11KHR> panelImages;
     DXGI_FORMAT panelFormat{};
@@ -158,7 +159,14 @@ struct Bridge {
         if (panelChain) checked(xrDestroySwapchain(panelChain), "xrDestroySwapchain");
         panelChain = {}; panelImages.clear(); panelReady = false; panelVersion = 0;
     }
-    bool updatePanel(const wchar_t* text, unsigned version);
+    bool updatePanel(const SeatPanelState& seat);
+    // The desktop mirror (drawMirror): the last submitted eye rectangle of the snapshot.
+    RECT mirrorSource{};
+    bool mirrorValid{};
+    ComPtr<ID3D11PixelShader> mirrorPS;
+    ComPtr<ID3D11SamplerState> mirrorSampler;
+    ComPtr<ID3D11Buffer> mirrorBuffer;
+    void drawMirror(ID3D11Texture2D* back);
     bool drain() noexcept {
         if (!gpuUsed) return true;
         context->End(completion.Get());
@@ -517,8 +525,103 @@ void Bridge::convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RE
     context->ExecuteCommandList(commands.Get(), TRUE);
 }
 
+// The game's window shows the left eye (or the seated-screen frame), scaled to fill the window and
+// cropped at the centre to its aspect: the eye image is far larger than the window, so the plain
+// copy presentMirror uses for equal sizes never applies. Drawn on the private deferred context.
+void Bridge::drawMirror(ID3D11Texture2D* back) {
+    if (!mirrorValid || !snapshot) return;
+    if (!deferred) checked(device->CreateDeferredContext(0, &deferred), "create_conversion_context");
+    if (!mirrorPS) {
+        constexpr char shader[] = R"(
+            Texture2D<float4> source : register(t0);
+            SamplerState linearClamp : register(s0);
+            cbuffer Map : register(b0) { float2 origin; float2 scale; float2 target; float2 unused; };
+            float4 vs(uint id : SV_VertexID) : SV_Position {
+                return float4(id==1 ? 3 : -1, id==2 ? -3 : 1, 0, 1);
+            }
+            float4 ps(float4 position : SV_Position) : SV_Target {
+                return float4(source.SampleLevel(linearClamp, origin + scale * (position.xy / target), 0).rgb, 1);
+            })";
+        ComPtr<ID3DBlob> vs, ps;
+        checked(D3DCompile(shader, sizeof(shader)-1, nullptr,nullptr,nullptr,"ps","ps_4_0",0,0,&ps,nullptr), "compile_mirror_ps");
+        checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&mirrorPS), "create_mirror_ps");
+        if (!blitVS) {
+            checked(D3DCompile(shader, sizeof(shader)-1, nullptr,nullptr,nullptr,"vs","vs_4_0",0,0,&vs,nullptr), "compile_mirror_vs");
+            checked(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&blitVS), "create_mirror_vs");
+        }
+        D3D11_SAMPLER_DESC sampler{};
+        sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampler.MaxLOD = D3D11_FLOAT32_MAX;
+        checked(device->CreateSamplerState(&sampler, &mirrorSampler), "create_mirror_sampler");
+        D3D11_BUFFER_DESC buffer{};
+        buffer.ByteWidth = 32; buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        checked(device->CreateBuffer(&buffer, nullptr, &mirrorBuffer), "create_mirror_buffer");
+    }
+    if (!snapshotView) checked(device->CreateShaderResourceView(snapshot.Get(), nullptr, &snapshotView), "create_source_srv");
+    D3D11_TEXTURE2D_DESC target{}, source{};
+    back->GetDesc(&target);
+    snapshot->GetDesc(&source);
+    if (!target.Width || !target.Height || !(target.BindFlags & D3D11_BIND_RENDER_TARGET)) return;
+    // The source rectangle cropped at its centre to the window's aspect.
+    float x = float(mirrorSource.left), y = float(mirrorSource.top);
+    float w = float(mirrorSource.right - mirrorSource.left), h = float(mirrorSource.bottom - mirrorSource.top);
+    const float windowAspect = float(target.Width) / float(target.Height);
+    if (w / h > windowAspect) { const float crop = h * windowAspect; x += (w - crop) * .5f; w = crop; }
+    else { const float crop = w / windowAspect; y += (h - crop) * .5f; h = crop; }
+    const float map[8] = {x / source.Width, y / source.Height, w / source.Width, h / source.Height,
+                          float(target.Width), float(target.Height), 0, 0};
+    D3D11_RENDER_TARGET_VIEW_DESC desc{};
+    desc.Format = typedFormat(target.Format);
+    desc.ViewDimension = target.SampleDesc.Count > 1 ? D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
+    ComPtr<ID3D11RenderTargetView> rtv;
+    checked(device->CreateRenderTargetView(back, &desc, &rtv), "create_mirror_target");
+    deferred->UpdateSubresource(mirrorBuffer.Get(), 0, nullptr, map, 0, 0);
+    D3D11_VIEWPORT viewport{0, 0, float(target.Width), float(target.Height), 0, 1};
+    deferred->RSSetViewports(1, &viewport);
+    deferred->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    deferred->VSSetShader(blitVS.Get(), nullptr, 0);
+    deferred->PSSetShader(mirrorPS.Get(), nullptr, 0);
+    deferred->PSSetConstantBuffers(0, 1, mirrorBuffer.GetAddressOf());
+    deferred->PSSetSamplers(0, 1, mirrorSampler.GetAddressOf());
+    deferred->PSSetShaderResources(0, 1, snapshotView.GetAddressOf());
+    deferred->OMSetRenderTargets(1, rtv.GetAddressOf(), nullptr);
+    deferred->Draw(3, 0);
+    ComPtr<ID3D11CommandList> commands;
+    checked(deferred->FinishCommandList(FALSE, &commands), "finish_mirror");
+    context->ExecuteCommandList(commands.Get(), TRUE);
+    gpuUsed = true;
+    // Test only (never passed by the launcher): -gasvrmirrordump=1 writes the mirrored back buffer
+    // once, 300 mirrored frames in, as raw rows to mirror.raw in the session folder (16-byte
+    // header: width, height, DXGI format, row pitch), so the mirror can be checked headset-free.
+    static unsigned mirrored;
+    if (++mirrored == 300 && target.SampleDesc.Count == 1 && wcsstr(GetCommandLineW(), L" -gasvrmirrordump=1") && AutosportRunDirectory()) {
+        D3D11_TEXTURE2D_DESC staging = target;
+        staging.Usage = D3D11_USAGE_STAGING; staging.BindFlags = 0; staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ; staging.MiscFlags = 0;
+        ComPtr<ID3D11Texture2D> copy;
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(device->CreateTexture2D(&staging, nullptr, &copy))) {
+            context->CopyResource(copy.Get(), back);
+            if (SUCCEEDED(context->Map(copy.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+                wchar_t path[MAX_PATH];
+                swprintf_s(path, L"%s\\mirror.raw", AutosportRunDirectory());
+                if (FILE* f = _wfsopen(path, L"wb", _SH_DENYWR)) {
+                    const UINT header[4] = {target.Width, target.Height, UINT(target.Format), mapped.RowPitch};
+                    fwrite(header, sizeof(header), 1, f);
+                    fwrite(mapped.pData, mapped.RowPitch, target.Height, f);
+                    fclose(f);
+                }
+                context->Unmap(copy.Get(), 0);
+            }
+        }
+        AutosportLog("Desktop mirror dump %ux%u format=%u", target.Width, target.Height, unsigned(target.Format));
+    }
+}
+
 bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePresentation presentation) {
     const bool flat = presentation == BridgePresentation::FlatScreen;
+    mirrorSource = rects[0];
+    mirrorValid = rects[0].right > rects[0].left && rects[0].bottom > rects[0].top;
     if (flat && !screenAnchored) {
         end();
         report("waiting_for_level_screen_anchor");
@@ -597,34 +700,33 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
     }
     XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     projection.space = local; projection.viewCount = 2; projection.views = projections;
-    wchar_t panelText[512];
-    unsigned version{};
+    SeatPanelState seat{};
     XrCompositionLayerQuad panel{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    bool showPanel = AutosportSeatPanel(panelText, version) && updatePanel(panelText, version);
+    bool showPanel = AutosportSeatPanel(seat) && updatePanel(seat);
     if (!showPanel) panelAnchored = false;
     else if (!panelAnchored) {
-        // Placed once when it opens: 0.65 m ahead along the gaze heading, 12 cm below eye level.
+        // Placed once when it opens, as GRID2VR: 1 m ahead along the gaze heading, at eye level.
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
         constexpr auto flags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
         if (xrLocateSpace(headSpace, local, time, &head) == XR_SUCCESS && (head.locationFlags & flags) == flags)
-            panelAnchored = levelAnchor(head.pose, panelAnchor, .65, .12f);
+            panelAnchored = levelAnchor(head.pose, panelAnchor, 1.0, 0.f);
         showPanel = panelAnchored;
     }
     if (showPanel) {
-        panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT; // As GRID2VR.
         panel.space = local;
         panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
         panel.subImage.swapchain = panelChain;
         panel.subImage.imageRect.extent = {int32_t(panelWidth), int32_t(panelHeight)};
         panel.pose = panelAnchor;
-        panel.size = {.32f, .20f};
+        panel.size = {.6f, .8f};
     }
     end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection),
         showPanel ? reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panel) : nullptr);
     return true;
 }
 
-bool Bridge::updatePanel(const wchar_t* text, unsigned version) {
+bool Bridge::updatePanel(const SeatPanelState& seat) {
     if (!panelChain) {
         constexpr DXGI_FORMAT wanted[] = {DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
                                           DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB};
@@ -646,66 +748,38 @@ bool Bridge::updatePanel(const wchar_t* text, unsigned version) {
         panelReady = false;
         AutosportLog("Seat panel swapchain %ux%u format=%u", panelWidth, panelHeight, unsigned(panelFormat));
     }
-    if (panelReady && version == panelVersion) return true;
-    // Draw the text with GDI into a top-down 32-bit bitmap: white on a dark panel with a red bar.
-    BITMAPINFO bitmap{};
-    bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmap.bmiHeader.biWidth = LONG(panelWidth);
-    bitmap.bmiHeader.biHeight = -LONG(panelHeight);
-    bitmap.bmiHeader.biPlanes = 1;
-    bitmap.bmiHeader.biBitCount = 32;
-    bitmap.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HDC dc = CreateCompatibleDC(nullptr);
-    HBITMAP section = dc ? CreateDIBSection(dc, &bitmap, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
-    if (!section || !bits) { if (section) DeleteObject(section); if (dc) DeleteDC(dc); return panelReady; }
-    HGDIOBJ previousBitmap = SelectObject(dc, section);
-    RECT all{0, 0, LONG(panelWidth), LONG(panelHeight)};
-    HBRUSH background = CreateSolidBrush(RGB(24, 24, 28));
-    FillRect(dc, &all, background);
-    DeleteObject(background);
-    RECT bar{0, 0, LONG(panelWidth), 8};
-    HBRUSH accent = CreateSolidBrush(RGB(214, 40, 40));
-    FillRect(dc, &bar, accent);
-    DeleteObject(accent);
-    HFONT font = CreateFontW(-28, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
-    HGDIOBJ previousFont = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(240, 240, 240));
-    RECT area{28, 22, LONG(panelWidth) - 28, LONG(panelHeight) - 16};
-    DrawTextW(dc, text, -1, &area, DT_LEFT | DT_TOP | DT_EXPANDTABS | DT_TABSTOP | (9 << 8) | DT_NOPREFIX);
-    GdiFlush();
-    auto* pixels = static_cast<BYTE*>(bits);
-    const bool rgba = panelFormat == DXGI_FORMAT_R8G8B8A8_UNORM || panelFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    for (UINT i = 0; i < panelWidth * panelHeight; ++i) {
-        BYTE* p = pixels + size_t(i) * 4;
-        if (rgba) std::swap(p[0], p[2]);
-        p[3] = 235;
-    }
+    if (panelReady && seat.version == panelVersion) return true;
+    // GRID2VR's picture (seat_panel.cpp), premultiplied BGRA; swapped to RGBA for an RGBA swapchain.
+    std::vector<BYTE> pixels(size_t(panelWidth) * panelHeight * 4);
+    if (!AutosportPaintSeatPanel(seat, pixels.data(), panelWidth, panelHeight)) return panelReady;
+    if (panelFormat == DXGI_FORMAT_R8G8B8A8_UNORM || panelFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+        for (size_t i = 0; i < pixels.size(); i += 4) std::swap(pixels[i], pixels[i + 2]);
     XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     uint32_t index{};
     bool written = false;
     if (XR_SUCCEEDED(xrAcquireSwapchainImage(panelChain, &acquire, &index))) {
         const XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, nullptr, 100'000'000};
         if (XR_SUCCEEDED(xrWaitSwapchainImage(panelChain, &wait)) && index < panelImages.size() && panelImages[index].texture) {
-            context->UpdateSubresource(panelImages[index].texture, 0, nullptr, pixels, panelWidth * 4, 0);
+            context->UpdateSubresource(panelImages[index].texture, 0, nullptr, pixels.data(), panelWidth * 4, 0);
             gpuUsed = true;
             written = true;
         }
         XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         xrReleaseSwapchainImage(panelChain, &release);
     }
-    SelectObject(dc, previousFont);
-    DeleteObject(font);
-    SelectObject(dc, previousBitmap);
-    DeleteObject(section);
-    DeleteDC(dc);
-    if (written) { panelReady = true; panelVersion = version; }
+    if (written) { panelReady = true; panelVersion = seat.version; }
     return panelReady;
 }
+
 } // namespace
 
 const char* AutosportBridgeStatus() noexcept { return status; }
+bool AutosportDrawMirror(ID3D11Texture2D* back) noexcept {
+    std::lock_guard<std::mutex> lock(guard);
+    if (!bridge || bridge->owner != GetCurrentThreadId() || !back) return false;
+    try { bridge->drawMirror(back); return true; }
+    catch (...) { return false; }
+}
 void AutosportRecenterSeatedScreen() noexcept {
     std::lock_guard<std::mutex> lock(guard);
     if (bridge) bridge->screenAnchored = false;

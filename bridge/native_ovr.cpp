@@ -611,6 +611,12 @@ void presentMirror(ID3D11Texture2D* packed) {
                     config.context->CopySubresourceRegion(back, 0, 0, 0, 0, packed, 0, nullptr);
                 else if (src.SampleDesc.Count > 1 && dst.SampleDesc.Count == 1)
                     config.context->ResolveSubresource(back, 0, packed, 0, colorFamily(dst.Format));
+            } else {
+                // The eye image is a different size from the window (always, in headset play):
+                // draw the left eye scaled and centre-cropped instead of leaving the window black.
+                static bool logged;
+                const bool drawn = AutosportDrawMirror(back);
+                if (!logged) { logged = true; AutosportLog("Desktop mirror %ux%u from the eye image %ux%u: %s", dst.Width, dst.Height, src.Width, src.Height, drawn ? "scaled" : "not drawn"); }
             }
         }
         back->Release();

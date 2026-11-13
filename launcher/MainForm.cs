@@ -43,6 +43,10 @@ internal sealed class MainForm : LauncherForm
     private readonly NumericUpDown seatRight = SeatValue("SeatRight"), seatForward = SeatValue("SeatForward"), seatUp = SeatValue("SeatUp");
     private readonly Button resetSeat = Button("Reset this car", "ResetSeat"), resetAllSeats = Button("Reset all cars", "ResetAllSeats");
     private readonly Label seatSummary = TextLabel("");
+    private readonly Button[] seatKeyButtons = SeatKeys.Actions.Select((_, i) => Button("", "SeatKey" + i)).ToArray();
+    private readonly Button defaultSeatKeys = Button("Default keys", "DefaultSeatKeys");
+    private int[] seatKeys = SeatKeys.Parse(SeatKeys.Default);
+    private int capturingSeatKey = -1;
     private bool applyingSeat;
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
@@ -189,7 +193,10 @@ internal sealed class MainForm : LauncherForm
         seat.Controls.Add(seatActions);
         seatSummary.Name = "SeatSummary"; seatSummary.Tag = "hint"; seat.Controls.Add(seatSummary);
         seat.Controls.Add(TextLabel("Moves your head from the game's own cockpit position for the chosen car, up to 50 cm each way. It applies in the cockpit view only, in VR. Changes here are saved at once and apply to the next VR launch."));
-        seat.Controls.Add(TextLabel("In the game, press Tab in the cockpit to open the seat panel: Left / Right, Up / Down (forward and back) and Page Up / Page Down (height) move the seat 1 cm (with Shift 5 mm), Backspace resets it, Enter or Tab saves and Esc cancels. While the panel is open those keys do not reach the game."));
+        Section(seat, "Seat keys");
+        for (var i = 0; i < seatKeyButtons.Length; ++i) Field(seat, SeatKeys.Actions[i], seatKeyButtons[i]);
+        seat.Controls.Add(defaultSeatKeys);
+        seat.Controls.Add(TextLabel("In the game, press the panel key (Tab by default) in the cockpit to open the seat panel. Up and down move the seat up and down, back and forward move it back and forward, and with Shift held left and right, 1 cm a press. Backspace resets it, Enter or the panel key saves, Esc cancels. While the panel is open these keys do not reach the game. Click a key above, then press the new key; Escape cancels. Enter, Esc, Backspace and Shift are the panel's own. Save settings or launch to keep new keys."));
 
         var settingColumns = Columns(Page(Tabs, "Settings")); var settings = settingColumns.First;
         Section(settings, "Paths and runtime");
@@ -237,6 +244,13 @@ internal sealed class MainForm : LauncherForm
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
         seatCar.SelectedIndexChanged += (_, _) => ShowSeat();
+        for (var i = 0; i < seatKeyButtons.Length; ++i)
+        {
+            var index = i;
+            seatKeyButtons[i].Click += (_, _) => { capturingSeatKey = index; seatKeyButtons[index].Text = "Press a key…"; notice.Text = $"Press the new key for {SeatKeys.Actions[index]}, or Escape to cancel."; };
+            seatKeyButtons[i].LostFocus += (_, _) => { if (capturingSeatKey == index) { capturingSeatKey = -1; UpdateSeatKeys(); } };
+        }
+        defaultSeatKeys.Click += (_, _) => { seatKeys = SeatKeys.Parse(SeatKeys.Default); UpdateSeatKeys(); ChoiceEdited(); notice.Text = "Seat keys reset to Tab and the arrow keys. Save settings or launch to keep them."; };
         foreach (var value in new[] { seatRight, seatForward, seatUp }) value.ValueChanged += (_, _) => SeatEdited();
         resetSeat.Click += (_, _) => { applyingSeat = true; seatRight.Value = seatForward.Value = seatUp.Value = 0; applyingSeat = false; SeatEdited(); };
         resetAllSeats.Click += (_, _) =>
@@ -311,7 +325,7 @@ internal sealed class MainForm : LauncherForm
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
-        newCockpitTextures.Checked);
+        newCockpitTextures.Checked, SeatKeys.Format(seatKeys));
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -385,6 +399,7 @@ internal sealed class MainForm : LauncherForm
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D;
         newCockpitTextures.Checked = choices.NewCockpitTextures;
+        seatKeys = SeatKeys.TryParse(choices.SeatKeys, out var keys) ? keys : SeatKeys.Parse(SeatKeys.Default); UpdateSeatKeys();
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
         recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
@@ -503,6 +518,8 @@ internal sealed class MainForm : LauncherForm
         recenter.Enabled = !testing && !supervising && !recovering;
         bindRecenterDevice.Enabled = !testing && !supervising && !recovering && !capturingRecenter;
         clearRecenterDevice.Enabled = bindRecenterDevice.Enabled && recenterDevice is not null;
+        foreach (var button in seatKeyButtons) button.Enabled = !testing && !supervising && !recovering;
+        defaultSeatKeys.Enabled = !testing && !supervising && !recovering;
         seatCar.Enabled = seatRight.Enabled = seatForward.Enabled = seatUp.Enabled = resetSeat.Enabled = resetAllSeats.Enabled =
             !testing && !supervising && !recovering && catalog.Cars.Count > 0;
         installCockpitTextures.Enabled = installCockpitFile.Enabled = idle && !cockpitTextureBusy && !cockpitTexturesInstalled;
@@ -743,7 +760,30 @@ internal sealed class MainForm : LauncherForm
 
     // Key capture as in GRID2VR: the next key press (with Ctrl, Alt, Shift) becomes the shortcut.
     protected override bool ProcessCmdKey(ref Message message, Keys keyData) =>
-        capturingRecenter ? CaptureRecenterKey(keyData) : base.ProcessCmdKey(ref message, keyData);
+        capturingRecenter ? CaptureRecenterKey(keyData) : capturingSeatKey >= 0 ? CaptureSeatKey(keyData) : base.ProcessCmdKey(ref message, keyData);
+
+    // The next key press becomes the seat key being changed: one key, no modifiers, not used by another.
+    internal bool CaptureSeatKey(Keys keyData)
+    {
+        if (capturingSeatKey < 0) return false;
+        var key = (int)(keyData & Keys.KeyCode);
+        var index = capturingSeatKey;
+        if (key == (int)Keys.Escape) { capturingSeatKey = -1; UpdateSeatKeys(); notice.Text = "Seat key unchanged."; return true; }
+        if (key is (int)Keys.ControlKey or (int)Keys.Menu or (int)Keys.ShiftKey) return true;
+        if (!SeatKeys.ValidKey(key) || (keyData & (Keys.Control | Keys.Alt | Keys.Shift)) != 0) { notice.Text = "Choose another key: one key without Ctrl, Alt or Shift; Enter, Esc and Backspace are the panel's own."; return true; }
+        var other = Array.IndexOf(seatKeys, key);
+        if (other >= 0 && other != index) { notice.Text = $"{SeatKeys.Label(key)} is already {SeatKeys.Actions[other]}."; return true; }
+        seatKeys[index] = key; capturingSeatKey = -1;
+        UpdateSeatKeys(); ChoiceEdited();
+        notice.Text = $"{SeatKeys.Actions[index]}: {SeatKeys.Label(key)}. Save settings or launch to keep it.";
+        if (key == recenterKey && recenterModifiers == 0) notice.Text += " It is also the recenter key.";
+        return true;
+    }
+
+    private void UpdateSeatKeys()
+    {
+        for (var i = 0; i < seatKeyButtons.Length; ++i) seatKeyButtons[i].Text = SeatKeys.Label(seatKeys[i]);
+    }
 
     internal bool CaptureRecenterKey(Keys keyData)
     {

@@ -13,7 +13,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     int Laps = 3, int Opponents = 7, string OpponentCars = "same", bool VrCockpit = true,
     bool HudShow = true, bool HudDial = true, bool HudMinimap = true, bool HudCounters = true, bool HudPositions = true,
     decimal HudDistance = 1m, decimal ScreenDistance = 3m, bool Intro3D = false, DrivingBinding? RecenterDevice = null,
-    bool NewCockpitTextures = false)
+    bool NewCockpitTextures = false, string SeatKeys = GRIDAutosportVR.SeatKeys.Default)
 {
     // The bridge's -gasvrhudparts mask: 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position info.
     internal int HudParts => (HudShow ? 1 : 0) | (HudDial ? 2 : 0) | (HudMinimap ? 4 : 0) | (HudCounters ? 8 : 0) | (HudPositions ? 16 : 0);
@@ -134,7 +134,8 @@ internal static class LauncherSettings
             ReadDistance(document, "hudDistance", 1m, DistanceSlider.HudMinimum, DistanceSlider.HudMaximum, fileName),
             ReadDistance(document, "screenDistance", 3m, DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, fileName),
             ReadFlag(document, "intro3d", false, fileName), ReadRecenterDevice(document, fileName),
-            ReadFlag(document, "newCockpitTextures", false, fileName));
+            ReadFlag(document, "newCockpitTextures", false, fileName),
+            ReadText(document, "seatKeys", SeatKeys.Default, value => SeatKeys.TryParse(value, out _), fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -168,6 +169,8 @@ internal static class LauncherSettings
         document["screenDistance"] = choices.ScreenDistance;
         document["intro3d"] = choices.Intro3D;
         document["newCockpitTextures"] = choices.NewCockpitTextures;
+        if (!SeatKeys.TryParse(choices.SeatKeys, out _)) throw new ArgumentException("Unsupported seat keys.");
+        document["seatKeys"] = choices.SeatKeys;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

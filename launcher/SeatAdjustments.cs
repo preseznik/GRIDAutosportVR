@@ -63,3 +63,36 @@ internal static class SeatAdjustments
 
     private static int Clamp(int value) => Math.Clamp(value, -SeatOffset.Limit, SeatOffset.Limit);
 }
+
+// The in-game seat panel's five keys (Windows virtual-key codes): open / close, up, down, back,
+// forward. Shift turns back / forward into left / right; Enter, Esc and Backspace are the panel's own.
+internal static class SeatKeys
+{
+    public const string Default = "9,38,40,37,39"; // Tab and the arrow keys, as GRID2VR.
+    public static readonly string[] Actions = ["Open / close panel", "Seat up", "Seat down", "Seat back", "Seat forward"];
+    private static readonly int[] Reserved = [(int)Keys.Return, (int)Keys.Escape, (int)Keys.Back, (int)Keys.ShiftKey,
+        (int)Keys.ControlKey, (int)Keys.Menu, (int)Keys.LWin, (int)Keys.RWin, (int)Keys.LShiftKey, (int)Keys.RShiftKey];
+
+    public static int[] Parse(string value)
+    {
+        var parts = value.Split(',');
+        if (parts.Length != Actions.Length) throw new FormatException("Seat keys need five keys.");
+        var keys = parts.Select(p => int.Parse(p, NumberStyles.None, CultureInfo.InvariantCulture)).ToArray();
+        if (!Valid(keys)) throw new FormatException("Unsupported seat keys.");
+        return keys;
+    }
+    public static bool TryParse(string value, out int[] keys)
+    {
+        try { keys = Parse(value); return true; }
+        catch (FormatException) { keys = []; return false; }
+        catch (OverflowException) { keys = []; return false; }
+    }
+    public static bool Valid(int[] keys) => keys.Length == Actions.Length && keys.All(ValidKey) && keys.Distinct().Count() == keys.Length;
+    public static bool ValidKey(int key) => RecenterShortcut.ValidKey(key) && !Reserved.Contains(key);
+    public static string Format(int[] keys) => string.Join(',', keys.Select(k => k.ToString(CultureInfo.InvariantCulture)));
+    public static string Label(int key) => key switch
+    {
+        (int)Keys.Prior => "Page Up", (int)Keys.Next => "Page Down", (int)Keys.Up => "Up arrow", (int)Keys.Down => "Down arrow",
+        (int)Keys.Left => "Left arrow", (int)Keys.Right => "Right arrow", _ => ((Keys)key).ToString(),
+    };
+}

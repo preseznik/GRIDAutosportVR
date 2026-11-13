@@ -23,7 +23,12 @@ void AutosportSeatCar(const char* id);
 bool AutosportSeatOffset(float (&metres)[3]);
 bool AutosportSeatBlocksKey(UINT vk);
 bool AutosportSeatKey(UINT vk, bool down, bool repeat);
-bool AutosportSeatPanel(wchar_t (&text)[512], unsigned& version);
+// The seat panel while it is open: car name, millimetres, Shift held (sideways), the five keys
+// (panel, up, down, back, forward) and a version that changes whenever any of it does.
+struct SeatPanelState { wchar_t name[96]; int right, up, forward; bool sideways; UINT keys[5]; unsigned version; };
+bool AutosportSeatPanel(SeatPanelState& state);
+// Paints the seat panel (GRID2VR's layout) into premultiplied BGRA pixels (seat_panel.cpp).
+bool AutosportPaintSeatPanel(const SeatPanelState& state, BYTE* pixels, UINT width, UINT height);
 // Replaces the LOD selector's apply call (RVA 5FE647): nearby opponents keep their best model in VR.
 void __fastcall AutosportOpponentLodApply(void* manager, void*);
 bool AutosportHudFollowsView();

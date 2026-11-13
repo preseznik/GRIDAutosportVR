@@ -147,6 +147,7 @@ internal static partial class VrPlaySession
          "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
          .. choices.Intro3D ? new[] { "-gasvrintro3d=1" } : [],
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
+         "-gasvrseatkeys=" + choices.SeatKeys,
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
          .. session && claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
@@ -167,6 +168,18 @@ internal static partial class VrPlaySession
             }
         if (!families.Contains("xinput_pad")) families.Add("xinput_pad");
         return families.Take(8).ToList();
+    }
+
+    // The names the in-game seat panel shows for each car (bridge/seat.cpp): "car<TAB>name" lines.
+    internal static void WriteCarNames()
+    {
+        try
+        {
+            var path = Path.Combine(LauncherSettings.DataDirectory, "car-names.txt");
+            Directory.CreateDirectory(LauncherSettings.DataDirectory);
+            File.WriteAllText(path, string.Concat(RaceSession.CarLabels.Select(c => c.Key + "\t" + c.Value + "\n")), new System.Text.UTF8Encoding(false));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { } // The panel then shows the car's ID.
     }
 
     // The installed, verified cockpit texture pack's version when the choice is on (else stock textures).
@@ -200,6 +213,7 @@ internal static partial class VrPlaySession
             var inputs = SessionInputMaps.Plan(folder, controls);
             var claim = session is null ? null : DeviceClaim(controls);
             var cockpitPack = CockpitPack(choices, out var cockpitNote);
+            WriteCarNames();
             try
             {
                 Stage(folder, bridgePath, id, session, inputs);

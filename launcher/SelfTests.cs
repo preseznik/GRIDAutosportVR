@@ -70,6 +70,16 @@ internal static class SelfTests
         File.WriteAllText(seats, "# comment\nBAD 1 2 3\nab 1 2 3\nr8l 900 -900 1\nvip x 1 2\n177 1 2\n");
         Check(SeatAdjustments.Load(seats) is { Count: 1 } clamped && clamped["r8l"] == new SeatOffset(500, -500, 1));
         Check(Throws<ArgumentException>(() => SeatAdjustments.Save(new Dictionary<string, SeatOffset> { ["sls"] = new(501, 0, 0) }, seats)));
+        // Seat keys: five distinct single keys; the panel's own Enter / Esc / Backspace and modifiers are refused.
+        Check(SeatKeys.Parse(SeatKeys.Default).SequenceEqual([9, 38, 40, 37, 39]));
+        Check(!SeatKeys.TryParse("9,38,40,37", out _) && !SeatKeys.TryParse("9,38,40,37,37", out _) && !SeatKeys.TryParse("13,38,40,37,39", out _) &&
+              !SeatKeys.TryParse("9,38,40,37,16", out _) && !SeatKeys.TryParse("9,38,40,37,x", out _));
+        Check(SeatKeys.TryParse("73,33,34,74,76", out var custom) && SeatKeys.Format(custom) == "73,33,34,74,76");
+        LauncherSettings.Save(new Choices(SeatKeys: "73,33,34,74,76"), file);
+        Check(LauncherSettings.Load(file).SeatKeys == "73,33,34,74,76");
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(SeatKeys: "73,33,34,74,76"), null).Contains("-gasvrseatkeys=73,33,34,74,76"));
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(SeatKeys: "9,9,9,9,9"), file)));
+        LauncherSettings.Save(new Choices(), file);
         LauncherSettings.Save(new Choices(NewCockpitTextures: true), file);
         Check(LauncherSettings.Load(file).NewCockpitTextures);
         Check(Throws<IOException>(() => DeviceRecenter.Validate(padButton with { Input = "xinput_left_trigger" })));
@@ -186,7 +196,7 @@ internal static class SelfTests
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
              "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1",
-             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300"]));
+             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300", "-gasvrseatkeys=9,38,40,37,39"]));
         var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
         Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
@@ -336,7 +346,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Seat position", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);

@@ -28,6 +28,9 @@ void AutosportCloseBridge() noexcept;
 void AutosportPrepareForGameExit() noexcept;
 // Static status string for the caller's log. No game process file or config writes.
 const char* AutosportBridgeStatus() noexcept;
+// Draws the last submitted eye image, scaled and centre-cropped, into the game's back buffer (the
+// desktop mirror). Render thread only.
+bool AutosportDrawMirror(ID3D11Texture2D* back) noexcept;
 double AutosportDisplayPeriodSeconds() noexcept;
 // True once, on the render thread, after the first FOCUSED of a session whose views were
 // already in use: the caller recenters its seated origin on the focused pose.

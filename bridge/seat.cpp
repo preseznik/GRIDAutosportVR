@@ -2,14 +2,18 @@
 //
 // Offsets are millimetres right / up / forward of the game's own head-cam position, one line per
 // car in <data>\seat-adjustments.txt ("car right up forward"; <data> is the launcher's data folder,
-// two levels above the session folder). The launcher edits the same file under Controls -> Seat.
+// two levels above the session folder). The launcher edits the same file under Controls -> Seat and
+// writes the car names the panel shows to <data>\car-names.txt ("car<TAB>name").
 // The car is the one whose head-cam the race start selected (native_ovr raceStartView); the offset
 // is added to the head pose only while that head-cam is the live view (AutosportCockpitView).
 //
-// In game, Tab in the cockpit opens the seat panel (an OpenXR quad drawn by xr_bridge):
-// Left / Right, Up / Down (forward / back) and Page Up / Page Down (height) move the seat 1 cm,
-// with Shift 5 mm; Backspace resets this car; Enter or Tab saves; Esc cancels. While it is open
-// those keys are withheld from the game (window messages, Raw Input and GetAsyncKeyState).
+// In game, the panel key (default Tab) in the cockpit opens the seat panel (an OpenXR quad drawn by
+// xr_bridge, GRID2VR's layout): the up / down keys move the seat up and down, back / forward move it
+// back and forward, and with Shift left and right, 1 cm a press; Backspace resets this car; Enter or
+// the panel key saves; Esc cancels. -gasvrseatkeys=PANEL,UP,DOWN,BACK,FORWARD (Windows virtual-key
+// codes) rebinds the five; the default is Tab and the arrow keys. While the panel is open those
+// keys, Shift, Enter, Esc and Backspace are withheld from the game (window messages, Raw Input
+// and GetAsyncKeyState).
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -21,13 +25,16 @@
 
 namespace {
 struct Offset { int right, up, forward; }; // millimetres
-constexpr int limit = 500;
+constexpr int limit = 500, step = 10;
+enum KeyIndex { PanelKey, UpKey, DownKey, BackKey, ForwardKey, KeyCount };
+UINT keys[KeyCount] = {VK_TAB, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT};
 std::mutex lock;
 std::map<std::string, Offset> saved;
+std::map<std::string, std::wstring> names;
 wchar_t file[MAX_PATH];
 char car[8];
 Offset live{}, before{};
-bool open;
+bool open, sideways;
 unsigned version = 1;
 
 bool validCar(const char* id) {
@@ -50,6 +57,25 @@ void load() {
     fclose(f);
 }
 
+void loadNames(const wchar_t* data) {
+    wchar_t path[MAX_PATH];
+    swprintf_s(path, L"%s\\car-names.txt", data);
+    FILE* f = _wfsopen(path, L"rb", _SH_DENYWR);
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f) && names.size() < 512) {
+        char* tab = std::strchr(line, '\t');
+        if (!tab) continue;
+        *tab = 0;
+        if (!validCar(line)) continue;
+        char* name = tab + 1;
+        name[std::strcspn(name, "\r\n")] = 0;
+        wchar_t wide[96]{};
+        if (*name && MultiByteToWideChar(CP_UTF8, 0, name, -1, wide, 95) > 0) names[line] = wide;
+    }
+    fclose(f);
+}
+
 bool store() {
     wchar_t temp[MAX_PATH];
     swprintf_s(temp, L"%s.tmp", file);
@@ -63,11 +89,26 @@ bool store() {
 }
 
 bool blocked(UINT vk) {
+    for (UINT key : keys) if (vk == key) return true;
     switch (vk) {
-    case VK_TAB: case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN: case VK_PRIOR: case VK_NEXT:
     case VK_RETURN: case VK_ESCAPE: case VK_BACK: case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT: return true;
     default: return false;
     }
+}
+
+bool shiftHeld() { return (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0; }
+
+void parseKeys() {
+    const wchar_t* arg = wcsstr(GetCommandLineW(), L" -gasvrseatkeys=");
+    if (!arg) return;
+    unsigned v[KeyCount]{};
+    if (swscanf_s(arg, L" -gasvrseatkeys=%u,%u,%u,%u,%u", &v[0], &v[1], &v[2], &v[3], &v[4]) != KeyCount) return;
+    for (unsigned i = 0; i < KeyCount; ++i) {
+        if (v[i] < 1 || v[i] > 254 || v[i] == VK_RETURN || v[i] == VK_ESCAPE || v[i] == VK_BACK || v[i] == VK_SHIFT ||
+            v[i] == VK_CONTROL || v[i] == VK_MENU) return;
+        for (unsigned j = 0; j < i; ++j) if (v[i] == v[j]) return;
+    }
+    for (unsigned i = 0; i < KeyCount; ++i) keys[i] = v[i];
 }
 
 using RawDataFn = UINT (WINAPI*)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
@@ -101,13 +142,17 @@ void AutosportSeatConfigure(const wchar_t* sessionFolder) {
         *slash = 0;
     }
     std::lock_guard<std::mutex> guard(lock);
+    parseKeys();
     swprintf_s(file, L"%s\\seat-adjustments.txt", data);
     load();
+    loadNames(data);
     const bool raw = AutosportHookGameImport("user32.dll", "GetRawInputData", reinterpret_cast<void*>(&filteredRawData),
                                               reinterpret_cast<void**>(&stockRawData));
     const bool async = AutosportHookGameImport("user32.dll", "GetAsyncKeyState", reinterpret_cast<void*>(&filteredAsyncKey),
                                                 reinterpret_cast<void**>(&stockAsyncKey));
-    AutosportLog("Seat adjustments: %u car(s) saved; key filter raw=%d async=%d", unsigned(saved.size()), raw, async);
+    AutosportLog("Seat adjustments: %u car(s) saved, %u car names; keys panel=%u up=%u down=%u back=%u forward=%u; key filter raw=%d async=%d",
+                 unsigned(saved.size()), unsigned(names.size()), keys[PanelKey], keys[UpKey], keys[DownKey], keys[BackKey],
+                 keys[ForwardKey], raw, async);
 }
 
 // The race start's head-cam car (an empty ID when the car has none).
@@ -142,49 +187,47 @@ bool AutosportSeatBlocksKey(UINT vk) {
 bool AutosportSeatKey(UINT vk, bool down, bool repeat) {
     std::lock_guard<std::mutex> guard(lock);
     if (!open) {
-        if (vk != VK_TAB || !down || repeat || !car[0] || !AutosportCockpitView()) return false;
+        if (vk != keys[PanelKey] || !down || repeat || !car[0] || !AutosportCockpitView()) return false;
         open = true; before = live; ++version;
         AutosportLog("Seat panel opened for %s", car);
         return true;
     }
     if (!blocked(vk)) return false;
+    if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) { ++version; return true; } // Redraw BACK / FORWARD as LEFT / RIGHT.
     if (!down) return true;
-    const int step = (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 5 : 10;
-    switch (vk) {
-    case VK_LEFT: live.right = clamp(live.right - step); break;
-    case VK_RIGHT: live.right = clamp(live.right + step); break;
-    case VK_UP: live.forward = clamp(live.forward + step); break;
-    case VK_DOWN: live.forward = clamp(live.forward - step); break;
-    case VK_PRIOR: live.up = clamp(live.up + step); break;
-    case VK_NEXT: live.up = clamp(live.up - step); break;
-    case VK_BACK: live = {}; break;
-    case VK_ESCAPE:
+    const bool side = shiftHeld();
+    if (vk == keys[UpKey]) live.up = clamp(live.up + step);
+    else if (vk == keys[DownKey]) live.up = clamp(live.up - step);
+    else if (vk == keys[BackKey]) { if (side) live.right = clamp(live.right - step); else live.forward = clamp(live.forward - step); }
+    else if (vk == keys[ForwardKey]) { if (side) live.right = clamp(live.right + step); else live.forward = clamp(live.forward + step); }
+    else if (vk == VK_BACK) live = {};
+    else if (vk == VK_ESCAPE) {
         if (repeat) return true;
         live = before; open = false;
         AutosportLog("Seat panel cancelled for %s", car);
-        break;
-    case VK_TAB: case VK_RETURN: {
+    } else if (vk == keys[PanelKey] || vk == VK_RETURN) {
         if (repeat) return true;
         saved[car] = live; open = false;
         const bool ok = *file && store();
         AutosportLog("Seat %s saved%s: right %d mm, up %d mm, forward %d mm", car, ok ? "" : " (file not written)",
                      live.right, live.up, live.forward);
-        break;
-    }
-    default: return true;
-    }
+    } else return true;
     ++version;
     return true;
 }
 
-// The seat panel's lines while it is open; version changes whenever they do.
-bool AutosportSeatPanel(wchar_t (&text)[512], unsigned& changed) {
+// The seat panel's contents while it is open; version changes whenever they do.
+bool AutosportSeatPanel(SeatPanelState& state) {
     std::lock_guard<std::mutex> guard(lock);
-    changed = version;
-    if (!open) return false;
-    // Tab-separated columns (xr_bridge draws them with tab stops).
-    swprintf_s(text, L"Seat position  \x2014  %hs\n\nRight\t%+.1f cm\tLeft / Right\nForward\t%+.1f cm\tUp / Down\nHeight\t%+.1f cm\tPage Up / Down\n\n"
-                     L"Shift: 5 mm steps.  Backspace: reset.\nEnter or Tab: save.  Esc: cancel.",
-               car, live.right / 10.0, live.forward / 10.0, live.up / 10.0);
+    if (!open) { state.version = version; return false; }
+    const bool side = shiftHeld();
+    if (side != sideways) { sideways = side; ++version; }
+    state.version = version;
+    const auto found = names.find(car);
+    if (found != names.end()) wcsncpy_s(state.name, found->second.c_str(), _TRUNCATE);
+    else swprintf_s(state.name, L"%hs", car);
+    state.right = live.right; state.up = live.up; state.forward = live.forward;
+    state.sideways = sideways;
+    for (unsigned i = 0; i < KeyCount; ++i) state.keys[i] = keys[i];
     return true;
 }
