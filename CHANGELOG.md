@@ -16,8 +16,8 @@ First packaged build of GRID Autosport VR for the Steam game (AVX renderer, buil
 - End session (beside Launch VR while a session runs) closes the game and restores the original files.
 - Practice and Race in VR start in the cockpit view (Launcher → Session → Camera, on by default).
 - The pre-race intro shots appear on the seated screen instead of as a broken panel in the headset.
-- The career's discipline intro video (and a DLC championship's intro) plays on the seated screen instead of leaving the headset on a frozen frame of the race.
-- Nearby opponents keep their full detail beside and behind you in VR, instead of dropping to low-detail models, as in GRID2VR. Higher-detail nearby cars can cost some performance.
+- A video the game plays over a loaded race (the career start's intro) is shown on the seated screen instead of leaving the headset on a frozen frame of the race, also with Intro shots in 3D.
+- Nearby opponents keep the detail the game gives a close car in front (its opponent model) beside and behind you in VR, instead of dropping to low-detail models, as in GRID2VR. Higher-detail nearby cars can cost some performance.
 - The in-race pause menu appears on the seated screen, whole, instead of following your view and running past the bottom of it.
 - The seated screen is 16:9, and the game's loading cards and menus are laid out across the whole of it in their own proportions, so their text is no longer cut off or stretched at the sides. The pre-race intro's info panel still loses part of its left edge (Intro shots in 3D hides it).
 - Graphics → VR screen → Intro shots: show the pre-race intro in 3D, without the game's 2D info panel and wipes (off by default).

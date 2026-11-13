@@ -190,6 +190,12 @@ using BinkCloseFn = void (__stdcall*)(void*);
 BinkOpenFn stockBinkOpen;
 BinkCloseFn stockBinkClose;
 constexpr unsigned binkFileHandle = 0x00800000; // BINKFILEHANDLE: the name is a HANDLE.
+// A video opened over a loaded race scene: starting a career plays rush01.bk2 through the
+// frontend's video composite once the first race has loaded (the attract demo race does the
+// same). Until it closes the frame goes on the seated screen with the frontend passes drawn
+// (Intro shots in 3D would otherwise hide them and leave the race's first frame).
+// -gasvrscenevideosource=back shows the back buffer instead of the eye texture (comparisons).
+std::atomic<void*> sceneVideo{nullptr};
 
 void copyVideoName(const char* name, unsigned flags, char (&out)[160]) {
     strcpy_s(out, "(handle)");
@@ -202,10 +208,16 @@ void* __stdcall loggedBinkOpen(const char* name, unsigned flags) {
     copyVideoName(name, flags, label);
     void* video = stockBinkOpen(name, flags);
     AutosportLog("Native video open name=%s flags=%08x handle=%p", label, flags, video);
+    if (video && regularPlay && headset && phase.load() == Phase::Scene) {
+        sceneVideo.store(video);
+        AutosportLog("Video over the race scene: seated screen until it closes");
+    }
     return video;
 }
 void __stdcall loggedBinkClose(void* video) {
     AutosportLog("Native video close handle=%p", video);
+    void* expected = video;
+    if (video && sceneVideo.compare_exchange_strong(expected, nullptr)) AutosportLog("Video over the race scene closed");
     stockBinkClose(video);
 }
 
@@ -489,8 +501,11 @@ const char* AutosportTransitionSample() {
 // the HMD eye texture as the seated screen's source there (the pre-2026-11-10 behaviour).
 bool AutosportStartupFromBackBuffer() {
     static const bool eye = wcsstr(GetCommandLineW(), L" -gasvrstartupsource=eye") != nullptr;
-    return regularPlay && headset && !eye && (phase.load() == Phase::Startup || introVideo.load());
+    static const bool sceneBack = wcsstr(GetCommandLineW(), L" -gasvrscenevideosource=back") != nullptr;
+    return regularPlay && headset && !eye &&
+           (phase.load() == Phase::Startup || introVideo.load() || (sceneBack && sceneVideo.load()));
 }
+bool AutosportSceneVideo() { return sceneVideo.load() != nullptr; }
 bool AutosportIntroVideo() { return introVideo.load() != 0; }
 void AutosportSetVehicleViews(const void* manager) { vehicleViews = static_cast<const BYTE*>(manager); }
 // Once per native frame. Headset play shows intro shots on the seated screen: the game draws
@@ -535,14 +550,14 @@ void AutosportSampleVehicleCamera() {
         if (++changes <= 200) AutosportLog("Race pause menu %s", paused ? "open: seated screen" : "closed");
     }
 }
-bool AutosportPreRaceIntro3D() { return intro3d && introShot && !carCameraSeen; }
+bool AutosportPreRaceIntro3D() { return intro3d && introShot && !carCameraSeen && !sceneVideo.load(); }
 void AutosportSetPauseState(const void* state) { pauseState = static_cast<const BYTE*>(state); }
 bool AutosportPauseMenuShown() { return pauseMenu; }
 const BYTE* AutosportGameImage() { return image; }
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
-    if (introVideo.load()) return true;
+    if (introVideo.load() || sceneVideo.load()) return true;
     if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && ((introShot && !AutosportPreRaceIntro3D()) || pauseMenu));
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
@@ -557,6 +572,7 @@ using LoadingDispatch = void (__thiscall*)(void*, const void*);
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event) {
     phase.store(Phase::Loading);
     if (introVideo.exchange(0)) AutosportLog("Intro video state forgotten at StateLoading");
+    if (sceneVideo.exchange(nullptr)) AutosportLog("Video over the race scene forgotten at StateLoading");
     vehicleViews = nullptr;
     introShot = false;
     carCameraSeen = false;

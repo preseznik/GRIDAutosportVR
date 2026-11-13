@@ -7,8 +7,11 @@
 // hands each car its selected value (car SetLod VA B33A80; it falls back to a loaded model when
 // that level's model is not loaded). The bridge takes that one call (RVA 5FE647) and, before the
 // apply, raises every opponent within 30 native units of the focus car (the player; manager
-// helper VA 670B00) to its best LOD (car +0x124), keeping it until it is 40 units away. Only in
-// VR race scenes; the focus car itself, distant cars and everything else stay native.
+// helper VA 670B00) to LOD 1, the game's own top level for opponents (or the car's best, car
+// +0x124, when that is lower in detail), keeping it until it is 40 units away. The selector's
+// budget table (manager +0x19CB4, five counts per profile) allows LOD 0 for one car only: the
+// focus car's own model, whose player-only parts show on opponents. Only in VR race scenes; the
+// focus car itself, distant cars and everything else stay native.
 #include <windows.h>
 #include <cmath>
 #include <cwchar>
@@ -19,6 +22,7 @@ constexpr DWORD recordsOffset = 0x10FC, countOffset = 0x19BB4, recordStride = 0x
 constexpr DWORD recordCar = 0xDC, recordSelected = 0xFC, carPosition = 0x60, carBest = 0x124, carWorst = 0x120;
 constexpr unsigned maxRecords = 16;
 constexpr float enterRadius = 30.f, leaveRadius = 40.f;
+constexpr int opponentTop = 1; // The best LOD the game itself gives an opponent (LOD 0 is the focus car's).
 using ApplyFn = void (__thiscall*)(void*);
 using FocusFn = BYTE* (__thiscall*)(void*);
 
@@ -56,14 +60,18 @@ unsigned floorNearby(BYTE* manager) {
         const int best = *reinterpret_cast<const int*>(car + carBest);
         const int worst = *reinterpret_cast<const int*>(car + carWorst);
         int& selected = *reinterpret_cast<int*>(record + recordSelected);
-        if (best < 0 || best > worst || selected <= best) continue;
+        // LOD 0 is the focus car's own model: the selector's budget allows it for one car only, and
+        // on opponents its player-only parts show (seen under a Ford Focus ST). Opponents the game
+        // shows close up in front get LOD 1; nearby ones get the same.
+        const int target = best > opponentTop ? best : opponentTop;
+        if (best < 0 || best > worst || target > worst || selected <= target) continue;
         static unsigned noted;
         if (noted < 12) {
             ++noted;
-            AutosportLog("Nearby opponent LOD: record %u at %.1f units, native LOD %d raised to %d (worst %d)",
-                         i, std::sqrt(d2), selected, best, worst);
+            AutosportLog("Nearby opponent LOD: record %u at %.1f units, native LOD %d raised to %d (best %d, worst %d)",
+                         i, std::sqrt(d2), selected, target, best, worst);
         }
-        selected = best;
+        selected = target;
         ++changes;
     }
     return changes;
