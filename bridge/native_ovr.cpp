@@ -303,7 +303,14 @@ LRESULT CALLBACK gameWndProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     case WM_KILLFOCUS:
         if (keep) return 0; // Keyboard focus moves regardless; the game is not told.
         break;
+    case WM_CHAR:
+        // The seat panel's Tab / Enter / Esc / Backspace characters.
+        if (AutosportUseHeadset() && (wParam == 9 || wParam == 13 || wParam == 27 || wParam == 8) && AutosportSeatBlocksKey(
+                wParam == 9 ? VK_TAB : wParam == 13 ? VK_RETURN : wParam == 27 ? VK_ESCAPE : VK_BACK)) return 0;
+        break;
     case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: {
+        if (AutosportUseHeadset() && AutosportSeatKey(UINT(wParam), message == WM_KEYDOWN || message == WM_SYSKEYDOWN, (lParam & (1L << 30)) != 0))
+            return 0;
         // The launcher's recenter shortcut, matched with exactly its modifiers. It is consumed so
         // the game and Windows do not also act on it (F10 would open the system menu).
         unsigned key{}, modifiers{};
@@ -569,6 +576,12 @@ Pose* __cdecl eyePose(Pose* output, Hmd* target, int eye) {
     *output = {{0, 0, 0, 1}, {}};
     if (target == &hmd && unsigned(eye) < 2) {
         *output = poses[eye];
+        // Seat adjustment (seat.cpp): metres right / up / forward in the recentered seated space
+        // (x right, y up, -z forward), while the cockpit view is live.
+        float seat[3];
+        if (AutosportSeatOffset(seat)) {
+            output->position.x += seat[0]; output->position.y += seat[1]; output->position.z -= seat[2];
+        }
         if (frameOpen) requestedEyes |= (1u << eye);
     }
     return output;
@@ -761,8 +774,23 @@ using ViewLookupFn = int (__thiscall*)(void*, const char*);
 ViewLookupFn stockViewLookup = nullptr;
 int __fastcall raceStartView(void* manager, void*, const char* requested) {
     AutosportSetVehicleViews(manager);
+    // The seat adjustment follows this race's head-cam: its index, and the car it belongs to (the
+    // view's owner +0x84 holds the car's model name at +8, e.g. "sls"; seat.cpp).
+    const int cockpit = stockViewLookup(manager, "head-cam");
+    AutosportSetHeadCam(cockpit);
+    char car[8]{};
+    if (cockpit >= 0) {
+        using ViewFn = const BYTE* (__thiscall*)(void*, int);
+        __try {
+            const BYTE* view = reinterpret_cast<ViewFn>(const_cast<BYTE*>(gameImage) + 0x80DEE0)(manager, cockpit);
+            const BYTE* owner = *reinterpret_cast<const BYTE* const*>(view + 0x84);
+            const char* name = *reinterpret_cast<const char* const*>(owner + 8);
+            for (int i = 0; i < 3 && name[i]; ++i) car[i] = name[i];
+            if (name[3]) car[0] = 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { car[0] = 0; }
+    }
+    AutosportSeatCar(car);
     if (AutosportStartInCockpit() && AutosportUseHeadset() && AutosportPracticeSession()) {
-        const int cockpit = stockViewLookup(manager, "head-cam");
         if (cockpit >= 0) {
             char label[48]{};
             __try { strncpy_s(label, requested ? requested : "(none)", _TRUNCATE); }

@@ -13,6 +13,17 @@ bool AutosportPauseMenuShown();
 bool AutosportRaceScene();
 // The game executable's loaded base.
 const BYTE* AutosportGameImage();
+// Replaces one import of the game executable; the original stays callable through *original.
+bool AutosportHookGameImport(const char* dll, const char* function, void* replacement, void** original);
+// Seat adjustment (seat.cpp): the head-cam view of this race, the cockpit check, offsets and panel.
+void AutosportSetHeadCam(int index);
+bool AutosportCockpitView();
+void AutosportSeatConfigure(const wchar_t* sessionFolder);
+void AutosportSeatCar(const char* id);
+bool AutosportSeatOffset(float (&metres)[3]);
+bool AutosportSeatBlocksKey(UINT vk);
+bool AutosportSeatKey(UINT vk, bool down, bool repeat);
+bool AutosportSeatPanel(wchar_t (&text)[512], unsigned& version);
 // Replaces the LOD selector's apply call (RVA 5FE647): nearby opponents keep their best model in VR.
 void __fastcall AutosportOpponentLodApply(void* manager, void*);
 bool AutosportHudFollowsView();

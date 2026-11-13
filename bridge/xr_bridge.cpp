@@ -80,8 +80,7 @@ struct PredicateScope {
 // The seated screen: AutosportScreenDistance() forward in LOCAL (GRID2VR's is two metres; the
 // launcher's default is three), level with the head at placement, fixed in place until the next
 // recenter. Projecting the forward axis removes pitch and roll.
-bool levelAnchor(const XrPosef& head, XrPosef& anchor) {
-    const double distance = AutosportScreenDistance();
+bool levelAnchor(const XrPosef& head, XrPosef& anchor, double distance = AutosportScreenDistance(), float drop = 0) {
     const auto& p = head.position;
     const auto& q = head.orientation;
     const double norm = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w;
@@ -98,7 +97,7 @@ bool levelAnchor(const XrPosef& head, XrPosef& anchor) {
     x /= length; z /= length;
     const double yaw = std::atan2(-x,-z);
     anchor = {{0,float(std::sin(.5*yaw)),0,float(std::cos(.5*yaw))},
-              {p.x+float(distance*x),p.y,p.z+float(distance*z)}};
+              {p.x+float(distance*x),p.y-drop,p.z+float(distance*z)}};
     return true;
 }
 struct Bridge {
@@ -134,17 +133,32 @@ struct Bridge {
     std::vector<int64_t> formats;
     void initXR();
     bool locate();
-    void end(const XrCompositionLayerBaseHeader* layer = nullptr) {
+    void end(const XrCompositionLayerBaseHeader* layer = nullptr, const XrCompositionLayerBaseHeader* overlay = nullptr) {
         active = false;
         if (!frameOpen) return;
         frameOpen = false;
+        const XrCompositionLayerBaseHeader* layers[2]{layer, overlay};
         XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO};
         info.displayTime = time;
         info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        info.layerCount = layer ? 1u : 0u;
-        info.layers = layer ? &layer : nullptr;
+        info.layerCount = layer ? (overlay ? 2u : 1u) : 0u;
+        info.layers = layer ? layers : nullptr;
         checked(xrEndFrame(session, &info), "xrEndFrame");
     }
+    // The in-game seat panel (seat.cpp): a small quad in front of the seat, redrawn with GDI only
+    // when its text changes.
+    static constexpr UINT panelWidth = 640, panelHeight = 400;
+    XrSwapchain panelChain{};
+    std::vector<XrSwapchainImageD3D11KHR> panelImages;
+    DXGI_FORMAT panelFormat{};
+    unsigned panelVersion{};
+    bool panelReady{}, panelAnchored{};
+    XrPosef panelAnchor{};
+    void dropPanel() {
+        if (panelChain) checked(xrDestroySwapchain(panelChain), "xrDestroySwapchain");
+        panelChain = {}; panelImages.clear(); panelReady = false; panelVersion = 0;
+    }
+    bool updatePanel(const wchar_t* text, unsigned version);
     bool drain() noexcept {
         if (!gpuUsed) return true;
         context->End(completion.Get());
@@ -203,6 +217,7 @@ struct Bridge {
         const char* outcome = stopSession();
         AutosportLog("XR shutdown handshake=%s releasing_gpu_and_swapchains", outcome);
         dropChains();
+        dropPanel();
         AutosportLog("XR shutdown swapchains_released destroying_spaces");
         if (headSpace) { checked(xrDestroySpace(headSpace), "xrDestroyViewSpace"); headSpace = {}; }
         if (local) { checked(xrDestroySpace(local), "xrDestroySpace"); local = {}; }
@@ -582,8 +597,111 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
     }
     XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     projection.space = local; projection.viewCount = 2; projection.views = projections;
-    end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection));
+    wchar_t panelText[512];
+    unsigned version{};
+    XrCompositionLayerQuad panel{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    bool showPanel = AutosportSeatPanel(panelText, version) && updatePanel(panelText, version);
+    if (!showPanel) panelAnchored = false;
+    else if (!panelAnchored) {
+        // Placed once when it opens: 0.65 m ahead along the gaze heading, 12 cm below eye level.
+        XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
+        constexpr auto flags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+        if (xrLocateSpace(headSpace, local, time, &head) == XR_SUCCESS && (head.locationFlags & flags) == flags)
+            panelAnchored = levelAnchor(head.pose, panelAnchor, .65, .12f);
+        showPanel = panelAnchored;
+    }
+    if (showPanel) {
+        panel.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        panel.space = local;
+        panel.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        panel.subImage.swapchain = panelChain;
+        panel.subImage.imageRect.extent = {int32_t(panelWidth), int32_t(panelHeight)};
+        panel.pose = panelAnchor;
+        panel.size = {.32f, .20f};
+    }
+    end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection),
+        showPanel ? reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panel) : nullptr);
     return true;
+}
+
+bool Bridge::updatePanel(const wchar_t* text, unsigned version) {
+    if (!panelChain) {
+        constexpr DXGI_FORMAT wanted[] = {DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                          DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB};
+        const auto choice = std::find_if(std::begin(wanted), std::end(wanted), [&](DXGI_FORMAT f) {
+            return std::find(formats.begin(), formats.end(), int64_t(f)) != formats.end(); });
+        if (choice == std::end(wanted)) return false;
+        XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        info.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+        info.format = *choice; info.width = panelWidth; info.height = panelHeight;
+        info.sampleCount = info.faceCount = info.arraySize = info.mipCount = 1;
+        checked(xrCreateSwapchain(session, &info, &panelChain), "create_panel_swapchain");
+        uint32_t n{};
+        checked(xrEnumerateSwapchainImages(panelChain, 0, &n, nullptr), "count_panel_images");
+        require(n && n <= 32, "invalid_panel_image_count");
+        panelImages.assign(n, {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR});
+        checked(xrEnumerateSwapchainImages(panelChain, n, &n, reinterpret_cast<XrSwapchainImageBaseHeader*>(panelImages.data())),
+                "read_panel_images");
+        panelFormat = *choice;
+        panelReady = false;
+        AutosportLog("Seat panel swapchain %ux%u format=%u", panelWidth, panelHeight, unsigned(panelFormat));
+    }
+    if (panelReady && version == panelVersion) return true;
+    // Draw the text with GDI into a top-down 32-bit bitmap: white on a dark panel with a red bar.
+    BITMAPINFO bitmap{};
+    bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmap.bmiHeader.biWidth = LONG(panelWidth);
+    bitmap.bmiHeader.biHeight = -LONG(panelHeight);
+    bitmap.bmiHeader.biPlanes = 1;
+    bitmap.bmiHeader.biBitCount = 32;
+    bitmap.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC dc = CreateCompatibleDC(nullptr);
+    HBITMAP section = dc ? CreateDIBSection(dc, &bitmap, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    if (!section || !bits) { if (section) DeleteObject(section); if (dc) DeleteDC(dc); return panelReady; }
+    HGDIOBJ previousBitmap = SelectObject(dc, section);
+    RECT all{0, 0, LONG(panelWidth), LONG(panelHeight)};
+    HBRUSH background = CreateSolidBrush(RGB(24, 24, 28));
+    FillRect(dc, &all, background);
+    DeleteObject(background);
+    RECT bar{0, 0, LONG(panelWidth), 8};
+    HBRUSH accent = CreateSolidBrush(RGB(214, 40, 40));
+    FillRect(dc, &bar, accent);
+    DeleteObject(accent);
+    HFONT font = CreateFontW(-28, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
+    HGDIOBJ previousFont = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(240, 240, 240));
+    RECT area{28, 22, LONG(panelWidth) - 28, LONG(panelHeight) - 16};
+    DrawTextW(dc, text, -1, &area, DT_LEFT | DT_TOP | DT_EXPANDTABS | DT_TABSTOP | (9 << 8) | DT_NOPREFIX);
+    GdiFlush();
+    auto* pixels = static_cast<BYTE*>(bits);
+    const bool rgba = panelFormat == DXGI_FORMAT_R8G8B8A8_UNORM || panelFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    for (UINT i = 0; i < panelWidth * panelHeight; ++i) {
+        BYTE* p = pixels + size_t(i) * 4;
+        if (rgba) std::swap(p[0], p[2]);
+        p[3] = 235;
+    }
+    XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    uint32_t index{};
+    bool written = false;
+    if (XR_SUCCEEDED(xrAcquireSwapchainImage(panelChain, &acquire, &index))) {
+        const XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, nullptr, 100'000'000};
+        if (XR_SUCCEEDED(xrWaitSwapchainImage(panelChain, &wait)) && index < panelImages.size() && panelImages[index].texture) {
+            context->UpdateSubresource(panelImages[index].texture, 0, nullptr, pixels, panelWidth * 4, 0);
+            gpuUsed = true;
+            written = true;
+        }
+        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+        xrReleaseSwapchainImage(panelChain, &release);
+    }
+    SelectObject(dc, previousFont);
+    DeleteObject(font);
+    SelectObject(dc, previousBitmap);
+    DeleteObject(section);
+    DeleteDC(dc);
+    if (written) { panelReady = true; panelVersion = version; }
+    return panelReady;
 }
 } // namespace
 

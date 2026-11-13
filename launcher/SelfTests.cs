@@ -58,6 +58,18 @@ internal static class SelfTests
         LauncherSettings.Save(new Choices(), file);
         Check(LauncherSettings.Load(file).RecenterDevice is null && !File.ReadAllText(file).Contains("recenterDevice"));
         Check(!LauncherSettings.Load(file).NewCockpitTextures);
+        // Seat adjustments: the file shared with the renderer (bridge/seat.cpp).
+        var seats = Path.Combine(data, "seat-test.txt");
+        Check(SeatAdjustments.Load(seats).Count == 0);
+        SeatAdjustments.Set("sls", new SeatOffset(15, -20, 35), seats);
+        SeatAdjustments.Set("foc", new SeatOffset(0, 500, -500), seats);
+        Check(SeatAdjustments.Load(seats) is { Count: 2 } loadedSeats && loadedSeats["sls"] == new SeatOffset(15, -20, 35) && loadedSeats["foc"] == new SeatOffset(0, 500, -500));
+        Check(File.ReadAllText(seats) == "# GRID Autosport VR seat adjustments: car right up forward (millimetres)\nfoc 0 500 -500\nsls 15 -20 35\n");
+        SeatAdjustments.Set("sls", default, seats);
+        Check(!SeatAdjustments.Load(seats).ContainsKey("sls"));
+        File.WriteAllText(seats, "# comment\nBAD 1 2 3\nab 1 2 3\nr8l 900 -900 1\nvip x 1 2\n177 1 2\n");
+        Check(SeatAdjustments.Load(seats) is { Count: 1 } clamped && clamped["r8l"] == new SeatOffset(500, -500, 1));
+        Check(Throws<ArgumentException>(() => SeatAdjustments.Save(new Dictionary<string, SeatOffset> { ["sls"] = new(501, 0, 0) }, seats)));
         LauncherSettings.Save(new Choices(NewCockpitTextures: true), file);
         Check(LauncherSettings.Load(file).NewCockpitTextures);
         Check(Throws<IOException>(() => DeviceRecenter.Validate(padButton with { Input = "xinput_left_trigger" })));
@@ -324,7 +336,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Seat position", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);
@@ -359,6 +371,18 @@ internal static class SelfTests
             Find<DistanceSlider>(form, "ScreenDistance").Value = 4m;
             Find<CheckBox>(form, "Intro3D").Checked = true;
             Find<Button>(form, "SaveSettings").PerformClick();
+            // Controls -> Seat saves the chosen car's position at once.
+            var seatCar = Find<ComboBox>(form, "SeatCar");
+            if (seatCar.Items.Count > 0)
+            {
+                seatCar.SelectedItem = seatCar.Items.Cast<CarItem>().First(c => c.Id == "sls");
+                Find<NumericUpDown>(form, "SeatUp").Value = 2.5m;
+                Find<NumericUpDown>(form, "SeatForward").Value = -1m;
+                Check(SeatAdjustments.Load().GetValueOrDefault("sls") == new SeatOffset(0, 25, -10));
+                Find<NumericUpDown>(form, "SeatUp").Value = 0;
+                Find<NumericUpDown>(form, "SeatForward").Value = 0;
+                Check(!SeatAdjustments.Load().ContainsKey("sls"));
+            }
             Check(LauncherSettings.Load() is { HudShow: true, HudMinimap: false, HudDial: true, HudDistance: 3.5m, ScreenDistance: 4m, Intro3D: true });
             var mode = Find<ComboBox>(form, "LaunchMode");
             mode.SelectedIndex = 1;
@@ -428,6 +452,21 @@ internal static class SelfTests
             {
                 form.DrawToBitmap(driving, new Rectangle(Point.Empty, form.Size));
                 driving.Save(Path.Combine(output, "launcher-controls-driving-modern-900.png"));
+            }
+            controlTabs.SelectedTab = controlTabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Seat");
+            form.PerformLayout(); Application.DoEvents();
+            if (Find<ComboBox>(form, "SeatCar").Items.Count > 0)
+            {
+                // Reset this car, with the page shown (a hidden button does not click).
+                Find<NumericUpDown>(form, "SeatRight").Value = 1.5m;
+                Check(SeatAdjustments.Load().ContainsKey(((CarItem)Find<ComboBox>(form, "SeatCar").SelectedItem!).Id));
+                Find<Button>(form, "ResetSeat").PerformClick();
+                Check(SeatAdjustments.Load().Count == 0 && Find<NumericUpDown>(form, "SeatRight").Value == 0);
+            }
+            using (var seat = new Bitmap(form.Width, form.Height))
+            {
+                form.DrawToBitmap(seat, new Rectangle(Point.Empty, form.Size));
+                seat.Save(Path.Combine(output, "launcher-controls-seat-modern-900.png"));
             }
             using (var bindings = new DrivingControlsForm { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) })
             {

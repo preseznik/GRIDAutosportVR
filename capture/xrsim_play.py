@@ -222,7 +222,8 @@ def run(args):
                 if step.get("key"):
                     # A key posted to the game window only (e.g. F11 recenter); desktop focus is untouched.
                     from ctypes import windll
-                    vk = {"F10": 0x79, "F11": 0x7A, "ESC": 0x1B, "ENTER": 0x0D}[step["key"]]
+                    vk = {"F10": 0x79, "F11": 0x7A, "ESC": 0x1B, "ENTER": 0x0D, "TAB": 0x09, "BACK": 0x08, "LEFT": 0x25, "UP": 0x26,
+                          "RIGHT": 0x27, "DOWN": 0x28, "PGUP": 0x21, "PGDN": 0x22}[step["key"]]
                     window = game_window(game.pid)
                     if window:
                         windll.user32.PostMessageW(window, 0x0100, vk, 1)        # WM_KEYDOWN

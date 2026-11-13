@@ -38,6 +38,12 @@ internal sealed class MainForm : LauncherForm
         installCockpitFile = Button("Install from file…", "InstallCockpitTexturesFile");
     private readonly Label cockpitTextureStatus = TextLabel("");
     private bool cockpitTexturesInstalled, cockpitTextureBusy;
+    // Controls -> Seat (SeatAdjustments): per-car head position in the cockpit view, in centimetres.
+    private readonly ComboBox seatCar = Choice("SeatCar");
+    private readonly NumericUpDown seatRight = SeatValue("SeatRight"), seatForward = SeatValue("SeatForward"), seatUp = SeatValue("SeatUp");
+    private readonly Button resetSeat = Button("Reset this car", "ResetSeat"), resetAllSeats = Button("Reset all cars", "ResetAllSeats");
+    private readonly Label seatSummary = TextLabel("");
+    private bool applyingSeat;
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
     // GRID2VR's controller / wheel recenter button (DeviceRecenter).
@@ -172,6 +178,19 @@ internal sealed class MainForm : LauncherForm
         driving.Controls.Add(TextLabel(DrivingControls.RuntimeNotice));
         driving.Controls.Add(TextLabel("Driving controls… opens the bindings: the binding wizard, one action at a time with Key… or Device…, calibration (deadzone, saturation, direction), the Xbox preset and saved profiles. Live input… shows every connected controller, wheel and pedal set as you move it, with a rumble / force feedback test."));
 
+        var seat = Page(controlTabs, "Seat");
+        Section(seat, "Seat position");
+        Field(seat, "Car", seatCar);
+        Field(seat, "Right (cm)", seatRight);
+        Field(seat, "Forward (cm)", seatForward);
+        Field(seat, "Height (cm)", seatUp);
+        var seatActions = new FlowLayoutPanel { Name = "SeatActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
+        seatActions.Controls.AddRange([resetSeat, resetAllSeats]);
+        seat.Controls.Add(seatActions);
+        seatSummary.Name = "SeatSummary"; seatSummary.Tag = "hint"; seat.Controls.Add(seatSummary);
+        seat.Controls.Add(TextLabel("Moves your head from the game's own cockpit position for the chosen car, up to 50 cm each way. It applies in the cockpit view only, in VR. Changes here are saved at once and apply to the next VR launch."));
+        seat.Controls.Add(TextLabel("In the game, press Tab in the cockpit to open the seat panel: Left / Right, Up / Down (forward and back) and Page Up / Page Down (height) move the seat 1 cm (with Shift 5 mm), Backspace resets it, Enter or Tab saves and Esc cancels. While the panel is open those keys do not reach the game."));
+
         var settingColumns = Columns(Page(Tabs, "Settings")); var settings = settingColumns.First;
         Section(settings, "Paths and runtime");
         Field(settings, "Game folder", gamePath);
@@ -217,6 +236,15 @@ internal sealed class MainForm : LauncherForm
         hudDistance.ValueChanged += (_, _) => ChoiceEdited();
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
+        seatCar.SelectedIndexChanged += (_, _) => ShowSeat();
+        foreach (var value in new[] { seatRight, seatForward, seatUp }) value.ValueChanged += (_, _) => SeatEdited();
+        resetSeat.Click += (_, _) => { applyingSeat = true; seatRight.Value = seatForward.Value = seatUp.Value = 0; applyingSeat = false; SeatEdited(); };
+        resetAllSeats.Click += (_, _) =>
+        {
+            try { SeatAdjustments.Save(new SortedDictionary<string, SeatOffset>()); notice.Text = "Seat positions reset for every car."; }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Seat: " + error.Message; }
+            ShowSeat();
+        };
         newCockpitTextures.CheckedChanged += (_, _) => ChoiceEdited();
         installCockpitTextures.Click += async (_, _) => await EnsureCockpitTexturesAsync();
         installCockpitFile.Click += async (_, _) =>
@@ -303,6 +331,8 @@ internal sealed class MainForm : LauncherForm
             car.Items.Clear(); car.Items.AddRange([.. catalog.Cars]);
             track.Items.Clear(); track.Items.AddRange([.. catalog.Tracks]);
             SelectSession();
+            seatCar.Items.Clear(); seatCar.Items.AddRange([.. catalog.Cars]);
+            seatCar.SelectedItem = catalog.Cars.FirstOrDefault(c => c.Id == chosenCar) ?? catalog.Cars.FirstOrDefault();
         }
         finally { applying = false; }
         EnableActions();
@@ -473,6 +503,8 @@ internal sealed class MainForm : LauncherForm
         recenter.Enabled = !testing && !supervising && !recovering;
         bindRecenterDevice.Enabled = !testing && !supervising && !recovering && !capturingRecenter;
         clearRecenterDevice.Enabled = bindRecenterDevice.Enabled && recenterDevice is not null;
+        seatCar.Enabled = seatRight.Enabled = seatForward.Enabled = seatUp.Enabled = resetSeat.Enabled = resetAllSeats.Enabled =
+            !testing && !supervising && !recovering && catalog.Cars.Count > 0;
         installCockpitTextures.Enabled = installCockpitFile.Enabled = idle && !cockpitTextureBusy && !cockpitTexturesInstalled;
         removeCockpitTextures.Enabled = idle && !cockpitTextureBusy && cockpitTexturesInstalled;
         state.Text = supervising ? (Current.LaunchMode == "Normal"
@@ -783,6 +815,36 @@ internal sealed class MainForm : LauncherForm
     private static CheckBox HudPart(string name, string text) => new() { Name = name, AccessibleName = text, Text = text, Checked = true, AutoSize = true, Margin = new Padding(0, 0, 16, 4) };
 
     private static ComboBox Choice(string name) => new() { Name = name, DropDownStyle = ComboBoxStyle.DropDownList, Width = 320, MaxDropDownItems = 20 };
+    private static NumericUpDown SeatValue(string name) => new()
+    {
+        Name = name, Minimum = -SeatOffset.Limit / 10m, Maximum = SeatOffset.Limit / 10m, DecimalPlaces = 1, Increment = .5m, Width = 80,
+    };
+
+    // Shows the chosen car's saved seat position.
+    private void ShowSeat()
+    {
+        if (seatCar.SelectedItem is not CarItem chosen) { seatSummary.Text = "Choose your game folder to list its cars."; return; }
+        SortedDictionary<string, SeatOffset> seats;
+        try { seats = SeatAdjustments.Load(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { seatSummary.Text = "Seat positions could not be read: " + error.Message; return; }
+        var offset = seats.GetValueOrDefault(chosen.Id);
+        applyingSeat = true;
+        try { seatRight.Value = offset.Right / 10m; seatForward.Value = offset.Forward / 10m; seatUp.Value = offset.Up / 10m; }
+        finally { applyingSeat = false; }
+        var others = seats.Keys.Count(id => id != chosen.Id);
+        seatSummary.Text = (offset.IsZero ? "The game's own position." : "Adjusted.") + (others > 0 ? $" {others} other car(s) adjusted." : "");
+    }
+
+    // Saves the chosen car's seat position as soon as a value changes.
+    private void SeatEdited()
+    {
+        if (applyingSeat || seatCar.SelectedItem is not CarItem chosen) return;
+        var offset = new SeatOffset((int)Math.Round(seatRight.Value * 10), (int)Math.Round(seatUp.Value * 10), (int)Math.Round(seatForward.Value * 10));
+        try { SeatAdjustments.Set(chosen.Id, offset); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { notice.Text = "Seat: " + error.Message; }
+        ShowSeat();
+    }
+
     private static NumericUpDown Count(string name, int maximum) => new() { Name = name, Minimum = 1, Maximum = maximum, Value = 1, Width = 80 };
     private static Button Button(string text, string name) => new() { Text = text, Name = name, AutoSize = true, Padding = new Padding(5, 2, 5, 2) };
     private static Label TextLabel(string text) => new() { Text = text, AutoSize = true, UseMnemonic = false, Margin = new Padding(0, 4, 0, 10) };

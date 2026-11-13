@@ -398,6 +398,8 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
         D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context) {
     hookVideoLogging();
     hookIntroVideoStates();
+    static bool seat;
+    if (!seat && regularPlay && headset && adapterReady && directory[0]) { seat = true; AutosportSeatConfigure(directory); }
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
     if (SUCCEEDED(hr) && device && *device && regularPlay) {
@@ -554,6 +556,21 @@ bool AutosportPreRaceIntro3D() { return intro3d && introShot && !carCameraSeen &
 void AutosportSetPauseState(const void* state) { pauseState = static_cast<const BYTE*>(state); }
 bool AutosportPauseMenuShown() { return pauseMenu; }
 const BYTE* AutosportGameImage() { return image; }
+bool AutosportHookGameImport(const char* dll, const char* function, void* replacement, void** original) {
+    return hookImport(dll, function, replacement, original);
+}
+// The vehicle view manager's head-cam index for this race (raceStartView), and whether it is the
+// live view: the manager's current view (+0x81C) in a race scene, not an intro shot, the pause
+// menu or anything else on the seated screen.
+std::atomic<int> headCamIndex{-1};
+void AutosportSetHeadCam(int index) { headCamIndex.store(index); }
+bool AutosportCockpitView() {
+    const int index = headCamIndex.load();
+    if (!regularPlay || !headset || index < 0 || phase.load() != Phase::Scene || !vehicleViews || introShot || pauseMenu ||
+        AutosportFlatScreen()) return false;
+    __try { return *reinterpret_cast<const int*>(vehicleViews + 0x81C) == index; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
