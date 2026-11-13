@@ -29,6 +29,8 @@ const char* AutosportTransitionSample();
 bool AutosportFlatScreen();
 // A career discipline / DLC championship intro video state is active (seated screen from the back buffer).
 bool AutosportIntroVideo();
+// A video opened over a loaded race scene (the career start's rush01.bk2) is playing.
+bool AutosportSceneVideo();
 bool AutosportStartupFromBackBuffer();
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event);
 void __fastcall AutosportLoadingExited(void* dispatcher, void*, const void* event);

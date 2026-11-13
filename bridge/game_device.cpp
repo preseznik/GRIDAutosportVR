@@ -192,9 +192,9 @@ BinkCloseFn stockBinkClose;
 constexpr unsigned binkFileHandle = 0x00800000; // BINKFILEHANDLE: the name is a HANDLE.
 // A video opened over a loaded race scene: starting a career plays rush01.bk2 through the
 // frontend's video composite once the first race has loaded (the attract demo race does the
-// same). Until it closes the frame goes on the seated screen with the frontend passes drawn
-// (Intro shots in 3D would otherwise hide them and leave the race's first frame).
-// -gasvrscenevideosource=back shows the back buffer instead of the eye texture (comparisons).
+// same). The video reaches only the back buffer (the desktop window shows it; the eye texture
+// keeps the race's first frame), so until it closes the seated screen shows the back buffer, as
+// for the startup videos. -gasvrscenevideosource=eye keeps the eye texture (comparisons).
 std::atomic<void*> sceneVideo{nullptr};
 
 void copyVideoName(const char* name, unsigned flags, char (&out)[160]) {
@@ -501,7 +501,7 @@ const char* AutosportTransitionSample() {
 // the HMD eye texture as the seated screen's source there (the pre-2026-11-10 behaviour).
 bool AutosportStartupFromBackBuffer() {
     static const bool eye = wcsstr(GetCommandLineW(), L" -gasvrstartupsource=eye") != nullptr;
-    static const bool sceneBack = wcsstr(GetCommandLineW(), L" -gasvrscenevideosource=back") != nullptr;
+    static const bool sceneBack = wcsstr(GetCommandLineW(), L" -gasvrscenevideosource=eye") == nullptr;
     return regularPlay && headset && !eye &&
            (phase.load() == Phase::Startup || introVideo.load() || (sceneBack && sceneVideo.load()));
 }

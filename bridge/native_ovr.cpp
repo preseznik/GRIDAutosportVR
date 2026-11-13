@@ -685,8 +685,8 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
                              desc.Width, desc.Height, unsigned(desc.Format), frame, unsigned(result.submitted));
             }
             static unsigned introFrames;
-            if (AutosportIntroVideo() && introFrames++ % 180 == 0 && introFrames < 180 * 60)
-                AutosportLog("Intro video on the seated screen from the back buffer %ux%u native frame=%llu submitted=%u",
+            if ((AutosportIntroVideo() || AutosportSceneVideo()) && introFrames++ % 180 == 0 && introFrames < 180 * 60)
+                AutosportLog("Video on the seated screen from the back buffer %ux%u native frame=%llu submitted=%u",
                              desc.Width, desc.Height, frame, unsigned(result.submitted));
         } else {
             result = AutosportEndViews(eyes[0].texture, 0, rects, frame,
