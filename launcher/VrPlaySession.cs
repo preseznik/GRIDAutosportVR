@@ -135,8 +135,10 @@ internal static partial class VrPlaySession
     }
 
     // Steam arguments for the game process. eyeSize is the per-eye render size reported to the game.
-    // A Practice / Race session adds -benchmarkAttract with its session file.
-    internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize, bool session = false) =>
+    // A Practice / Race session adds -benchmarkAttract with its session file, and the devices the
+    // bridge may make the player's controller (-gasvrdevice, DeviceClaim) in place of Press Start.
+    internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize, bool session = false,
+        IReadOnlyList<string>? claim = null) =>
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (choices.HudFollowView ? "1" : "0"),
          "-gasvrrecenterkey=" + choices.RecenterKey, "-gasvrrecentermods=" + choices.RecenterModifiers, "-gasvrkeephorizon=" + (choices.KeepHorizonLevel ? "1" : "0"),
          .. eyeSize is { } eye ? new[] { $"-gasvreyesize={eye.Width}x{eye.Height}" } : [],
@@ -144,7 +146,27 @@ internal static partial class VrPlaySession
          "-gasvrhudparts=" + choices.HudParts, "-gasvrhuddistance=" + (int)(choices.HudDistance * 100m),
          "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
          .. choices.Intro3D ? new[] { "-gasvrintro3d=1" } : [],
-         .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : []];
+         .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
+         .. session && claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
+
+    // Practice / Race never shows the Press Start screen, where the game makes the device that
+    // pressed Start the player's controller; without it only the keyboard drives. The bridge makes
+    // the same native bind for the first of these that is connected: the devices the launcher's
+    // steering is bound to, in order, then an Xbox controller (GRID2VR's "Auto"). Other DirectInput
+    // devices (shifters, handbrakes, button boxes) are never guessed.
+    internal static List<string> DeviceClaim(DrivingControls controls)
+    {
+        var families = new List<string>();
+        if (controls.Enabled)
+            foreach (var binding in controls.Bindings.Where(b => !b.Keyboard && b.Action is "Steer Left" or "Steer Right"))
+            {
+                var family = SessionInputMaps.Family(binding);
+                if (System.Text.RegularExpressions.Regex.IsMatch(family, @"\A(xinput_pad|\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\})\z") &&
+                    !families.Contains(family, StringComparer.OrdinalIgnoreCase)) families.Add(family);
+            }
+        if (!families.Contains("xinput_pad")) families.Add("xinput_pad");
+        return families.Take(8).ToList();
+    }
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
     public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null)
@@ -162,18 +184,23 @@ internal static partial class VrPlaySession
             RestoreLease(folder);
             var id = Guid.NewGuid().ToString("N");
             var session = sessionXml?.Invoke(choices);
-            var inputs = SessionInputMaps.Plan(folder, DrivingControls.Load());
+            var controls = DrivingControls.Load();
+            var inputs = SessionInputMaps.Plan(folder, controls);
+            var claim = session is null ? null : DeviceClaim(controls);
             try
             {
                 Stage(folder, bridgePath, id, session, inputs);
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
-                foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null)) start.ArgumentList.Add(arg);
+                foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null, claim)) start.ArgumentList.Add(arg);
+                if (claim is not null) Record(id, "Practice / Race controller: the first connected of " + string.Join(", ", claim) + ".");
                 if (renderNote is not null) Record(id, renderNote);
                 if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
                 Record(id, "Requesting normal play through Steam.");
                 var requested = DateTime.UtcNow;
                 using (var steam = Process.Start(start))
                     if (steam is null) throw new IOException("Steam could not start GRID Autosport.");
+                using var recenterWatch = choices.RecenterDevice is { } recenterDevice
+                    ? DeviceRecenter.Watch(SessionFolder(id), recenterDevice, message => Record(id, message)) : null;
                 return WaitForGame(folder, id, requested);
             }
             finally

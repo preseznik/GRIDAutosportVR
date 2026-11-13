@@ -34,6 +34,10 @@ internal sealed class MainForm : LauncherForm
     private readonly CheckBox intro3d = new() { Name = "Intro3D", AccessibleName = "Show the pre-race intro in 3D", Text = "Show the pre-race intro in 3D", AutoSize = true };
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
+    // GRID2VR's controller / wheel recenter button (DeviceRecenter).
+    private readonly Button bindRecenterDevice = Button("Bind controller / wheel…", "RecenterDevice"), clearRecenterDevice = Button("Clear", "ClearRecenterDevice");
+    private readonly Label deviceRecenterHint = TextLabel("No controller / wheel button.");
+    private DrivingBinding? recenterDevice;
     private bool capturingRecenter;
     private readonly Button desktop = Button("Launch", "LaunchDesktop"), vr = Button("Launch VR", "LaunchVR"),
         save = Button("Save settings", "SaveSettings"), recover = Button("Restore original files", "RestoreOriginalFiles"),
@@ -131,6 +135,12 @@ internal sealed class MainForm : LauncherForm
         Field(controls, "Recenter", recenter);
         recenterHint.Name = "RecenterHint"; controls.Controls.Add(recenterHint);
         controls.Controls.Add(TextLabel("Click the key above to change it before launching, then press the new key with any Ctrl, Alt or Shift. Press Escape to cancel. Save settings or launch to keep it; it applies to the next VR session. The game's own F11 recenter keeps working."));
+        Section(controls, "Controller / wheel recenter");
+        deviceRecenterHint.Name = "RecenterDeviceHint"; controls.Controls.Add(deviceRecenterHint);
+        var recenterButtons = new FlowLayoutPanel { Name = "RecenterDeviceButtons", AutoSize = true, WrapContents = true, Margin = Padding.Empty };
+        recenterButtons.Controls.Add(bindRecenterDevice); recenterButtons.Controls.Add(clearRecenterDevice);
+        controls.Controls.Add(recenterButtons);
+        controls.Controls.Add(TextLabel("A button or hat direction on an Xbox controller or a wheel that recenters as the key does, alongside it. The launcher watches it while the game runs."));
         Section(controls, "Recenter alignment");
         controls.Controls.Add(keepHorizonLevel);
         controls.Controls.Add(TextLabel("Reset your position and forward direction without changing the horizon. Untick to align pitch and roll to your current head pose too. Applies on the next VR launch."));
@@ -215,6 +225,18 @@ internal sealed class MainForm : LauncherForm
         recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
         recenter.LostFocus += (_, _) => { if (capturingRecenter) { capturingRecenter = false; UpdateRecenterLabel(); EnableActions(); } };
         keepHorizonLevel.CheckedChanged += (_, _) => ChoiceEdited();
+        bindRecenterDevice.Click += (_, _) =>
+        {
+            try
+            {
+                using var dialog = new DrivingBindingForm("Recenter", false, deviceButtonOnly: true);
+                if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Bindings.FirstOrDefault() is not { } binding) return;
+                DeviceRecenter.Validate(binding);
+                recenterDevice = binding with { Action = "Recenter" }; UpdateDeviceRecenter(); ChoiceEdited();
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Recenter button: " + error.Message; }
+        };
+        clearRecenterDevice.Click += (_, _) => { recenterDevice = null; UpdateDeviceRecenter(); ChoiceEdited(); };
         foreach (var combo in new[] { launchMode, car, track, opponentCars })
             combo.SelectedIndexChanged += (_, _) => SessionEdited();
         laps.ValueChanged += (_, _) => SessionEdited();
@@ -234,7 +256,7 @@ internal sealed class MainForm : LauncherForm
     private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
-        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked);
+        hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -308,6 +330,7 @@ internal sealed class MainForm : LauncherForm
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
         recenterKey = choices.RecenterKey; recenterModifiers = choices.RecenterModifiers; UpdateRecenterLabel();
+        recenterDevice = choices.RecenterDevice; UpdateDeviceRecenter();
         keepHorizonLevel.Checked = choices.KeepHorizonLevel;
         applying = true;
         try
@@ -420,6 +443,8 @@ internal sealed class MainForm : LauncherForm
         sessionSummary.Text = RaceSession.Summary(Current, catalog) + (mode == "Race" && opponentCars.SelectedItem is Option { Id: "class" } && car.SelectedItem is CarItem c
             ? $" Discipline: {c.Class}{(catalog.Cars.Any(o => o.Id != c.Id && o.Class == c.Class && c.Class != "Other") ? "" : "; no other installed car shares it, so opponents use your car")}." : "");
         recenter.Enabled = !testing && !supervising && !recovering;
+        bindRecenterDevice.Enabled = !testing && !supervising && !recovering && !capturingRecenter;
+        clearRecenterDevice.Enabled = bindRecenterDevice.Enabled && recenterDevice is not null;
         state.Text = supervising ? (Current.LaunchMode == "Normal"
                 ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
                 : $"{Current.LaunchMode} in progress. It has no pause menu: choose End session to stop; the launcher then restores the original game files.")
@@ -580,6 +605,12 @@ internal sealed class MainForm : LauncherForm
             testing = false;
             EnableActions();
         }
+    }
+
+    private void UpdateDeviceRecenter()
+    {
+        deviceRecenterHint.Text = recenterDevice is null ? "No controller / wheel button." : DrivingInput.Description(recenterDevice);
+        clearRecenterDevice.Enabled = bindRecenterDevice.Enabled && recenterDevice is not null;
     }
 
     private void UpdateRecenterLabel()

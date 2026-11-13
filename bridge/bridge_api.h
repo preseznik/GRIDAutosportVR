@@ -26,6 +26,13 @@ bool AutosportFlatScreen();
 bool AutosportStartupFromBackBuffer();
 void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* event);
 void __fastcall AutosportLoadingExited(void* dispatcher, void*, const void* event);
+// Practice / Race device claim (device_claim.cpp): -gasvrdevice=FAMILY[,FAMILY...].
+bool AutosportTakeDeviceRecenter();
+// Cockpit texture observe / replace (cockpit_textures.cpp): -gasvrcockpittextures=observe|replace.
+struct ID3D11Device;
+void AutosportConfigureCockpitTextures(ID3D11Device* device, const wchar_t* sessionFolder, const wchar_t* gameFolder);
+void AutosportConfigureDeviceClaim(const BYTE* image, const wchar_t* commandLine, bool practice);
+extern "C" void AutosportLoadingExitedThunk();
 bool AutosportCaptureRequested();
 void AutosportCaptureCompleted();
 const wchar_t* AutosportRunDirectory();

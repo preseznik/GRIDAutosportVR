@@ -17,10 +17,11 @@ First packaged build of GRID Autosport VR for the Steam game (AVX renderer, buil
 - Practice and Race in VR start in the cockpit view (Launcher → Session → Camera, on by default).
 - The pre-race intro shots appear on the seated screen instead of as a broken panel in the headset.
 - The in-race pause menu appears on the seated screen, whole, instead of following your view and running past the bottom of it.
-- The seated screen is 16:9, so menus, loading cards and intro shots are no longer cut off at the sides.
+- The seated screen is 16:9, and the game's loading cards and menus are laid out across the whole of it in their own proportions, so their text is no longer cut off or stretched at the sides. The pre-race intro's info panel still loses part of its left edge (Intro shots in 3D hides it).
 - Graphics → VR screen → Intro shots: show the pre-race intro in 3D, without the game's 2D info panel and wipes (off by default).
-- Controls → Driving: driving bindings as in GRID2VR (binding wizard, Key… / Device…, calibration, Xbox preset, profiles) and a live input view with a rumble / force feedback test. VR launches apply them to the game's own input presets for that session only, and the originals are restored afterwards.
+- Controls → Driving: driving bindings as in GRID2VR (binding wizard, Key… / Device…, calibration, Xbox preset, profiles) and a live input view with a rumble / force feedback test. VR launches apply them to the game's own input presets for that session only, and the originals are restored afterwards. Practice and Race make your bound wheel (or else an Xbox controller) the player's controller, as the game's Press Start screen does in Normal play, so the bindings and force feedback work there too.
+- Controls → VR → Controller / wheel recenter: bind a button or hat direction on an Xbox controller or a wheel that recenters alongside the key.
 - Graphics → VR HUD: Show HUD and HUD parts (dial, minimap, counters, position info) override the game's own HUD options in VR sessions, and Distance places the HUD 1–20 m ahead of your seat.
 - Graphics → VR screen → Distance: the screen for videos, loading, menus and intro shots now sits 3 m ahead of your seat (was 2 m), adjustable from 1.5 to 6 m.
 
-Known limits: menus are shown flat. Practice and Race start from Launch VR only, in day and dry conditions, and you start on pole; they have no pause menu, so stop them with End session. Controller/wheel recenter buttons are not available yet.
+Known limits: menus are shown flat. Practice and Race start from Launch VR only, in day and dry conditions, and you start on pole; they have no pause menu, so stop them with End session.

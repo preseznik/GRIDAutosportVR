@@ -232,6 +232,32 @@ void __fastcall updateUiCamera(void* camera, const void* drawCaller, const BYTE*
             }
             for (int r = 0; r < 4; ++r) { m.m[r][0] *= fit; m.m[r][1] = m.m[r][1]*fit + lift*m.m[r][3]; }
         }
+    } else if (drawCaller != osdLayoutReturn && AutosportFlatScreen() && descriptors) {
+        // Menus, loading screens and the intro shots' broadcast layout on the seated screen. The
+        // game lays its 2D frontend out for the eye texture's pixel aspect (about 0.94:1 on a
+        // Quest 3), so a layout made for 16:9 loses its sides; the screen itself shows the frame
+        // at the flat field of view's aspect (applyViews: at least 16:9). Squeeze this draw's
+        // clip x by the ratio of the two, so the whole 16:9 layout lands in the eye image and
+        // the screen stretches it back to its own proportions. Stereo pass only, as above.
+        auto* bytes = static_cast<BYTE*>(camera);
+        const bool stereo = *reinterpret_cast<const DWORD*>(renderer + 0x52e8) && renderer[0x52f1];
+        const EyeDesc& eye = descriptors[0];
+        const float pixels = eye.viewport.size.y > 0 ? float(eye.viewport.size.x) / float(eye.viewport.size.y) : 0.f;
+        const float tangents = eye.fov.up + eye.fov.down > 0 ? (eye.fov.left + eye.fov.right) / (eye.fov.up + eye.fov.down) : 0.f;
+        const float fit = tangents > 0 ? pixels / tangents : 0.f;
+        if (stereo && fit > .2f && fit < .999f) {
+            auto& m = *reinterpret_cast<Matrix*>(bytes + 0x110);
+            static const void* logged[16]{};
+            static unsigned count;
+            bool seen = false;
+            for (unsigned i = 0; i < count; ++i) if (logged[i] == drawCaller) seen = true;
+            if (!seen && count < 16) {
+                logged[count++] = drawCaller;
+                AutosportLog("Seated-screen FE draw callerRVA=%X perspective=%u clip x scaled by %.3f (eye %.3f:1, screen %.3f:1)",
+                             unsigned(static_cast<const BYTE*>(drawCaller)-gameImage-5), unsigned(bytes[0xe0]), fit, pixels, tangents);
+            }
+            for (int r = 0; r < 4; ++r) m.m[r][0] *= fit;
+        }
     }
     stockCameraUpdate(camera);
 }
@@ -516,6 +542,11 @@ Timing* __cdecl beginFrame(Timing* timing, Hmd* target, unsigned) {
             recenter = true;
             AutosportRecenterSeatedScreen();
             AutosportLog("Recentered by the shortcut at frame=%llu keepHorizonLevel=%d", frame, AutosportKeepHorizonLevel());
+        }
+        if (AutosportTakeDeviceRecenter()) {
+            recenter = true;
+            AutosportRecenterSeatedScreen();
+            AutosportLog("Recentered by the controller / wheel button at frame=%llu keepHorizonLevel=%d", frame, AutosportKeepHorizonLevel());
         }
         applyViews(views, AutosportFlatScreen());
         if (frame == 1) AutosportLog("Native BeginFrame: %s", AutosportBridgeStatus());
@@ -821,7 +852,7 @@ bool AutosportInstallNativeOvr() noexcept {
         site(0x1B7B63, 0x720B80, AutosportDrawFrontendOverlay), site(0x1B7B98, 0x720B80, AutosportDrawFrontendOverlay),
         site(0x1B7C09, 0x720B80, AutosportDrawFrontendOverlay),
         site(0x1D5221, 0x9FFBC0, AutosportSlateVisibility), site(0x1D5482, 0x9FFBC0, AutosportSlateVisibility),
-        site(0x243F26, 0x9F6C80, AutosportLoadingEntered), site(0x243FC9, 0x9F6C80, AutosportLoadingExited),
+        site(0x243F26, 0x9F6C80, AutosportLoadingEntered), site(0x243FC9, 0x9F6C80, AutosportLoadingExitedThunk),
         site(0x4DBFCB, 0xA9E420, endFrame), site(0x4DC25D, 0xA9E3B0, beginFrame),
         site(0x4DEF77, 0xA9E240, destroyHmd), site(0x4DEF7F, 0xA9DE10, shutdownLegacySdk),
         site(0x4DFF38, 0xA9EB40, initialize), site(0x4DFF3F, 0xA9E750, createHmd),

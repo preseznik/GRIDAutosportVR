@@ -46,7 +46,21 @@ internal static class SelfTests
         var file = Path.Combine(data, "settings-test.json");
         Check(LauncherSettings.Load(file) == new Choices(false, true, 100, 121, 0, true)); // New installs: Modern, 100% VR scale, F10, level horizon.
         LauncherSettings.Save(new Choices(RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false), file);
-        Check(LauncherSettings.Load(file) is { RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false });
+        Check(LauncherSettings.Load(file) is { RecenterKey: 120, RecenterModifiers: 1, KeepHorizonLevel: false, RecenterDevice: null });
+        // Controller / wheel recenter button: saved, reloaded, cleared; axes and keys are refused.
+        var padButton = new DrivingBinding { Action = "Recenter", Device = "Xbox controller", DeviceId = "xinput:0", DeviceType = "xinput_pad", Input = "xinput_button_back" };
+        var hat = new DrivingBinding { Action = "Recenter", Device = "Wheel", DeviceId = "{6F1D2B60-D5A0-11CF-BFC7-444553540000}", DeviceType = "{C262046D-0000-0000-0000-504944564944}", Input = "di_dpad_0_up" };
+        LauncherSettings.Save(new Choices(RecenterDevice: padButton), file);
+        Check(LauncherSettings.Load(file).RecenterDevice == padButton);
+        LauncherSettings.Save(new Choices(RecenterDevice: hat), file);
+        Check(LauncherSettings.Load(file).RecenterDevice == hat);
+        LauncherSettings.Save(new Choices(), file);
+        Check(LauncherSettings.Load(file).RecenterDevice is null && !File.ReadAllText(file).Contains("recenterDevice"));
+        Check(Throws<IOException>(() => DeviceRecenter.Validate(padButton with { Input = "xinput_left_trigger" })));
+        Check(Throws<IOException>(() => DeviceRecenter.Validate(padButton with { Action = "Gear Up" })));
+        var edge = new RecenterEdge();
+        Check(!edge.Update(true, true) && !edge.Update(true, false) && edge.Update(true, true) && !edge.Update(true, true) &&
+              !edge.Update(false, false) && !edge.Update(true, true));
         File.WriteAllText(file, "{\"recenterKey\": 115, \"recenterModifiers\": 2}"); // Alt+F4 stays the system's.
         Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
         LauncherSettings.Save(new Choices(false, true, 175), file);
@@ -237,6 +251,15 @@ internal static class SelfTests
         var args = VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true);
         Check(args[^2..].SequenceEqual(["-benchmarkAttract", "GASVR_" + id + ".xml"]) && args.Contains("-gasvrplay=" + id));
         Check(!VrPlaySession.SteamArguments(id, new Choices(), null).Contains("-benchmarkAttract"));
+        // Practice / Race controller claim: steering devices in order, then an Xbox controller; Normal never.
+        var steering = new DrivingControls { Enabled = true, Bindings = [
+            new DrivingBinding { Action = "Steer Left", Device = "Wheel", DeviceId = "{6F1D2B60-D5A0-11CF-BFC7-444553540000}", DeviceType = "{c262046d-0000-0000-0000-504944564944}", Input = "di_x_axis", Calibration = "biDirLower" },
+            new DrivingBinding { Action = "Steer Right", Device = "Wheel", DeviceId = "{6F1D2B60-D5A0-11CF-BFC7-444553540000}", DeviceType = "{c262046d-0000-0000-0000-504944564944}", Input = "di_x_axis", Calibration = "biDirUpper" },
+            new DrivingBinding { Action = "Accelerate", Device = "Keyboard", DeviceId = "keyboard", DeviceType = "keyboard", Input = "key_up" }] };
+        Check(VrPlaySession.DeviceClaim(steering).SequenceEqual(["{C262046D-0000-0000-0000-504944564944}", "xinput_pad"]));
+        Check(VrPlaySession.DeviceClaim(new DrivingControls()).SequenceEqual(["xinput_pad"]));
+        Check(VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true, ["xinput_pad"]).Contains("-gasvrdevice=xinput_pad"));
+        Check(!VrPlaySession.SteamArguments(id, new Choices(), null, false, ["xinput_pad"]).Any(a => a.StartsWith("-gasvrdevice")));
         Check(!VrPlaySession.EndSession(game, TimeSpan.Zero)); // No game runs from the fake folder.
 
         // The flow patch: only the pinned stock file is accepted.
@@ -297,7 +320,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "VR screen", "Keyboard shortcuts", "Recenter alignment", "Driving controls", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         form.UseHeadset(Quest3);

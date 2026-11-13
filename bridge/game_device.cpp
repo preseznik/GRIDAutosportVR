@@ -115,6 +115,7 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
         hudFollowsView = follow && wcscspn(follow + 1, L" \t") == wcslen(L"-gasvrhudfollow=1");
         wcscpy_s(mode, L"openxr");
         regularPlay = true;
+        AutosportConfigureDeviceClaim(image, cmd, practiceSession);
         return true;
     }
     // -benchmarkAttract runs the same session file through the game's attract flow (Practice/Race research).
@@ -336,6 +337,14 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     hookVideoLogging();
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
+    if (SUCCEEDED(hr) && device && *device && regularPlay) {
+        wchar_t game[MAX_PATH]{};
+        const DWORD length = GetModuleFileNameW(nullptr, game, MAX_PATH);
+        if (wchar_t* slash = length && length < MAX_PATH ? wcsrchr(game, L'\\') : nullptr) {
+            *slash = 0;
+            AutosportConfigureCockpitTextures(*device, directory, game);
+        }
+    }
     AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f",
                  hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession,
                  hudPartsForced, hudParts, hudDistance, screenDistance);
@@ -363,6 +372,20 @@ bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers) {
     }();
     key = parsedKey; modifiers = parsedModifiers;
     return valid;
+}
+// The launcher's controller / wheel recenter button (launcher/DeviceRecenter.cs) drops
+// recenter.request into this play session's folder; checked every 100 ms and consumed here.
+bool AutosportTakeDeviceRecenter() {
+    static ULONGLONG checkedAt;
+    if (!regularPlay || !*directory) return false;
+    const ULONGLONG now = GetTickCount64();
+    if (now - checkedAt < 100) return false;
+    checkedAt = now;
+    wchar_t path[MAX_PATH]{};
+    if (swprintf_s(path, L"%s\\recenter.request", directory) < 0) return false;
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return false;
+    DeleteFileW(path);
+    return true;
 }
 bool AutosportKeepHorizonLevel() {
     static const bool keep = wcsstr(GetCommandLineW(), L" -gasvrkeephorizon=0") == nullptr;
