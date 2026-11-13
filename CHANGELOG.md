@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 Experimental
+## 0.1.0
 
 First packaged build of GRID Autosport VR for the Steam game (AVX renderer, build 4011980).
 
