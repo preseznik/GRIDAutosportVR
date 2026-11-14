@@ -208,9 +208,11 @@ internal sealed class MainForm : LauncherForm
         settings.Controls.Add(TextLabel("Uses your Steam installation of GRID Autosport (build with GRIDAutosport_avx.exe). The VR files are added only for a VR session and removed when it ends."));
         runtime.Items.AddRange(OpenXrRuntimes.Choices.Cast<object>().ToArray());
         runtime.SelectedItem = OpenXrRuntimes.Default;
+        runtime.FormattingEnabled = true;
+        runtime.Format += (_, e) => { if (e.ListItem is OpenXrRuntimes.Default) e.Value = OpenXrRuntimes.DefaultLabel; };
         Field(settings, "VR runtime", runtime);
         runtimeStatus.Name = "VrRuntimeStatus"; runtimeStatus.Tag = "hint"; settings.Controls.Add(runtimeStatus);
-        settings.Controls.Add(TextLabel("Default uses this PC's 32-bit OpenXR runtime. VDXR connects through Virtual Desktop (keep SteamVR closed); SteamVR connects through SteamVR. The choice applies to the headset check and the next VR launch only; the system default is unchanged."));
+        settings.Controls.Add(TextLabel("OpenXR (system Default) uses this PC's 32-bit OpenXR runtime. VDXR connects through Virtual Desktop (keep SteamVR closed); SteamVR connects through SteamVR. The choice applies to the headset check and the next VR launch only; the system default is unchanged."));
         Section(settings, "Headset check");
         settings.Controls.Add(TextLabel("Check the 32-bit OpenXR runtime, or show a marker in each eye for up to 20 seconds. Connect your headset first."));
         var probeActions = new FlowLayoutPanel { Name = "HeadsetCheckActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };

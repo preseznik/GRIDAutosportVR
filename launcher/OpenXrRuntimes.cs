@@ -16,6 +16,8 @@ internal static class OpenXrRuntimes
     public const string Default = "Default", Vdxr = "VDXR", SteamVr = "SteamVR";
     public static readonly string[] Choices = [Default, Vdxr, SteamVr];
     public const string SessionFile = "openxr-runtime.txt";
+    // How the launcher shows Default, as GRID2VR.
+    public const string DefaultLabel = "OpenXR (system Default)";
     public static bool Valid(string choice) => Choices.Contains(choice);
 
     // The manifest a choice uses, or null for Default (the loader then finds the system runtime).
@@ -42,7 +44,7 @@ internal static class OpenXrRuntimes
     // Why a choice cannot be used, or null when it can.
     public static string? Problem(string choice)
     {
-        if (!Valid(choice)) return "Choose Default, VDXR or SteamVR as the VR runtime.";
+        if (!Valid(choice)) return "Choose OpenXR (system Default), VDXR or SteamVR as the VR runtime.";
         if (choice == Default) return null;
         var manifest = Manifest(choice);
         if (manifest is null || !File.Exists(manifest))
