@@ -117,7 +117,7 @@ internal sealed class MainForm : LauncherForm
         Field(launcher, "Camera", vrCockpit);
         sessionSummary.Name = "SessionSummary"; sessionSummary.Tag = "hint";
         launcher.Controls.Add(sessionSummary);
-        launcher.Controls.Add(TextLabel("Normal opens the game's own menus, where you choose cars and events. Practice starts the selected car and track on your own; Race adds 1–11 computer-controlled opponents. Practice and Race apply to Launch VR; the desktop Launch always opens the menus. They run on the game's benchmark mode, which has no pause menu: choose End session (beside Launch VR) to stop."));
+        launcher.Controls.Add(TextLabel("Normal opens the game's own menus, where you choose cars and events. Practice starts the selected car and track on your own; Race adds 1–11 computer-controlled opponents. Practice and Race apply to Launch VR; the desktop Launch always opens the menus. Pause with the game's pause button (Esc, or Start on a controller) to restart or quit; Quit closes the game, and the launcher restores the original files."));
         launcher.Controls.Add(TextLabel("Launch VR starts GRID Autosport through Steam with the VR renderer. The startup videos, loading screens and menus appear on a screen in front of your seat; races are in stereo with head tracking. Finish with Quit in the game: the launcher then restores the original game files. After an interrupted session, choose Restore original files."));
         launcher = launcherColumns.Second;
         Section(launcher, "Before you launch");
@@ -540,7 +540,7 @@ internal sealed class MainForm : LauncherForm
         removeCockpitTextures.Enabled = idle && !cockpitTextureBusy && cockpitTexturesInstalled;
         state.Text = supervising ? (Current.LaunchMode == "Normal"
                 ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
-                : $"{Current.LaunchMode} in progress. It has no pause menu: choose End session to stop; the launcher then restores the original game files.")
+                : $"{Current.LaunchMode} in progress. Pause in the game to restart or quit, or choose End session; the launcher then restores the original game files.")
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
             : playLease ? "A VR session is active or was interrupted. After the game exits, choose Restore original files."
             : pending ? "A VR benchmark session is pending. Restore it with bridge/run.py --restore before launching."
@@ -873,7 +873,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(vr, "Check the headset, add the VR files and start the game through Steam. The files are removed when the game exits.");
         tips.SetToolTip(save, "Keep your launcher choices without launching.");
         tips.SetToolTip(recover, "Remove the VR files left by an interrupted session and restore the original game executable.");
-        tips.SetToolTip(end, "Close this session's game (as its close button does) and restore the original game files. Practice and Race have no pause menu, so use this to stop early.");
+        tips.SetToolTip(end, "Close this session's game (as its close button does) and restore the original game files. In Practice and Race, the game's pause menu also has Quit.");
         tips.SetToolTip(logs, "Open the folder with VR session and headset-check logs to attach to a report.");
         tips.SetToolTip(refreshHeadset, "Read the connected headset''s recommended resolution through the 32-bit OpenXR runtime.");
         tips.SetToolTip(launchMode, "Normal opens the game's menus. Practice starts the selected car and track on your own. Race adds computer-controlled opponents. Practice and Race apply to Launch VR.");

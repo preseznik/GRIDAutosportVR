@@ -910,8 +910,12 @@ bool AutosportInstallNativeOvr() noexcept {
     // results path), then the common pop ESI / pop EBP / ret 4.
     const BYTE workerReturn[] = {0xc6,0x86,0x8a,0,0,0,0,0xc6,0x86,0x94,0,0,0,0,0x5b,0x5e,0x5d,0xc2,4,0};
     if (std::memcmp(base + 0x68505C, workerReturn, sizeof(workerReturn))) return false;
+    // The benchmark worker's terminal ExitProcess (benchmark end, and in-game Quit in a launcher
+    // Practice / Race, which runs on -benchmarkAttract) becomes a window close, so the game's own
+    // teardown releases the OpenXR session. Normal play never reaches it.
+    const bool benchmarkExit = !AutosportRegularPlay() || AutosportPracticeSession();
     for (auto& s : sites) {
-        if (s.resume && AutosportRegularPlay()) continue;
+        if (s.resume && !benchmarkExit) continue;
         UINT delta;
         std::memcpy(&delta, base + s.call + 1, sizeof(delta));
         if (base[s.call] != 0xE8 || s.call + 5 + delta != s.target) return false;
@@ -951,7 +955,7 @@ bool AutosportInstallNativeOvr() noexcept {
     forcedSettingTable[2] = reinterpret_cast<void*>(&forcedSettingValue);
     stockPauseEntry = reinterpret_cast<PauseEntryFn>(base + 0x247C60);
     for (auto& s : sites) {
-        if (s.resume && AutosportRegularPlay()) continue;
+        if (s.resume && !benchmarkExit) continue;
         UINT delta = reinterpret_cast<UINT>(s.replacement) - reinterpret_cast<UINT>(base + s.call + 5);
         std::memcpy(base + s.call + 1, &delta, sizeof(delta));
         if (s.resume) {
