@@ -4,6 +4,7 @@
 
 - **VR runtime.** Settings → Paths and runtime → VR runtime chooses OpenXR (system Default, this PC's 32-bit OpenXR runtime), VDXR or SteamVR for the headset check and the VR session, without changing the system default.
 - **Pause menu in Practice and Race.** Esc, or Start on a controller, opens the game's pause menu, with Restart and Quit; Quit now closes the VR session cleanly before the game exits.
+- **Skip intro / logos.** Settings → Paths and runtime → Skip intro / logos skips the two startup logo videos when the game starts in VR.
 
 ## 0.1.0
 

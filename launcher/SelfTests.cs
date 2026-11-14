@@ -58,8 +58,8 @@ internal static class SelfTests
         LauncherSettings.Save(new Choices(RecenterDevice: hat), file);
         Check(LauncherSettings.Load(file).RecenterDevice == hat);
         // VR runtime choice: saved, refused when unknown; Default writes no session file.
-        LauncherSettings.Save(new Choices(Runtime: OpenXrRuntimes.SteamVr), file);
-        Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr);
+        LauncherSettings.Save(new Choices(Runtime: OpenXrRuntimes.SteamVr, SkipIntro: true), file);
+        Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr && LauncherSettings.Load(file).SkipIntro);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
         Check(OpenXrRuntimes.Problem("Oculus") is not null && OpenXrRuntimes.Problem(OpenXrRuntimes.Default) is null && OpenXrRuntimes.Manifest(OpenXrRuntimes.Default) is null);
         var runtimeSession = Path.Combine(data, "runtime-session"); Directory.CreateDirectory(runtimeSession);
@@ -137,7 +137,7 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file) == hudChoices);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(HudDistance: 1.25m), file)));
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(ScreenDistance: 7m), file)));
-        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}", "{\"intro3d\": \"yes\"}" })
+        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}", "{\"intro3d\": \"yes\"}", "{\"skipIntro\": 1}" })
         {
             File.WriteAllText(file, bad);
             Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
@@ -223,6 +223,9 @@ internal static class SelfTests
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
         Check(!new Choices().Intro3D && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrintro3d=1"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(Intro3D: true), null).Contains("-gasvrintro3d=1"));
+        // Skip intro / logos: off by default, saved, and passed to the bridge only when on.
+        Check(!new Choices().SkipIntro && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrskipintro=1"));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(SkipIntro: true), null).Contains("-gasvrskipintro=1"));
         Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(VrCockpit: false), null).Contains("-gasvrcockpit=1"));
         var shortcut = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(RecenterKey: 120, RecenterModifiers: 5, KeepHorizonLevel: false), null);
         Check(shortcut.Contains("-gasvrrecenterkey=120") && shortcut.Contains("-gasvrrecentermods=5") && shortcut.Contains("-gasvrkeephorizon=0") && !shortcut.Any(a => a.StartsWith("-gasvreyesize")));

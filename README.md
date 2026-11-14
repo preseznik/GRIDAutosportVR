@@ -17,6 +17,7 @@ The portable ZIP works the same way: extract it into your GRID Autosport folder 
 ## While playing
 
 - **Settings → Paths and runtime → VR runtime** picks **OpenXR (system Default)** (your PC's 32-bit OpenXR runtime), **VDXR** (Virtual Desktop; keep SteamVR closed) or **SteamVR**, for the next VR launch only.
+- **Settings → Paths and runtime → Skip intro / logos** skips the two startup logo videos when the game starts in VR.
 - Press **F10** (or the key set under **Controls → VR**) to recenter. The game's own F11 also works. **Controls → VR → Controller / wheel recenter** adds a button on an Xbox controller or a wheel.
 - **Graphics → VR rendering** sets the VR render scale; 100% is the headset's recommended resolution.
 - **Graphics → VR HUD** turns the race HUD and its parts (dial, minimap, counters, position info) on or off for VR, whatever the game's own HUD options say, sets how far ahead of your seat it appears (1–20 m) and whether it follows your view. **Graphics → VR screen → Distance** moves the screen for videos, loading and menus further away (1.5–6 m, default 3 m); **Intro shots** shows the pre-race intro in 3D instead.

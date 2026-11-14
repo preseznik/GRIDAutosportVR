@@ -50,6 +50,8 @@ internal sealed class MainForm : LauncherForm
     private bool applyingSeat;
     // Settings → Paths and runtime → VR runtime (OpenXrRuntimes).
     private readonly ComboBox runtime = Choice("VrRuntime");
+    // Settings → Paths and runtime → Skip intro / logos (GRID2VR's option; the bridge's -gasvrskipintro).
+    private readonly CheckBox skipIntro = new() { Name = "SkipIntro", AccessibleName = "Skip intro / logos", Text = "On", AutoSize = true };
     private readonly Label runtimeStatus = TextLabel("");
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
@@ -213,6 +215,8 @@ internal sealed class MainForm : LauncherForm
         Field(settings, "VR runtime", runtime);
         runtimeStatus.Name = "VrRuntimeStatus"; runtimeStatus.Tag = "hint"; settings.Controls.Add(runtimeStatus);
         settings.Controls.Add(TextLabel("OpenXR (system Default) uses this PC's 32-bit OpenXR runtime. VDXR connects through Virtual Desktop (keep SteamVR closed); SteamVR connects through SteamVR. The choice applies to the headset check and the next VR launch only; the system default is unchanged."));
+        Field(settings, "Skip intro / logos", skipIntro);
+        settings.Controls.Add(TextLabel("Skips the two startup logo videos when the game starts in VR. Practice and Race have none; the career's discipline videos and the pre-race intro shots still play. Applies to the next VR launch."));
         Section(settings, "Headset check");
         settings.Controls.Add(TextLabel("Check the 32-bit OpenXR runtime, or show a marker in each eye for up to 20 seconds. Connect your headset first."));
         var probeActions = new FlowLayoutPanel { Name = "HeadsetCheckActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
@@ -253,6 +257,7 @@ internal sealed class MainForm : LauncherForm
         hudDistance.ValueChanged += (_, _) => ChoiceEdited();
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
+        skipIntro.CheckedChanged += (_, _) => ChoiceEdited();
         runtime.SelectedIndexChanged += (_, _) => { UpdateRuntimeStatus(); ChoiceEdited(); };
         seatCar.SelectedIndexChanged += (_, _) => ShowSeat();
         for (var i = 0; i < seatKeyButtons.Length; ++i)
@@ -337,7 +342,7 @@ internal sealed class MainForm : LauncherForm
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
-        newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default);
+        newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -409,7 +414,7 @@ internal sealed class MainForm : LauncherForm
         hudFollow.Checked = choices.HudFollowView;
         hudShow.Checked = choices.HudShow; hudDial.Checked = choices.HudDial; hudMinimap.Checked = choices.HudMinimap;
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
-        screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D;
+        screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D; skipIntro.Checked = choices.SkipIntro;
         newCockpitTextures.Checked = choices.NewCockpitTextures;
         runtime.SelectedItem = OpenXrRuntimes.Valid(choices.Runtime) ? choices.Runtime : OpenXrRuntimes.Default; UpdateRuntimeStatus();
         seatKeys = SeatKeys.TryParse(choices.SeatKeys, out var keys) ? keys : SeatKeys.Parse(SeatKeys.Default); UpdateSeatKeys();
@@ -889,6 +894,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(hudMinimap, "The track map.");
         tips.SetToolTip(hudCounters, "The lap and time counters.");
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
+        tips.SetToolTip(skipIntro, "On: the game's two startup logo videos are skipped when it starts in VR. Applies to the next VR launch.");
         tips.SetToolTip(intro3d, "On: the camera shots before a race starts are shown in 3D around you, without the game's 2D info panel and wipes. Off: they play on the screen ahead of you. Finish cameras and results always use the screen. Applies to the next VR launch.");
         tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 3 m. Applies to the next VR launch.");
         tips.SetToolTip(hudDistance, "How far ahead of your seat the HUD appears, 1–20 m in 0.5 m steps. Its apparent size stays the same. Default: 1 m. Applies to the next VR launch.");

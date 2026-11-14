@@ -35,6 +35,7 @@ bool introShot;
 // until the player's car camera is first live in a race scene, stay in stereo without the game's
 // 2D broadcast layer. Later shots (finish cameras, results) still use the seated screen.
 bool intro3d;
+bool skipIntro; // -gasvrskipintro=1: the startup movies end at once (skippingBinkWait).
 bool carCameraSeen;
 // The game object whose byte +0x1301 is set while the in-race pause menu is open (recorded at
 // pause entry, forgotten on every loading state), and whether this native frame shows it.
@@ -91,6 +92,7 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     testPad = wcsstr(cmd, L" -gasvrtestpad=1") != nullptr;
     startInCockpit = wcsstr(cmd, L" -gasvrcockpit=1") != nullptr;
     intro3d = wcsstr(cmd, L" -gasvrintro3d=1") != nullptr;
+    skipIntro = wcsstr(cmd, L" -gasvrskipintro=1") != nullptr;
     constexpr wchar_t playArg[] = L" -gasvrplay=";
     if (const wchar_t* flag = wcsstr(cmd, playArg)) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
@@ -203,19 +205,84 @@ void copyVideoName(const char* name, unsigned flags, char (&out)[160]) {
     __try { strncpy_s(out, name, _TRUNCATE); }
     __except (EXCEPTION_EXECUTE_HANDLER) { strcpy_s(out, "(unreadable)"); }
 }
+void trackStartupVideo(const char* name, unsigned flags, void* video);
 void* __stdcall loggedBinkOpen(const char* name, unsigned flags) {
     char label[160];
     copyVideoName(name, flags, label);
     void* video = stockBinkOpen(name, flags);
     AutosportLog("Native video open name=%s flags=%08x handle=%p", label, flags, video);
+    trackStartupVideo(name, flags, video);
     if (video && regularPlay && headset && phase.load() == Phase::Scene) {
         sceneVideo.store(video);
         AutosportLog("Video over the race scene: seated screen until it closes");
     }
     return video;
 }
+// Skip intro videos (-gasvrskipintro=1, the launcher's Settings option, GRID2VR's skip): the two
+// startup movies a Normal launch plays, video\intel_sting.bk2 and video\sting.bk2 in the game
+// folder, are moved to their last frame at their first BinkWait, so each ends at once and the
+// game goes on as after a played movie. Same bink2w32.dll as GRID 2 (SHA-256 03f9c695...): pending
+// async decodes are completed first (BinkGoto refuses them; their slots are +0x110 / +0x114).
+using BinkWaitFn = int (__stdcall*)(void*);
+using BinkGotoFn = void (__stdcall*)(void*, unsigned, int);
+using BinkAsyncWaitFn = int (__stdcall*)(void*, int);
+BinkWaitFn stockBinkWait;
+BinkGotoFn binkGoto;
+BinkAsyncWaitFn binkAsyncWait;
+std::atomic<void*> startupVideos[2]{};
+bool startupVideoName(const char* name) {
+    char folder[MAX_PATH]{}, expected[MAX_PATH + 32]{};
+    const DWORD length = GetModuleFileNameA(nullptr, folder, MAX_PATH);
+    char* slash = length && length < MAX_PATH ? strrchr(folder, '\\') : nullptr;
+    if (!slash) return false;
+    *slash = 0;
+    static const char* const files[] = {"intel_sting.bk2", "sting.bk2"};
+    for (const char* file : files) {
+        sprintf_s(expected, "%s\\video\\%s", folder, file);
+        if (!_stricmp(name, expected)) return true;
+    }
+    return false;
+}
+bool seekToLastFrame(void* video) {
+    struct Header { unsigned width, height, frames, frame; } header{};
+    __try {
+        header = *static_cast<const Header*>(video);
+        if (!header.width || !header.height || header.width > 8192 || header.height > 8192 ||
+            !header.frames || header.frames > 108000 || !header.frame || header.frame > header.frames) return false;
+        binkAsyncWait(video, -1);
+        const unsigned* jobs = reinterpret_cast<const unsigned*>(static_cast<const BYTE*>(video) + 0x110);
+        if (jobs[0] || jobs[1]) return false;
+        binkGoto(video, header.frames, 0);
+        const Header after = *static_cast<const Header*>(video);
+        return after.frames == header.frames && after.frame == header.frames;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+int __stdcall skippingBinkWait(void* video) {
+    for (auto& slot : startupVideos) {
+        void* expected = video;
+        if (video && slot.compare_exchange_strong(expected, nullptr)) {
+            const bool skipped = seekToLastFrame(video);
+            AutosportLog("Skip intro videos: handle=%p moved to its last frame=%d", video, skipped);
+        }
+    }
+    return stockBinkWait(video);
+}
+void trackStartupVideo(const char* name, unsigned flags, void* video) {
+    if (!skipIntro || !video || !stockBinkWait || !name || (flags & binkFileHandle)) return;
+    bool startup = false;
+    __try { startup = startupVideoName(name); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { startup = false; }
+    if (!startup) return;
+    for (auto& slot : startupVideos) {
+        void* empty = nullptr;
+        if (slot.compare_exchange_strong(empty, video)) return;
+    }
+}
+
 void __stdcall loggedBinkClose(void* video) {
     AutosportLog("Native video close handle=%p", video);
+    for (auto& slot : startupVideos) { void* expected = video; slot.compare_exchange_strong(expected, nullptr); }
     void* expected = video;
     if (video && sceneVideo.compare_exchange_strong(expected, nullptr)) AutosportLog("Video over the race scene closed");
     stockBinkClose(video);
@@ -260,6 +327,15 @@ void hookVideoLogging() {
     const bool close = hookImport("bink2w32.dll", "_BinkClose@4", reinterpret_cast<void*>(&loggedBinkClose),
                                   reinterpret_cast<void**>(&stockBinkClose));
     AutosportLog("Native video logging open=%d close=%d", open, close);
+    if (skipIntro) {
+        if (HMODULE bink = GetModuleHandleW(L"bink2w32.dll")) {
+            binkGoto = reinterpret_cast<BinkGotoFn>(GetProcAddress(bink, "_BinkGoto@12"));
+            binkAsyncWait = reinterpret_cast<BinkAsyncWaitFn>(GetProcAddress(bink, "_BinkDoFrameAsyncWait@8"));
+        }
+        const bool wait = binkGoto && binkAsyncWait &&
+            hookImport("bink2w32.dll", "_BinkWait@4", reinterpret_cast<void*>(&skippingBinkWait), reinterpret_cast<void**>(&stockBinkWait));
+        AutosportLog("Skip intro videos armed=%d", wait);
+    }
 }
 
 // The career's discipline intro video (StateDisciplineIntroVideo, after a career or a new
