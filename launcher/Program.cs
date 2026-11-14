@@ -133,11 +133,11 @@ internal static class Program
     {
         if (!Installation.GameExists(folder)) throw new IOException("Select the Steam installation of GRID Autosport.");
         VrPlaySession.Recover(folder);
-        var problem = Installation.VrLaunchProblem(folder, probe, renderer);
+        var problem = Installation.VrLaunchProblem(folder, probe, renderer) ?? OpenXrRuntimes.Problem(LauncherSettings.Load().Runtime);
         if (problem is not null) throw new IOException(problem);
         Directory.CreateDirectory(Installation.LogDirectory);
         var logFile = Path.Combine(Installation.LogDirectory, $"launch-openxr-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
-        using (var check = Process.Start(Installation.ProbeStartInfo(probe, false, logFile)) ?? throw new IOException("The OpenXR probe did not start."))
+        using (var check = Process.Start(Installation.ProbeStartInfo(probe, false, logFile, LauncherSettings.Load().Runtime)) ?? throw new IOException("The OpenXR probe did not start."))
         {
             check.WaitForExit();
             var failure = Installation.ProbeError(check.ExitCode);

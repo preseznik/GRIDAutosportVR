@@ -217,6 +217,8 @@ internal static partial class VrPlaySession
             try
             {
                 Stage(folder, bridgePath, id, session, inputs);
+                OpenXrRuntimes.WriteSessionChoice(SessionFolder(id), choices.Runtime);
+                Record(id, "VR runtime: " + (choices.Runtime == OpenXrRuntimes.Default ? "this PC's default 32-bit OpenXR runtime." : choices.Runtime + " (" + OpenXrRuntimes.Manifest(choices.Runtime) + ")."));
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
                 foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack)) start.ArgumentList.Add(arg);
                 if (cockpitNote is not null) Record(id, cockpitNote);

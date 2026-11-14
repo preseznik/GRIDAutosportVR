@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- **VR runtime.** Settings → Paths and runtime → VR runtime chooses Default (this PC's 32-bit OpenXR runtime), VDXR or SteamVR for the headset check and the VR session, without changing the system default.
+
 ## 0.1.0
 
 First release of GRID Autosport VR.

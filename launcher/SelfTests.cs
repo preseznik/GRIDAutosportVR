@@ -57,6 +57,25 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file).RecenterDevice == padButton);
         LauncherSettings.Save(new Choices(RecenterDevice: hat), file);
         Check(LauncherSettings.Load(file).RecenterDevice == hat);
+        // VR runtime choice: saved, refused when unknown; Default writes no session file.
+        LauncherSettings.Save(new Choices(Runtime: OpenXrRuntimes.SteamVr), file);
+        Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr);
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
+        Check(OpenXrRuntimes.Problem("Oculus") is not null && OpenXrRuntimes.Problem(OpenXrRuntimes.Default) is null && OpenXrRuntimes.Manifest(OpenXrRuntimes.Default) is null);
+        var runtimeSession = Path.Combine(data, "runtime-session"); Directory.CreateDirectory(runtimeSession);
+        OpenXrRuntimes.WriteSessionChoice(runtimeSession, OpenXrRuntimes.Default);
+        Check(!File.Exists(Path.Combine(runtimeSession, OpenXrRuntimes.SessionFile)));
+        foreach (var choice in new[] { OpenXrRuntimes.Vdxr, OpenXrRuntimes.SteamVr })
+        {
+            if (OpenXrRuntimes.Problem(choice) is not null) continue; // Not installed on this PC.
+            OpenXrRuntimes.WriteSessionChoice(runtimeSession, choice);
+            var lines = File.ReadAllLines(Path.Combine(runtimeSession, OpenXrRuntimes.SessionFile));
+            Check(lines.Length == 2 && lines[0] == choice && lines[1] == OpenXrRuntimes.Manifest(choice), choice);
+            var probeExe = Path.Combine(runtimeSession, "probe.exe"); File.WriteAllText(probeExe, "");
+            Check(Installation.ProbeStartInfo(probeExe, false, "x.log", choice).Environment["XR_RUNTIME_JSON"] == OpenXrRuntimes.Manifest(choice), choice + " probe");
+        }
+        OpenXrRuntimes.WriteSessionChoice(runtimeSession, OpenXrRuntimes.Default);
+        Check(!File.Exists(Path.Combine(runtimeSession, OpenXrRuntimes.SessionFile)), "Default removes an earlier choice");
         LauncherSettings.Save(new Choices(), file);
         Check(LauncherSettings.Load(file).RecenterDevice is null && !File.ReadAllText(file).Contains("recenterDevice"));
         Check(!LauncherSettings.Load(file).NewCockpitTextures);

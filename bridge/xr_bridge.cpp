@@ -268,7 +268,48 @@ void Bridge::initXR() {
     info.applicationInfo.apiVersion = XR_MAKE_VERSION(1,0,0);
     info.enabledExtensionCount = 1;
     info.enabledExtensionNames = &enabled;
-    checked(xrCreateInstance(&info, &instance), "xrCreateInstance");
+    // Runtime choice (launcher Settings → VR runtime, as GRID2VR): openxr-runtime.txt in the session
+    // folder holds "VDXR" or "SteamVR" and the runtime's manifest path on the next line; without it
+    // the system's 32-bit runtime is used. Steam does not pass the launcher's environment to the
+    // game, so XR_RUNTIME_JSON is set in this process only around instance creation, then restored.
+    wchar_t manifest[MAX_PATH]{};
+    char kind[16]{};
+    if (const wchar_t* folder = AutosportRunDirectory(); folder && *folder) {
+        wchar_t path[MAX_PATH];
+        swprintf_s(path, L"%s\\openxr-runtime.txt", folder);
+        if (FILE* file = _wfsopen(path, L"rb", _SH_DENYWR)) {
+            char line[16]{}, target[MAX_PATH * 3]{};
+            if (fgets(line, sizeof(line), file) && fgets(target, sizeof(target), file)) {
+                line[strcspn(line, "\r\n")] = 0; target[strcspn(target, "\r\n")] = 0;
+                const bool vdxr = !strcmp(line, "VDXR"), steamVr = !strcmp(line, "SteamVR");
+                if ((vdxr || steamVr) && MultiByteToWideChar(CP_UTF8, 0, target, -1, manifest, MAX_PATH) > 0) {
+                    const wchar_t* name = wcsrchr(manifest, L'\\');
+                    name = name ? name + 1 : manifest;
+                    const DWORD attributes = GetFileAttributesW(manifest);
+                    if (_wcsicmp(name, vdxr ? L"virtualdesktop-openxr-32.json" : L"steamxr_win32.json") ||
+                        attributes == INVALID_FILE_ATTRIBUTES || (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+                        manifest[0] = 0;
+                    else strcpy_s(kind, line);
+                }
+            }
+            fclose(file);
+            require(kind[0] != 0, "runtime_choice_unusable");
+        }
+    }
+    wchar_t previous[MAX_PATH * 2]{};
+    const DWORD previousLength = GetEnvironmentVariableW(L"XR_RUNTIME_JSON", previous, DWORD(std::size(previous)));
+    if (kind[0]) {
+        SetEnvironmentVariableW(L"XR_RUNTIME_JSON", manifest);
+        AutosportLog("OpenXR runtime choice %s: %ls", kind, manifest);
+    }
+    const XrResult created = xrCreateInstance(&info, &instance);
+    if (kind[0]) SetEnvironmentVariableW(L"XR_RUNTIME_JSON", previousLength && previousLength < std::size(previous) ? previous : nullptr);
+    checked(created, "xrCreateInstance");
+    XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
+    checked(xrGetInstanceProperties(instance, &properties), "xrGetInstanceProperties");
+    AutosportLog("OpenXR runtime %s version %llu", properties.runtimeName, static_cast<unsigned long long>(properties.runtimeVersion));
+    require(!kind[0] || (!strcmp(kind, "VDXR") ? !strcmp(properties.runtimeName, "VirtualDesktopXR")
+                                               : !strncmp(properties.runtimeName, "SteamVR/", 8)), "runtime_identity_mismatch");
     XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
     systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     XrSystemId system{};

@@ -123,10 +123,11 @@ internal static class Installation
         _ => "The 32-bit OpenXR probe failed with exit code " + exitCode + "."
     };
 
-    public static ProcessStartInfo ProbeStartInfo(string? probe, bool stereo, string logFile)
+    public static ProcessStartInfo ProbeStartInfo(string? probe, bool stereo, string logFile, string runtime = OpenXrRuntimes.Default)
     {
         if (string.IsNullOrEmpty(probe) || !File.Exists(probe)) throw new FileNotFoundException("The Win32 OpenXR probe is missing.");
         var start = new ProcessStartInfo(probe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(probe) };
+        OpenXrRuntimes.Apply(start, runtime);
         if (stereo) { start.ArgumentList.Add("--session"); start.ArgumentList.Add("--seconds"); start.ArgumentList.Add("20"); }
         else start.ArgumentList.Add("--query");
         start.ArgumentList.Add("--log");

@@ -48,6 +48,9 @@ internal sealed class MainForm : LauncherForm
     private int[] seatKeys = SeatKeys.Parse(SeatKeys.Default);
     private int capturingSeatKey = -1;
     private bool applyingSeat;
+    // Settings → Paths and runtime → VR runtime (OpenXrRuntimes).
+    private readonly ComboBox runtime = Choice("VrRuntime");
+    private readonly Label runtimeStatus = TextLabel("");
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
     // GRID2VR's controller / wheel recenter button (DeviceRecenter).
@@ -203,6 +206,11 @@ internal sealed class MainForm : LauncherForm
         Field(settings, "Game folder", gamePath);
         settings.Controls.Add(browse);
         settings.Controls.Add(TextLabel("Uses your Steam installation of GRID Autosport (build with GRIDAutosport_avx.exe). The VR files are added only for a VR session and removed when it ends."));
+        runtime.Items.AddRange(OpenXrRuntimes.Choices.Cast<object>().ToArray());
+        runtime.SelectedItem = OpenXrRuntimes.Default;
+        Field(settings, "VR runtime", runtime);
+        runtimeStatus.Name = "VrRuntimeStatus"; runtimeStatus.Tag = "hint"; settings.Controls.Add(runtimeStatus);
+        settings.Controls.Add(TextLabel("Default uses this PC's 32-bit OpenXR runtime. VDXR connects through Virtual Desktop (keep SteamVR closed); SteamVR connects through SteamVR. The choice applies to the headset check and the next VR launch only; the system default is unchanged."));
         Section(settings, "Headset check");
         settings.Controls.Add(TextLabel("Check the 32-bit OpenXR runtime, or show a marker in each eye for up to 20 seconds. Connect your headset first."));
         var probeActions = new FlowLayoutPanel { Name = "HeadsetCheckActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
@@ -243,6 +251,7 @@ internal sealed class MainForm : LauncherForm
         hudDistance.ValueChanged += (_, _) => ChoiceEdited();
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
+        runtime.SelectedIndexChanged += (_, _) => { UpdateRuntimeStatus(); ChoiceEdited(); };
         seatCar.SelectedIndexChanged += (_, _) => ShowSeat();
         for (var i = 0; i < seatKeyButtons.Length; ++i)
         {
@@ -326,7 +335,7 @@ internal sealed class MainForm : LauncherForm
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
-        newCockpitTextures.Checked, SeatKeys.Format(seatKeys));
+        newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default);
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -400,6 +409,7 @@ internal sealed class MainForm : LauncherForm
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D;
         newCockpitTextures.Checked = choices.NewCockpitTextures;
+        runtime.SelectedItem = OpenXrRuntimes.Valid(choices.Runtime) ? choices.Runtime : OpenXrRuntimes.Default; UpdateRuntimeStatus();
         seatKeys = SeatKeys.TryParse(choices.SeatKeys, out var keys) ? keys : SeatKeys.Parse(SeatKeys.Default); UpdateSeatKeys();
         modernInterface.Checked = choices.ModernInterface;
         renderScale.Value = choices.VrRenderScale;
@@ -519,6 +529,7 @@ internal sealed class MainForm : LauncherForm
         recenter.Enabled = !testing && !supervising && !recovering;
         bindRecenterDevice.Enabled = !testing && !supervising && !recovering && !capturingRecenter;
         clearRecenterDevice.Enabled = bindRecenterDevice.Enabled && recenterDevice is not null;
+        runtime.Enabled = !testing && !supervising && !recovering;
         foreach (var button in seatKeyButtons) button.Enabled = !testing && !supervising && !recovering;
         defaultSeatKeys.Enabled = !testing && !supervising && !recovering;
         seatCar.Enabled = seatRight.Enabled = seatForward.Enabled = seatUp.Enabled = resetSeat.Enabled = resetAllSeats.Enabled =
@@ -727,7 +738,7 @@ internal sealed class MainForm : LauncherForm
             Directory.CreateDirectory(Installation.LogDirectory);
             var logFile = Path.Combine(Installation.LogDirectory, (stereo ? "eye-test-" : "openxr-") + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".log");
             notice.Text = stereo ? "Running the headset eye test…" : "Checking the 32-bit OpenXR runtime…";
-            using var worker = Process.Start(Installation.ProbeStartInfo(probePath, stereo, logFile)) ?? throw new IOException("The OpenXR probe did not start.");
+            using var worker = Process.Start(Installation.ProbeStartInfo(probePath, stereo, logFile, Current.Runtime)) ?? throw new IOException("The OpenXR probe did not start.");
             await worker.WaitForExitAsync();
             var failure = Installation.ProbeError(worker.ExitCode);
             if (failure is null && File.Exists(logFile) && HeadsetResolution.FromProbeLog(File.ReadLines(logFile)) is { } headset)
@@ -745,6 +756,12 @@ internal sealed class MainForm : LauncherForm
             testing = false;
             EnableActions();
         }
+    }
+
+    private void UpdateRuntimeStatus()
+    {
+        var choice = runtime.SelectedItem as string ?? OpenXrRuntimes.Default;
+        runtimeStatus.Text = OpenXrRuntimes.Describe(choice);
     }
 
     private void UpdateDeviceRecenter()
