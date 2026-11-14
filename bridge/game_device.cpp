@@ -159,6 +159,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID) {
         }
         adapterReady = AutosportInstallNativeOvr();
         if (!adapterReady) return FALSE;
+        AutosportConfigureForceFeedback(image, GetCommandLineW());
     }
     return TRUE;
 }

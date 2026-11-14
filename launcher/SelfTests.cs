@@ -61,6 +61,12 @@ internal static class SelfTests
         LauncherSettings.Save(new Choices(Runtime: OpenXrRuntimes.SteamVr, SkipIntro: true), file);
         Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr && LauncherSettings.Load(file).SkipIntro);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
+        // Launcher force feedback: saved, and refused outside strength 0-100, weight 1-100, vibration 0-100.
+        var ffb = new Choices(ForceFeedbackOverride: true, ForceFeedbackStrength: 80, ForceFeedbackWeight: 40, ForceFeedbackVibration: 0);
+        LauncherSettings.Save(ffb, file);
+        Check(LauncherSettings.Load(file) == ffb);
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(ForceFeedbackWeight: 0), file)));
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(ForceFeedbackStrength: 101), file)));
         Check(OpenXrRuntimes.Problem("Oculus") is not null && OpenXrRuntimes.Problem(OpenXrRuntimes.Default) is null && OpenXrRuntimes.Manifest(OpenXrRuntimes.Default) is null);
         var runtimeSession = Path.Combine(data, "runtime-session"); Directory.CreateDirectory(runtimeSession);
         OpenXrRuntimes.WriteSessionChoice(runtimeSession, OpenXrRuntimes.Default);
@@ -137,7 +143,7 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file) == hudChoices);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(HudDistance: 1.25m), file)));
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(ScreenDistance: 7m), file)));
-        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}", "{\"intro3d\": \"yes\"}", "{\"skipIntro\": 1}" })
+        foreach (var bad in new[] { "{\"hudDistance\": 0.5}", "{\"hudDistance\": 20.5}", "{\"hudDistance\": 2.25}", "{\"hudDistance\": \"2\"}", "{\"hudShow\": 1}", "{\"screenDistance\": 1}", "{\"screenDistance\": 6.5}", "{\"screenDistance\": 2.2}", "{\"intro3d\": \"yes\"}", "{\"skipIntro\": 1}", "{\"forceFeedbackOverride\": 1}", "{\"forceFeedbackWeight\": 0}", "{\"forceFeedbackStrength\": -1}", "{\"forceFeedbackVibration\": 101}", "{\"forceFeedbackStrength\": 50.5}" })
         {
             File.WriteAllText(file, bad);
             Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
@@ -226,6 +232,10 @@ internal static class SelfTests
         // Skip intro / logos: off by default, saved, and passed to the bridge only when on.
         Check(!new Choices().SkipIntro && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrskipintro=1"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(SkipIntro: true), null).Contains("-gasvrskipintro=1"));
+        // Force feedback: no argument when off or at 100/100/100 (the game's own force); otherwise S,W,V.
+        Check(!new Choices().ForceFeedbackOverride && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ForceFeedbackStrength: 50), null).Any(a => a.StartsWith("-gasvrffb")));
+        Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ForceFeedbackOverride: true), null).Any(a => a.StartsWith("-gasvrffb")));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ForceFeedbackOverride: true, ForceFeedbackStrength: 80, ForceFeedbackWeight: 40, ForceFeedbackVibration: 0), null).Contains("-gasvrffb=80,40,0"));
         Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(VrCockpit: false), null).Contains("-gasvrcockpit=1"));
         var shortcut = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(RecenterKey: 120, RecenterModifiers: 5, KeepHorizonLevel: false), null);
         Check(shortcut.Contains("-gasvrrecenterkey=120") && shortcut.Contains("-gasvrrecentermods=5") && shortcut.Contains("-gasvrkeephorizon=0") && !shortcut.Any(a => a.StartsWith("-gasvreyesize")));
@@ -370,7 +380,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }
@@ -379,6 +389,11 @@ internal static class SelfTests
         // Session: Normal by default; Practice enables car, track and laps; Race also the opponents.
         Check(Find<ComboBox>(form, "LaunchMode").Text == "Normal" && !Find<ComboBox>(form, "SessionCar").Enabled && !Find<NumericUpDown>(form, "Opponents").Enabled);
         Check(!Find<CheckBox>(form, "VrCockpit").Enabled); // Practice / Race only.
+        // Force feedback sliders follow "Use launcher force feedback".
+        Check(!Find<CheckBox>(form, "ForceFeedbackOverride").Checked && !Find<ValueSlider>(form, "ForceFeedbackWeight").Enabled);
+        Find<CheckBox>(form, "ForceFeedbackOverride").Checked = true;
+        Check(Find<ValueSlider>(form, "ForceFeedbackWeight").Enabled && Find<ValueSlider>(form, "ForceFeedbackVibration").Enabled);
+        Find<CheckBox>(form, "ForceFeedbackOverride").Checked = false;
         form.UseCatalog(new([new("sls", "Mercedes-Benz SLS AMG GT3", "Endurance", ["user", "03"]), new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])],
             [new("cities/san_francisco/route_0", "cities", "san_francisco", "route_0", "San Francisco — route 0 (street)"), new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
         Check(Find<ComboBox>(form, "SessionCar").Text.StartsWith("Mercedes") && Find<ComboBox>(form, "SessionTrack").Text.StartsWith("San Francisco"));

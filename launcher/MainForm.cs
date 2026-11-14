@@ -52,6 +52,15 @@ internal sealed class MainForm : LauncherForm
     private readonly ComboBox runtime = Choice("VrRuntime");
     // Settings → Paths and runtime → Skip intro / logos (GRID2VR's option; the bridge's -gasvrskipintro).
     private readonly CheckBox skipIntro = new() { Name = "SkipIntro", AccessibleName = "Skip intro / logos", Text = "On", AutoSize = true };
+    // GRID2VR's Controls -> Driving -> Force feedback (bridge/force_feedback.cpp).
+    private readonly CheckBox ffbOverride = new() { Name = "ForceFeedbackOverride", AccessibleName = "Use launcher force feedback", Text = "Use launcher force feedback", AutoSize = true };
+    private readonly ValueSlider ffbWeight = new("ForceFeedbackWeight", Choices.FfbMinimumWeight, 100, 100, suffix: "%");
+    private readonly ValueSlider ffbStrength = new("ForceFeedbackStrength", 0, 100, 100, suffix: "%");
+    private readonly ValueSlider ffbVibration = new("ForceFeedbackVibration", 0, 100, 100, suffix: "%");
+    internal const string ForceFeedbackHelp = "When on, the VR renderer adjusts the force GRID Autosport sends to your wheel. " +
+        "Wheel weight scales the steady steering force, Vibration the kerbs, road surface and impacts, and Strength both. " +
+        "100% is the game's force unchanged. The game's own force feedback settings still apply and are not changed. " +
+        "Applies to the next Launch VR; the desktop Launch is the unmodified game.";
     private readonly Label runtimeStatus = TextLabel("");
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
@@ -186,6 +195,12 @@ internal sealed class MainForm : LauncherForm
         driving.Controls.Add(drivingActions);
         driving.Controls.Add(TextLabel(DrivingControls.RuntimeNotice));
         driving.Controls.Add(TextLabel("Driving controls… opens the bindings: the binding wizard, one action at a time with Key… or Device…, calibration (deadzone, saturation, direction), the Xbox preset and saved profiles. Live input… shows every connected controller, wheel and pedal set as you move it, with a rumble / force feedback test."));
+        Section(driving, "Force feedback");
+        Field(driving, "Launcher settings", ffbOverride);
+        Field(driving, "Wheel weight", ffbWeight);
+        Field(driving, "Strength", ffbStrength);
+        Field(driving, "Vibration", ffbVibration);
+        driving.Controls.Add(TextLabel(ForceFeedbackHelp));
 
         var seat = Page(controlTabs, "Seat");
         Section(seat, "Seat position");
@@ -258,6 +273,9 @@ internal sealed class MainForm : LauncherForm
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
         skipIntro.CheckedChanged += (_, _) => ChoiceEdited();
+        ffbOverride.CheckedChanged += (_, _) => { RefreshForceFeedback(); ChoiceEdited(); };
+        foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.ValueChanged += (_, _) => ChoiceEdited();
+        RefreshForceFeedback();
         runtime.SelectedIndexChanged += (_, _) => { UpdateRuntimeStatus(); ChoiceEdited(); };
         seatCar.SelectedIndexChanged += (_, _) => ShowSeat();
         for (var i = 0; i < seatKeyButtons.Length; ++i)
@@ -342,7 +360,13 @@ internal sealed class MainForm : LauncherForm
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
-        newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked);
+        newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
+        ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value);
+
+    private void RefreshForceFeedback()
+    {
+        foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.Enabled = ffbOverride.Checked;
+    }
 
     // A car or track that is not installed (or before the catalog loads) stays chosen until replaced.
     private void SessionEdited()
@@ -415,6 +439,11 @@ internal sealed class MainForm : LauncherForm
         hudShow.Checked = choices.HudShow; hudDial.Checked = choices.HudDial; hudMinimap.Checked = choices.HudMinimap;
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D; skipIntro.Checked = choices.SkipIntro;
+        if (choices.ValidForceFeedback)
+        {
+            ffbStrength.Value = choices.ForceFeedbackStrength; ffbWeight.Value = choices.ForceFeedbackWeight; ffbVibration.Value = choices.ForceFeedbackVibration;
+        }
+        ffbOverride.Checked = choices.ForceFeedbackOverride; RefreshForceFeedback();
         newCockpitTextures.Checked = choices.NewCockpitTextures;
         runtime.SelectedItem = OpenXrRuntimes.Valid(choices.Runtime) ? choices.Runtime : OpenXrRuntimes.Default; UpdateRuntimeStatus();
         seatKeys = SeatKeys.TryParse(choices.SeatKeys, out var keys) ? keys : SeatKeys.Parse(SeatKeys.Default); UpdateSeatKeys();
@@ -894,6 +923,7 @@ internal sealed class MainForm : LauncherForm
         tips.SetToolTip(hudMinimap, "The track map.");
         tips.SetToolTip(hudCounters, "The lap and time counters.");
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
+        tips.SetToolTip(ffbOverride, ForceFeedbackHelp);
         tips.SetToolTip(skipIntro, "On: the game's two startup logo videos are skipped when it starts in VR. Applies to the next VR launch.");
         tips.SetToolTip(intro3d, "On: the camera shots before a race starts are shown in 3D around you, without the game's 2D info panel and wipes. Off: they play on the screen ahead of you. Finish cameras and results always use the screen. Applies to the next VR launch.");
         tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 3 m. Applies to the next VR launch.");

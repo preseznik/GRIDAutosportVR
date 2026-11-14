@@ -55,6 +55,8 @@ bool AutosportTakeDeviceRecenter();
 // Cockpit texture observe / replace (cockpit_textures.cpp): -gasvrcockpittextures=observe|replace.
 struct ID3D11Device;
 void AutosportConfigureCockpitTextures(ID3D11Device* device, const wchar_t* sessionFolder, const wchar_t* gameFolder);
+// Launcher force feedback (force_feedback.cpp): -gasvrffb=STRENGTH,WEIGHT,VIBRATION, from DllMain.
+void AutosportConfigureForceFeedback(const BYTE* image, const wchar_t* commandLine);
 void AutosportConfigureDeviceClaim(const BYTE* image, const wchar_t* commandLine, bool practice);
 extern "C" void AutosportLoadingExitedThunk();
 bool AutosportCaptureRequested();

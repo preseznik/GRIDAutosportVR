@@ -147,6 +147,7 @@ internal static partial class VrPlaySession
          "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
          .. choices.Intro3D ? new[] { "-gasvrintro3d=1" } : [],
          .. choices.SkipIntro ? new[] { "-gasvrskipintro=1" } : [],
+         .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          "-gasvrseatkeys=" + choices.SeatKeys,
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],

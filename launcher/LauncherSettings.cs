@@ -14,8 +14,18 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool HudShow = true, bool HudDial = true, bool HudMinimap = true, bool HudCounters = true, bool HudPositions = true,
     decimal HudDistance = 1m, decimal ScreenDistance = 3m, bool Intro3D = false, DrivingBinding? RecenterDevice = null,
     bool NewCockpitTextures = false, string SeatKeys = GRIDAutosportVR.SeatKeys.Default, string Runtime = OpenXrRuntimes.Default,
-    bool SkipIntro = false)
+    bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
+    int ForceFeedbackVibration = 100)
 {
+    // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
+    internal const int FfbMinimumWeight = 1;
+    internal bool ValidForceFeedback => ForceFeedbackStrength is >= 0 and <= 100 && ForceFeedbackWeight is >= FfbMinimumWeight and <= 100 &&
+        ForceFeedbackVibration is >= 0 and <= 100;
+    // The bridge's -gasvrffb argument, or null when the game's own force is used unchanged.
+    internal string? ForceFeedbackArgument => ForceFeedbackOverride && ValidForceFeedback &&
+        (ForceFeedbackStrength, ForceFeedbackWeight, ForceFeedbackVibration) != (100, 100, 100)
+        ? $"-gasvrffb={ForceFeedbackStrength},{ForceFeedbackWeight},{ForceFeedbackVibration}" : null;
+
     // The bridge's -gasvrhudparts mask: 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position info.
     internal int HudParts => (HudShow ? 1 : 0) | (HudDial ? 2 : 0) | (HudMinimap ? 4 : 0) | (HudCounters ? 8 : 0) | (HudPositions ? 16 : 0);
 }
@@ -94,6 +104,13 @@ internal static class LauncherSettings
         throw new JsonException($"{key} must be a whole number from 1 to {maximum} in {fileName}");
     }
 
+    private static int ReadPercent(JsonObject document, string key, int minimum, string fileName)
+    {
+        if (!document.TryGetPropertyValue(key, out var node)) return 100;
+        if (node is JsonValue value && value.TryGetValue(out int percent) && percent >= minimum && percent <= 100) return percent;
+        throw new JsonException($"{key} must be a whole number from {minimum} to 100 in {fileName}");
+    }
+
     private static decimal ReadDistance(JsonObject document, string key, decimal fallback, decimal minimum, decimal maximum, string fileName)
     {
         if (!document.TryGetPropertyValue(key, out var node)) return fallback;
@@ -138,7 +155,11 @@ internal static class LauncherSettings
             ReadFlag(document, "newCockpitTextures", false, fileName),
             ReadText(document, "seatKeys", SeatKeys.Default, value => SeatKeys.TryParse(value, out _), fileName),
             ReadText(document, "openXrRuntime", OpenXrRuntimes.Default, OpenXrRuntimes.Valid, fileName),
-            ReadFlag(document, "skipIntro", false, fileName));
+            ReadFlag(document, "skipIntro", false, fileName),
+            ReadFlag(document, "forceFeedbackOverride", false, fileName),
+            ReadPercent(document, "forceFeedbackStrength", 0, fileName),
+            ReadPercent(document, "forceFeedbackWeight", Choices.FfbMinimumWeight, fileName),
+            ReadPercent(document, "forceFeedbackVibration", 0, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -177,6 +198,11 @@ internal static class LauncherSettings
         if (!OpenXrRuntimes.Valid(choices.Runtime)) throw new ArgumentException("Unsupported VR runtime.");
         document["openXrRuntime"] = choices.Runtime;
         document["skipIntro"] = choices.SkipIntro;
+        if (!choices.ValidForceFeedback) throw new ArgumentException("Unsupported force feedback setting.");
+        document["forceFeedbackOverride"] = choices.ForceFeedbackOverride;
+        document["forceFeedbackStrength"] = choices.ForceFeedbackStrength;
+        document["forceFeedbackWeight"] = choices.ForceFeedbackWeight;
+        document["forceFeedbackVibration"] = choices.ForceFeedbackVibration;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
