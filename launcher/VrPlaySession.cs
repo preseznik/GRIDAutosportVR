@@ -196,7 +196,9 @@ internal static partial class VrPlaySession
     }
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
-    public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null)
+    // layers: OpenXR add-on layers the VR renderer disables for this session (VrApiLayers.cs).
+    public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null,
+        IReadOnlyList<VrLayerBypass>? layers = null)
     {
         var folder = CheckedFolder(gameFolder);
         var client = SteamLibrary.SteamClient() ?? throw new IOException("Steam.exe was not found. Start Steam, then try again.");
@@ -221,6 +223,9 @@ internal static partial class VrPlaySession
                 Stage(folder, bridgePath, id, session, inputs);
                 OpenXrRuntimes.WriteSessionChoice(SessionFolder(id), choices.Runtime);
                 Record(id, "VR runtime: " + (choices.Runtime == OpenXrRuntimes.Default ? "this PC's default 32-bit OpenXR runtime." : choices.Runtime + " (" + OpenXrRuntimes.Manifest(choices.Runtime) + ")."));
+                VrApiLayers.WriteSessionFile(SessionFolder(id), layers ?? []);
+                if (layers is { Count: > 0 })
+                    Record(id, "OpenXR layers disabled for this session: " + string.Join(", ", layers.Select(layer => layer.LayerName + " (" + layer.DisableVariable + ")")) + ".");
                 var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
                 foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack)) start.ArgumentList.Add(arg);
                 if (cockpitNote is not null) Record(id, cockpitNote);

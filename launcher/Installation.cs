@@ -103,7 +103,9 @@ internal static class Installation
 
     // The launcher re-runs itself as the session supervisor, so a closed launcher window
     // never strands staged game files.
-    public static ProcessStartInfo VrStartInfo(string folder)
+    // approved: OpenXR layers the player just chose to disable (VrApiLayers.cs); remember: those of
+    // them to remember once the headset check works. Remembered ones the supervisor reads itself.
+    public static ProcessStartInfo VrStartInfo(string folder, IReadOnlyList<VrLayerBypass>? approved = null, IReadOnlyList<VrLayerBypass>? remember = null)
     {
         var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, LauncherName))
         {
@@ -112,8 +114,12 @@ internal static class Installation
         start.ArgumentList.Add("--play-vr");
         start.ArgumentList.Add("--game-dir");
         start.ArgumentList.Add(folder);
+        if (approved is { Count: > 0 }) { start.ArgumentList.Add(XrLayerBypassArgument); start.ArgumentList.Add(VrApiLayers.Encode(approved)); }
+        if (remember is { Count: > 0 }) { start.ArgumentList.Add(RememberXrLayersArgument); start.ArgumentList.Add(VrApiLayers.Encode(remember)); }
         return start;
     }
+
+    public const string XrLayerBypassArgument = "--xr-layer-bypass", RememberXrLayersArgument = "--remember-xr-layers";
 
     public static string? ProbeError(int exitCode) => exitCode switch
     {
@@ -123,11 +129,13 @@ internal static class Installation
         _ => "The 32-bit OpenXR probe failed with exit code " + exitCode + "."
     };
 
-    public static ProcessStartInfo ProbeStartInfo(string? probe, bool stereo, string logFile, string runtime = OpenXrRuntimes.Default)
+    // layers: approved, revalidated OpenXR layer bypasses (VrApiLayers.Select).
+    public static ProcessStartInfo ProbeStartInfo(string? probe, bool stereo, string logFile, string runtime = OpenXrRuntimes.Default, IReadOnlyList<VrLayerBypass>? layers = null)
     {
         if (string.IsNullOrEmpty(probe) || !File.Exists(probe)) throw new FileNotFoundException("The Win32 OpenXR probe is missing.");
         var start = new ProcessStartInfo(probe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(probe) };
         OpenXrRuntimes.Apply(start, runtime);
+        VrApiLayers.ApplyToProbe(start, layers ?? []);
         if (stereo) { start.ArgumentList.Add("--session"); start.ArgumentList.Add("--seconds"); start.ArgumentList.Add("20"); }
         else start.ArgumentList.Add("--query");
         start.ArgumentList.Add("--log");

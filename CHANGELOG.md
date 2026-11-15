@@ -6,6 +6,7 @@
 - **Pause menu in Practice and Race.** Esc, or Start on a controller, opens the game's pause menu, with Restart and Quit; Quit now closes the VR session cleanly before the game exits.
 - **Skip intro / logos.** Settings → Paths and runtime → Skip intro / logos skips the two startup logo videos when the game starts in VR.
 - **Force feedback.** Controls → Driving → Force feedback ("Use launcher force feedback", off by default) sets Wheel weight, Strength and Vibration for the force the game sends to your wheel in VR; 100% is the game's own force.
+- **OpenXR add-ons that stop VR from starting** ([#1](https://github.com/preseznik/GRIDAutosportVR/issues/1)). An add-on layer such as ReShade or OpenXR OBS Mirror without a working 32-bit library stopped the headset check ("The 32-bit OpenXR probe failed with exit code 1"). Launch VR now names the layer and offers **Disable and retry**, for GRID Autosport VR only; the choice can be remembered and undone under Settings → VR compatibility.
 
 ## 0.1.0
 

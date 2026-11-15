@@ -62,6 +62,9 @@ internal sealed class MainForm : LauncherForm
         "100% is the game's force unchanged. The game's own force feedback settings still apply and are not changed. " +
         "Applies to the next Launch VR; the desktop Launch is the unmodified game.";
     private readonly Label runtimeStatus = TextLabel("");
+    // Settings → VR compatibility: OpenXR add-on layers disabled by remembered choices (VrApiLayers.cs).
+    private readonly Label layerBypassSummary = TextLabel("");
+    private readonly Button manageLayers = Button("Manage layer bypasses…", "ManageVrCompatibility");
     private readonly CheckBox keepHorizonLevel = new() { Name = "KeepHorizonLevel", Text = "Keep horizon level when recentering", Checked = true, AutoSize = true };
     private int recenterKey = 121, recenterModifiers;
     // GRID2VR's controller / wheel recenter button (DeviceRecenter).
@@ -238,6 +241,11 @@ internal sealed class MainForm : LauncherForm
         probeActions.Controls.AddRange([query, pattern]);
         settings.Controls.Add(probeActions);
         if (probePath is null) settings.Controls.Add(TextLabel(@"Place AutosportXRProbe.exe in this package's probe folder to enable these checks."));
+        Section(settings, "VR compatibility");
+        layerBypassSummary.Name = "VrCompatibilitySummary";
+        settings.Controls.Add(layerBypassSummary); settings.Controls.Add(manageLayers);
+        settings.Controls.Add(TextLabel("If an OpenXR add-on such as ReShade or OBS Mirror stops VR from starting, Launch VR names it and offers to disable it for GRID Autosport VR only. Other applications keep their settings."));
+        UpdateLayerBypassSummary();
         settings = settingColumns.Second;
         Section(settings, "Launcher preferences");
         Field(settings, "Modern interface", modernInterface);
@@ -265,6 +273,8 @@ internal sealed class MainForm : LauncherForm
         browse.Click += (_, _) => ChooseGame();
         query.Click += async (_, _) => await RunProbeAsync(false);
         pattern.Click += async (_, _) => await RunProbeAsync(true);
+        manageLayers.Click += (_, _) => { using var dialog = new VrCompatibilityForm(); dialog.ShowDialog(this); UpdateLayerBypassSummary(); };
+        Activated += (_, _) => UpdateLayerBypassSummary();
         defaults.Click += (_, _) => { ApplyChoices(new Choices()); notice.Text = "Launcher defaults restored. Save settings or launch to keep them."; };
         hudFollow.CheckedChanged += (_, _) => ChoiceEdited();
         foreach (var hud in new[] { hudShow, hudDial, hudMinimap, hudCounters, hudPositions })
@@ -622,13 +632,33 @@ internal sealed class MainForm : LauncherForm
         {
             notice.Text = (Current.LaunchMode == "Normal" ? "" : RaceSession.Summary(Current, catalog) + " ") +
                 $"Checking the headset, then Steam opens the game. Put on your headset. Press {RecenterShortcut.Label(recenterKey, recenterModifiers)} in the game to recenter.";
-            using var worker = Process.Start(Installation.VrStartInfo(gameFolder)) ?? throw new IOException("The VR session supervisor did not start.");
-            var errors = worker.StandardError.ReadToEndAsync();
-            await worker.WaitForExitAsync();
-            var detail = (await errors).Trim();
-            if (!IsDisposed)
+            // An OpenXR add-on layer may block the headset check: name it, and with the player's
+            // agreement launch again with it disabled for GRID Autosport VR only (VrApiLayers.cs).
+            List<VrLayerBypass> approved = [], remember = [];
+            for (var attempt = 0; ; ++attempt)
+            {
+                using var worker = Process.Start(Installation.VrStartInfo(gameFolder, approved, remember)) ?? throw new IOException("The VR session supervisor did not start.");
+                var errors = worker.StandardError.ReadToEndAsync();
+                await worker.WaitForExitAsync();
+                var detail = (await errors).Trim();
+                if (IsDisposed) return;
+                if (worker.ExitCode == VrLayerBlockedException.ExitCode && attempt < 4 && VrApiLayers.ReadRecovery() is { } recovery)
+                {
+                    notice.Text = "Review the VR compatibility prompt to continue…";
+                    var choice = VrLayerRecoveryForm.Confirm(this, recovery);
+                    if (IsDisposed) return;
+                    if (!choice.Retry) { notice.Text = "VR launch cancelled. No OpenXR layer was disabled."; break; }
+                    approved.AddRange(recovery.Layers);
+                    if (choice.Remember) remember.AddRange(recovery.Layers);
+                    notice.Text = "Checking the headset again with " + string.Join(", ", recovery.Layers.Select(layer => layer.DisplayName)) + " disabled for GRID Autosport VR…";
+                    continue;
+                }
                 notice.Text = worker.ExitCode == 0 ? "VR session ended. Original game files restored."
+                    : approved.Count > 0 && worker.ExitCode == VrLayerBlockedException.ExitCode ? $"VR still could not start after disabling {string.Join(", ", approved.Select(layer => layer.DisplayName))}. {detail}"
                     : detail.Length > 0 ? detail : "VR session exited with code " + worker.ExitCode + ".";
+                UpdateLayerBypassSummary();
+                break;
+            }
         }
         catch (Exception error) { if (!IsDisposed) notice.Text = error.Message; }
         finally
@@ -774,9 +804,15 @@ internal sealed class MainForm : LauncherForm
             Directory.CreateDirectory(Installation.LogDirectory);
             var logFile = Path.Combine(Installation.LogDirectory, (stereo ? "eye-test-" : "openxr-") + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".log");
             notice.Text = stereo ? "Running the headset eye test…" : "Checking the 32-bit OpenXR runtime…";
-            using var worker = Process.Start(Installation.ProbeStartInfo(probePath, stereo, logFile, Current.Runtime)) ?? throw new IOException("The OpenXR probe did not start.");
+            // Remembered OpenXR layer bypasses apply; new ones need the Launch VR prompt.
+            var catalog = await Task.Run(VrApiLayers.Catalog);
+            var layers = VrApiLayers.Select(VrApiLayers.Remembered(), catalog);
+            using var worker = Process.Start(Installation.ProbeStartInfo(probePath, stereo, logFile, Current.Runtime, layers)) ?? throw new IOException("The OpenXR probe did not start.");
             await worker.WaitForExitAsync();
             var failure = Installation.ProbeError(worker.ExitCode);
+            if (failure is not null && File.Exists(logFile) && VrApiLayers.Failures(await File.ReadAllTextAsync(logFile)) is { Count: > 0 } blocked)
+                failure = VrApiLayers.Describe(blocked) + (VrApiLayers.Recovery(await File.ReadAllTextAsync(logFile), catalog, layers) is not null
+                    ? " Launch VR offers to disable it for GRID Autosport VR only." : " No supported automatic layer bypass is available; disable or repair that OpenXR add-on.");
             if (failure is null && File.Exists(logFile) && HeadsetResolution.FromProbeLog(File.ReadLines(logFile)) is { } headset)
             {
                 headsetResolution = headset;
@@ -792,6 +828,12 @@ internal sealed class MainForm : LauncherForm
             testing = false;
             EnableActions();
         }
+    }
+
+    private void UpdateLayerBypassSummary()
+    {
+        var count = VrApiLayers.Remembered().Count;
+        layerBypassSummary.Text = count switch { 0 => "No remembered OpenXR layer bypasses.", 1 => "1 remembered OpenXR layer bypass.", _ => $"{count} remembered OpenXR layer bypasses." };
     }
 
     private void UpdateRuntimeStatus()

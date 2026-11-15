@@ -33,6 +33,8 @@ The portable ZIP works the same way: extract it into your GRID Autosport folder 
 
 Use **Help / About** (**?** or **F1**) to check for updates and read the instructions. **Include experimental releases** also offers Experimental updates; **Return to stable…** goes back to the latest Stable release. Updates are downloaded from this project's GitHub releases, checked against their published size and SHA-256, and installed into the same game folder; your settings are kept.
 
+**An OpenXR add-on stops VR from starting:** GRID Autosport is a 32-bit game, and an add-on layer such as ReShade or OpenXR OBS Mirror that has no working 32-bit library can stop every 32-bit OpenXR app from starting. **Launch VR** then names the layer and offers **Disable and retry** when its installed registration provides its own disable switch. Review which features will be unavailable before accepting. The layer is disabled only for GRID Autosport VR; other applications keep their settings. **Remember for this GRID Autosport VR installation** is optional and is saved only after the headset check works. To undo it, use **Settings → VR compatibility → Manage layer bypasses… → Re-enable selected**. A changed layer registration needs approval again.
+
 Use **Open logs** in the launcher and attach the newest session folder when reporting a problem. Settings live in `%LOCALAPPDATA%\GRIDAutosportVR` and are kept when you update or uninstall.
 
 GRID Autosport VR requires your own copy of GRID Autosport. No game files or saves are included.

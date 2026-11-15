@@ -31,6 +31,7 @@ internal static class SelfTests
             Application.SetColorMode(SystemColorMode.System);
             DrivingControlsTests.Run(data, (condition, detail) => Check(condition, detail));
             CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
+            VrLayerTests.Run(data, output, (condition, detail) => Check(condition, detail));
             UpdateTests.Run(output, (condition, detail) => Check(condition, detail));
             Form(output);
         }
@@ -380,7 +381,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "VR compatibility", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }

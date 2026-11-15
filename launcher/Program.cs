@@ -5,7 +5,7 @@ namespace GRIDAutosportVR;
 
 internal static class Program
 {
-    private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | (--play-vr | --restore-play) --game-dir FOLDER | --self-test [OUTPUT]" +
+    private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | --play-vr --game-dir FOLDER [--xr-layer-bypass B64] [--remember-xr-layers B64] | --restore-play --game-dir FOLDER | --self-test [OUTPUT]" +
         " | --discover OUTPUT | --end-session --game-dir FOLDER | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | --write-input-maps --game-dir FOLDER --controls FILE OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
 
     [STAThread]
@@ -45,6 +45,20 @@ internal static class Program
         var play = args.Length > 0 && args[0] == "--play-vr";
         var restore = args.Length > 0 && args[0] == "--restore-play";
         var options = inspect || play || restore ? args[1..] : args;
+        // Launch VR after the OpenXR layer prompt: the layers the player chose to disable (VrApiLayers.cs).
+        IReadOnlyList<VrLayerBypass> approved = [], remember = [];
+        try
+        {
+            while (play && options.Length >= 4 && options[^2] is Installation.XrLayerBypassArgument or Installation.RememberXrLayersArgument)
+            {
+                var layers = VrApiLayers.Decode(options[^1]);
+                if (options[^2] == Installation.XrLayerBypassArgument && approved.Count == 0) approved = layers;
+                else if (options[^2] == Installation.RememberXrLayersArgument && remember.Count == 0) remember = layers;
+                else throw new IOException("Repeated OpenXR layer approval.");
+                options = options[..^2];
+            }
+        }
+        catch (IOException error) { Console.Error.WriteLine(error.Message); return 64; }
         if (((play || restore) && options.Length != 2) || (options.Length != 0 && (options.Length != 2 || options[0] != "--game-dir")))
         {
             Console.Error.WriteLine(Usage);
@@ -60,13 +74,18 @@ internal static class Program
             }
             var probe = Installation.FindProbe(AppContext.BaseDirectory);
             var renderer = Installation.FindRenderer(AppContext.BaseDirectory);
-            if (play) return PlayVr(folder, probe, renderer);
+            if (play) return PlayVr(folder, probe, renderer, approved, remember);
             if (inspect) return Inspect(folder, probe, renderer);
             ApplicationConfiguration.Initialize();
             Application.SetColorMode(SystemColorMode.System);
             using var window = new MainForm(folder, probe, renderer);
             Application.Run(window);
             return 0;
+        }
+        catch (VrLayerBlockedException error) when (play)
+        {
+            Console.Error.WriteLine(error.Message);
+            return VrLayerBlockedException.ExitCode;
         }
         catch (Exception error)
         {
@@ -129,7 +148,7 @@ internal static class Program
     }
 
     // The session supervisor the launcher window starts for Launch VR.
-    private static int PlayVr(string? folder, string? probe, string? renderer)
+    private static int PlayVr(string? folder, string? probe, string? renderer, IReadOnlyList<VrLayerBypass> approved, IReadOnlyList<VrLayerBypass> remember)
     {
         if (!Installation.GameExists(folder)) throw new IOException("Select the Steam installation of GRID Autosport.");
         VrPlaySession.Recover(folder);
@@ -137,11 +156,34 @@ internal static class Program
         if (problem is not null) throw new IOException(problem);
         Directory.CreateDirectory(Installation.LogDirectory);
         var logFile = Path.Combine(Installation.LogDirectory, $"launch-openxr-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
-        using (var check = Process.Start(Installation.ProbeStartInfo(probe, false, logFile, LauncherSettings.Load().Runtime)) ?? throw new IOException("The OpenXR probe did not start."))
+        // OpenXR add-on layers to disable for this session (VrApiLayers.cs): remembered choices and
+        // the launcher prompt's, each still matching the installed registration.
+        VrApiLayers.ClearRecovery();
+        var catalog = VrApiLayers.Catalog();
+        var layers = VrApiLayers.Select([.. VrApiLayers.Remembered(), .. approved, .. remember], catalog);
+        using (var check = Process.Start(Installation.ProbeStartInfo(probe, false, logFile, LauncherSettings.Load().Runtime, layers)) ?? throw new IOException("The OpenXR probe did not start."))
         {
             check.WaitForExit();
             var failure = Installation.ProbeError(check.ExitCode);
-            if (failure is not null) throw new IOException(failure + Environment.NewLine + logFile);
+            if (failure is not null)
+            {
+                var report = File.Exists(logFile) ? File.ReadAllText(logFile) : "";
+                if (VrApiLayers.Recovery(report, catalog, layers) is { } recovery)
+                {
+                    // The launcher window names the layers and offers to disable them, then launches again.
+                    VrApiLayers.SaveRecovery(recovery);
+                    throw new VrLayerBlockedException(recovery.Message + " Launch VR to review it." + Environment.NewLine + logFile);
+                }
+                if (VrApiLayers.Failures(report) is { Count: > 0 } failures)
+                    failure = VrApiLayers.Describe(failures) + " No supported automatic layer bypass is available; disable or repair that OpenXR add-on.";
+                throw new IOException(failure + Environment.NewLine + logFile);
+            }
+        }
+        // Remembered only by choice, and only now that the headset check worked with them disabled.
+        if (layers.Where(layer => remember.Any(layer.SameIdentity)).ToList() is { Count: > 0 } kept)
+        {
+            try { VrApiLayers.Remember(kept); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Console.Error.WriteLine("The OpenXR layer bypass works for this session, but could not be remembered: " + error.Message); }
         }
         // Render each eye at the headset's recommended size times VR render scale. Without a
         // readable size the bridge keeps the game's legacy eye size.
@@ -149,13 +191,13 @@ internal static class Program
         static byte[]? Session(string game, Choices choices) =>
             choices.LaunchMode == "Normal" ? null : RaceSession.SessionXml(choices, RaceSession.Load(game), Random.Shared.Next());
         var headset = HeadsetResolution.FromProbeLog(File.ReadLines(logFile));
-        if (headset is null) return VrPlaySession.Run(folder!, renderer!, sessionXml: c => Session(folder!, c));
+        if (headset is null) return VrPlaySession.Run(folder!, renderer!, sessionXml: c => Session(folder!, c), layers: layers);
         try { headset.Save(); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         var scale = LauncherSettings.Load().VrRenderScale;
         var (width, height, used) = headset.LaunchSize(scale);
         return VrPlaySession.Run(folder!, renderer!, (width, height),
             $"Render {width}x{height} per eye at {used}% (requested {scale}%) of {headset.Headset} {headset.Width}x{headset.Height} via {headset.Runtime}.",
-            c => Session(folder!, c));
+            c => Session(folder!, c), layers);
     }
 
     private static int Inspect(string? folder, string? probe, string? renderer)

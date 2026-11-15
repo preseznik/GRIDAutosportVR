@@ -296,15 +296,56 @@ void Bridge::initXR() {
             require(kind[0] != 0, "runtime_choice_unusable");
         }
     }
-    wchar_t previous[MAX_PATH * 2]{};
-    const DWORD previousLength = GetEnvironmentVariableW(L"XR_RUNTIME_JSON", previous, DWORD(std::size(previous)));
+    // OpenXR add-on layers the player chose to disable for GRID Autosport VR (launcher
+    // VrApiLayers.cs, GitHub issue #1): openxr-layer-bypass.txt in the session folder lists each
+    // layer's own disable switch, one per line. Set to 1 only around instance creation, then restored.
+    std::vector<std::wstring> layerSwitches;
+    if (const wchar_t* folder = AutosportRunDirectory(); folder && *folder) {
+        wchar_t path[MAX_PATH];
+        swprintf_s(path, L"%s\\openxr-layer-bypass.txt", folder);
+        if (FILE* file = _wfsopen(path, L"rb", _SH_DENYWR)) {
+            char line[256]{};
+            bool valid = true;
+            while (valid && fgets(line, sizeof(line), file)) {
+                const size_t length = strcspn(line, "\r\n");
+                valid = line[length] != 0 || feof(file); // every line fits
+                line[length] = 0;
+                const size_t prefix = !strncmp(line, "DISABLE_XR_", 11) ? 11 : !strncmp(line, "DISABLE_OPENXR_", 15) ? 15 : 0;
+                valid = valid && prefix && length > prefix && length - prefix <= 180 && layerSwitches.size() < 16 &&
+                        std::all_of(line + prefix, line + length, [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'; });
+                if (valid) layerSwitches.emplace_back(line, line + length);
+            }
+            fclose(file);
+            require(valid && !layerSwitches.empty(), "layer_bypass_request");
+        }
+    }
+    struct Saved { std::wstring name; std::vector<wchar_t> value; };
+    std::vector<Saved> saved;
+    for (const wchar_t* name : {L"XR_RUNTIME_JSON"}) saved.push_back({name, {}});
+    for (const auto& name : layerSwitches) saved.push_back({name, {}});
+    bool environmentSaved = true;
+    for (auto& variable : saved) {
+        const DWORD length = GetEnvironmentVariableW(variable.name.c_str(), nullptr, 0);
+        variable.value.assign(length, L'\0');
+        environmentSaved = environmentSaved && (!length || GetEnvironmentVariableW(variable.name.c_str(), variable.value.data(), length));
+    }
+    require(environmentSaved, "environment_save");
+    bool environmentSet = true;
     if (kind[0]) {
-        SetEnvironmentVariableW(L"XR_RUNTIME_JSON", manifest);
+        environmentSet = SetEnvironmentVariableW(L"XR_RUNTIME_JSON", manifest) != FALSE;
         AutosportLog("OpenXR runtime choice %s: %ls", kind, manifest);
     }
-    const XrResult created = xrCreateInstance(&info, &instance);
-    if (kind[0]) SetEnvironmentVariableW(L"XR_RUNTIME_JSON", previousLength && previousLength < std::size(previous) ? previous : nullptr);
+    for (const auto& name : layerSwitches) {
+        environmentSet = environmentSet && SetEnvironmentVariableW(name.c_str(), L"1");
+        AutosportLog("OpenXR layer disabled for this session: %ls", name.c_str());
+    }
+    const XrResult created = environmentSet ? xrCreateInstance(&info, &instance) : XR_ERROR_INITIALIZATION_FAILED;
+    bool environmentRestored = true;
+    for (const auto& variable : saved)
+        environmentRestored = SetEnvironmentVariableW(variable.name.c_str(), variable.value.empty() ? nullptr : variable.value.data()) && environmentRestored;
+    if (!layerSwitches.empty()) AutosportLog("OpenXR layer switches restored=%d", environmentRestored);
     checked(created, "xrCreateInstance");
+    require(environmentRestored, "environment_restore");
     XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
     checked(xrGetInstanceProperties(instance, &properties), "xrGetInstanceProperties");
     AutosportLog("OpenXR runtime %s version %llu", properties.runtimeName, static_cast<unsigned long long>(properties.runtimeVersion));
