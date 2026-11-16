@@ -231,6 +231,7 @@ internal static partial class VrPlaySession
             EnsureIdle(folder);
             RestoreLease(folder);
             var id = Guid.NewGuid().ToString("N");
+            VrLaunchStatus.Report(VrLaunchStatus.Preparing, "Preparing the game files…", id);
             var session = sessionXml?.Invoke(choices);
             var controls = DrivingControls.Load();
             var inputs = SessionInputMaps.Plan(folder, controls);
@@ -253,6 +254,7 @@ internal static partial class VrPlaySession
                 if (renderNote is not null) Record(id, renderNote);
                 if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
                 Record(id, "Requesting normal play through Steam.");
+                VrLaunchStatus.Report(VrLaunchStatus.Steam, "Steam is starting GRID Autosport…", id);
                 var requested = DateTime.UtcNow;
                 using (var steam = Process.Start(start))
                     if (steam is null) throw new IOException("Steam could not start GRID Autosport.");
@@ -628,12 +630,33 @@ internal static partial class VrPlaySession
         return false;
     }
 
+    // The launch step the renderer's log shows, reported when it changes (VrLaunchStatus).
+    private static void ReportProgress(string id, ref (long Length, string Stage) last)
+    {
+        var log = new FileInfo(Path.Combine(SessionFolder(id), "bridge.log"));
+        if (!log.Exists || log.Length == last.Length || last.Stage is VrLaunchStatus.Running or VrLaunchStatus.Failed) return;
+        last.Length = log.Length;
+        try
+        {
+            using var stream = new FileStream(log.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            var lines = new List<string>();
+            while (reader.ReadLine() is { } line) lines.Add(line);
+            var (stage, message) = VrLaunchStatus.FromBridgeLog(lines);
+            if (stage == last.Stage) return;
+            last.Stage = stage;
+            VrLaunchStatus.Report(stage, message, id);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
     private static int WaitForGame(string folder, string id, DateTime requested)
     {
         var watched = new Dictionary<int, Process>();
         Process? renderer = null;
         var clock = Stopwatch.StartNew();
         TimeSpan? exitedBeforeObservation = null;
+        (long Length, string Stage) progress = (-1, "");
         try
         {
             while (true)
@@ -646,7 +669,7 @@ internal static partial class VrPlaySession
                         {
                             if (watched.ContainsKey(proc.Id) || proc.StartTime.ToUniversalTime() < requested.AddSeconds(-2) || !IsOurGame(proc, folder, id)) continue;
                             watched.Add(proc.Id, proc);
-                            if (name == "GRIDAutosport_avx") renderer = proc;
+                            if (name == "GRIDAutosport_avx") { renderer = proc; VrLaunchStatus.Report(VrLaunchStatus.Loading, "GRID Autosport is loading…", id); }
                             Record(id, "Watching " + name + " PID " + proc.Id + ".");
                             proc = null; // The dictionary now owns its process handle.
                         }
@@ -656,6 +679,7 @@ internal static partial class VrPlaySession
                         }
                         finally { proc?.Dispose(); }
                     }
+                if (renderer is not null) ReportProgress(id, ref progress);
                 if (renderer is not null && watched.Values.All(p => p.HasExited))
                 {
                     foreach (var p in watched.Values) Record(id, $"PID {p.Id} exited 0x{p.ExitCode:X8}.");

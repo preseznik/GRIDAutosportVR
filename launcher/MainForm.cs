@@ -91,6 +91,12 @@ internal sealed partial class MainForm : LauncherForm
     private LauncherWindow window = new();
     private Choices saved = new();
     private bool windowLoaded, testing, supervising, recovering;
+    // GRID2VR's launch progress window, fed by the supervisor's vr-launch.json (VrLaunchStatus).
+    private LaunchProgressForm? launchProgress;
+    private readonly System.Windows.Forms.Timer launchTimer = new() { Interval = 500 };
+    private (int Id, DateTime StartedUtc)? launchSupervisor;
+    private VrLaunchStatus? launchStatus;
+    internal LaunchProgressForm? LaunchProgressWindow => launchProgress;
     private string? recoveryError;
 
     internal ModernTabs Tabs { get; }
@@ -361,6 +367,8 @@ internal sealed partial class MainForm : LauncherForm
             LauncherAppearance.Apply(this);
             ChoiceEdited();
         };
+        launchTimer.Tick += (_, _) => PollLaunchStatus();
+        FormClosed += (_, _) => { launchTimer.Stop(); launchTimer.Dispose(); launchProgress?.Dispose(); };
         ConfigureTooltips(help);
         LoadChoices();
         RefreshInstallation();
@@ -586,9 +594,11 @@ internal sealed partial class MainForm : LauncherForm
         installCockpitTextures.Enabled = installCockpitFile.Enabled = idle && !cockpitTextureBusy && !cockpitTexturesInstalled;
         removeCockpitTextures.Enabled = idle && !cockpitTextureBusy && cockpitTexturesInstalled;
         EnableGraphicsEditors(!testing && !supervising && !recovering);
-        state.Text = supervising ? (Current.LaunchMode == "Normal"
-                ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
-                : $"{Current.LaunchMode} in progress. Pause in the game to restart or quit, or choose End session; the launcher then restores the original game files.")
+        state.Text = supervising ? (launchStatus is { Stage: not VrLaunchStatus.Running } starting ? starting.Message
+                : (launchStatus is null ? "" : "VR active · " + (Current.Runtime == OpenXrRuntimes.Default ? OpenXrRuntimes.DefaultLabel : Current.Runtime) + ". ") +
+                    (Current.LaunchMode == "Normal"
+                    ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
+                    : $"{Current.LaunchMode} in progress. Pause in the game to restart or quit, or choose End session; the launcher then restores the original game files."))
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
             : playLease ? "A VR session is active or was interrupted. After the game exits, choose Restore original files."
             : pending ? "A VR benchmark session is pending. Restore it with bridge/run.py --restore before launching."
@@ -631,6 +641,11 @@ internal sealed partial class MainForm : LauncherForm
         if (supervising || testing || gameFolder is null || !SaveChoices(false)) return;
         if (Current.NewCockpitTextures && CockpitTexturePack.Current is not null && !await EnsureCockpitTexturesAsync()) return;
         supervising = true;
+        launchStatus = null;
+        launchProgress?.Dispose();
+        launchProgress = new LaunchProgressForm();
+        launchProgress.Show(this);
+        launchProgress.DisplayProgress(new("Checking the headset…"));
         EnableActions();
         try
         {
@@ -642,34 +657,57 @@ internal sealed partial class MainForm : LauncherForm
             for (var attempt = 0; ; ++attempt)
             {
                 using var worker = Process.Start(Installation.VrStartInfo(gameFolder, approved, remember)) ?? throw new IOException("The VR session supervisor did not start.");
+                launchSupervisor = (worker.Id, worker.StartTime.ToUniversalTime()); launchStatus = null;
+                launchTimer.Start();
                 var errors = worker.StandardError.ReadToEndAsync();
                 await worker.WaitForExitAsync();
                 var detail = (await errors).Trim();
                 if (IsDisposed) return;
+                launchTimer.Stop(); PollLaunchStatus(); launchSupervisor = null;
                 if (worker.ExitCode == VrLayerBlockedException.ExitCode && attempt < 4 && VrApiLayers.ReadRecovery() is { } recovery)
                 {
                     notice.Text = "Review the VR compatibility prompt to continue…";
+                    launchProgress?.DisplayProgress(new("Review the VR compatibility prompt to continue…"));
                     var choice = VrLayerRecoveryForm.Confirm(this, recovery);
                     if (IsDisposed) return;
-                    if (!choice.Retry) { notice.Text = "VR launch cancelled. No OpenXR layer was disabled."; break; }
+                    if (!choice.Retry) { notice.Text = "VR launch cancelled. No OpenXR layer was disabled."; launchProgress?.Close(); break; }
                     approved.AddRange(recovery.Layers);
                     if (choice.Remember) remember.AddRange(recovery.Layers);
                     notice.Text = "Checking the headset again with " + string.Join(", ", recovery.Layers.Select(layer => layer.DisplayName)) + " disabled for GRID Autosport VR…";
+                    launchProgress?.DisplayProgress(new(notice.Text));
                     continue;
                 }
                 notice.Text = worker.ExitCode == 0 ? "VR session ended. Original game files restored."
                     : approved.Count > 0 && worker.ExitCode == VrLayerBlockedException.ExitCode ? $"VR still could not start after disabling {string.Join(", ", approved.Select(layer => layer.DisplayName))}. {detail}"
                     : detail.Length > 0 ? detail : "VR session exited with code " + worker.ExitCode + ".";
+                if (worker.ExitCode == 0 || launchStatus?.Stage == VrLaunchStatus.Running) launchProgress?.Close();
+                else launchProgress?.DisplayProgress(new(notice.Text, Failed: true));
                 UpdateLayerBypassSummary();
                 break;
             }
         }
-        catch (Exception error) { if (!IsDisposed) notice.Text = error.Message; }
+        catch (Exception error) { if (!IsDisposed) { notice.Text = error.Message; launchProgress?.DisplayProgress(new(error.Message, Failed: true)); } }
         finally
         {
+            launchTimer.Stop(); launchSupervisor = null; launchStatus = null;
             supervising = false;
             if (!IsDisposed) { UpdateLastPerformance(); RefreshInstallation(); }
         }
+    }
+
+    // The running supervisor's step: progress window and status line.
+    private void PollLaunchStatus()
+    {
+        if (launchSupervisor is not { } supervisor || VrLaunchStatus.Read(supervisor.Id, supervisor.StartedUtc) is not { } status || status == launchStatus) return;
+        launchStatus = status;
+        launchProgress?.DisplayProgress(status.Stage switch
+        {
+            VrLaunchStatus.Running => new(status.Message, Finished: true),
+            VrLaunchStatus.Failed => new(status.Message, Failed: true),
+            _ => new(status.Message),
+        });
+        if (status.Stage == VrLaunchStatus.Failed) notice.Text = status.Message;
+        EnableActions();
     }
 
     // Downloads and installs the pack if it is missing. False when it is not installed afterwards.

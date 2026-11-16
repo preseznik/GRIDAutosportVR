@@ -156,7 +156,7 @@ struct Bridge {
     XrSpace local{}, headSpace{};
     XrPosef screenAnchor{};
     bool screenAnchored{};
-    bool headset{}, running{}, frameOpen{}, active{}, failed{}, seen{}, gpuUsed{}, closePending{};
+    bool headset{}, running{}, frameOpen{}, active{}, failed{}, failureLogged{}, seen{}, gpuUsed{}, closePending{};
     uint64_t serial{};
     XrSessionState state{XR_SESSION_STATE_UNKNOWN};
     // A run of native frames the runtime asked us not to render (shouldRender false or discarded).
@@ -977,6 +977,8 @@ bool AutosportBeginViews(ID3D11Device* device, ID3D11DeviceContext* context, boo
         return true;
     } catch (const std::exception& error) {
         report(error.what());
+        // Once, with the reason: the launcher's progress window shows it (VrLaunchStatus).
+        if (bridge && bridge->failed && !bridge->failureLogged) { bridge->failureLogged = true; AutosportLog("VR failed: %s", error.what()); }
         return false;
     }
 }

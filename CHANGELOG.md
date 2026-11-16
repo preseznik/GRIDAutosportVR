@@ -4,6 +4,7 @@
 
 - **Graphics presets for VR.** Graphics → Graphics preset picks the game's own presets (Ultra Low to Ultra), **VR Balanced** (High with Medium crowd and VR anti-aliasing Off) or **Potato / Low-End** (Ultra Low, anti-aliasing Off, 70% render scale), with every quality setting of the game's Graphics menu under Quality settings and **VR anti-aliasing** beside them. **Game settings** (the default) keeps the quality you chose in the game. A preset applies to VR launches only: the launcher sets it in the game's graphics settings for the session and puts yours back afterwards.
 - **Recommend for this PC** suggests a preset and VR render scale from your graphics card and headset, or from your last VR session, with **Undo preset**. **Last VR session** shows the frame rate measured while driving against the headset's rate.
+- **Launch progress.** Launch VR shows a small window with each step (checking the headset, preparing the game files, Steam starting the game, loading, waiting for the headset) until VR is running, and the reason when VR cannot start. It does not take focus from the game, and **Hide** lets the launch continue. The launcher's status line follows the session too.
 
 ## 0.1.1
 

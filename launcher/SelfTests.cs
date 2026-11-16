@@ -34,6 +34,7 @@ internal static class SelfTests
             CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
             VrLayerTests.Run(data, output, (condition, detail) => Check(condition, detail));
             GraphicsPresetTests.Run(data, output, (condition, detail) => Check(condition, detail));
+            LaunchProgressTests.Run(output, (condition, detail) => Check(condition, detail));
             UpdateTests.Run(output, (condition, detail) => Check(condition, detail));
             Form(output);
         }

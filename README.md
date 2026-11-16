@@ -9,7 +9,7 @@ You need **Windows 10/11 (64-bit)**, the **Steam** version of GRID Autosport, an
 1. Download `GRIDAutosportVR-<version>-Setup.exe` from [Releases](https://github.com/preseznik/GRIDAutosportVR/releases). Close GRID Autosport, run the installer and keep (or choose) your GRID Autosport Steam folder.
 2. Open **GRID Autosport VR** from the Start menu.
 3. Choose a **Launch mode** under **Launcher → Session**: **Normal** opens the game's menus; **Practice** puts your chosen car on your chosen track; **Race** adds 1–11 AI opponents.
-4. Connect your headset, then click **Launch VR**. The launcher checks the headset, adds its VR files and starts the game through Steam.
+4. Connect your headset, then click **Launch VR**. The launcher checks the headset, adds its VR files and starts the game through Steam. A small progress window shows each step until VR is running, or why VR could not start.
 5. Finish with **Quit** in the game. The launcher restores the original game files. After an interrupted session, click **Restore original files**.
 
 The portable ZIP works the same way: extract it into your GRID Autosport folder and run `GRIDAutosportVR\GRIDAutosportVR.exe`.

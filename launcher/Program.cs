@@ -155,6 +155,7 @@ internal static class Program
         var problem = Installation.VrLaunchProblem(folder, probe, renderer) ?? OpenXrRuntimes.Problem(LauncherSettings.Load().Runtime);
         if (problem is not null) throw new IOException(problem);
         Directory.CreateDirectory(Installation.LogDirectory);
+        VrLaunchStatus.Report(VrLaunchStatus.Checking, "Checking the headset…");
         var logFile = Path.Combine(Installation.LogDirectory, $"launch-openxr-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
         // OpenXR add-on layers to disable for this session (VrApiLayers.cs): remembered choices and
         // the launcher prompt's, each still matching the installed registration.
