@@ -231,6 +231,7 @@ internal static class GraphicsPresetTests
     private static void Form(string output)
     {
         File.Delete(LauncherSettings.SettingsPath);
+        LauncherSettings.SaveWindow(new LauncherWindow(AdvancedView: true));
         using var form = new MainForm(null, null, null) { ShowInactive = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) };
         form.Show();
         T Find<T>(string name) where T : Control => (T)form.Controls.Find(name, true).Single();

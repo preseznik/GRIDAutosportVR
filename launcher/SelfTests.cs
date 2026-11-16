@@ -35,6 +35,7 @@ internal static class SelfTests
             VrLayerTests.Run(data, output, (condition, detail) => Check(condition, detail));
             GraphicsPresetTests.Run(data, output, (condition, detail) => Check(condition, detail));
             LaunchProgressTests.Run(output, (condition, detail) => Check(condition, detail));
+            SimpleViewTests.Run(output, (condition, detail) => Check(condition, detail));
             UpdateTests.Run(output, (condition, detail) => Check(condition, detail));
             Form(output);
         }
@@ -400,6 +401,7 @@ internal static class SelfTests
 
     private static void Form(string output)
     {
+        LauncherSettings.SaveWindow(new LauncherWindow(AdvancedView: true));
         using var form = new MainForm(null, null, null) { ShowInactive = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) };
         Check(form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Controls", "Settings"]));
         foreach (var name in new[] { "LaunchDesktop", "LaunchVR", "SaveSettings", "RestoreOriginalFiles", "OpenLogs", "HelpAbout", "SessionStatus", "SessionNotice" })
@@ -408,7 +410,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "VR compatibility", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "VR compatibility", "Launcher preferences", "Play", "Performance", "Controls & comfort"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }

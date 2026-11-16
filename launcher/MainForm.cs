@@ -119,7 +119,7 @@ internal sealed partial class MainForm : LauncherForm
         var help = new Button { Text = "?", Name = "HelpAbout", AccessibleName = "Help / About", Size = new Size(36, 36), Anchor = AnchorStyles.Right };
         help.Click += (_, _) => ShowAbout();
         HelpRequested += (_, e) => { e.Handled = true; ShowAbout(); };
-        layout.Controls.Add(new LauncherHeader(Branding.Logo(64), title, channel, help));
+        layout.Controls.Add(new LauncherHeader(Branding.Logo(64), title, channel, viewPicker, help));
         state.Margin = new Padding(0, 8, 0, 16); layout.Controls.Add(state);
         Tabs = new ModernTabs { Name = "LauncherTabs", Dock = DockStyle.Fill };
         layout.Controls.Add(Tabs);
@@ -367,6 +367,7 @@ internal sealed partial class MainForm : LauncherForm
             LauncherAppearance.Apply(this);
             ChoiceEdited();
         };
+        InitializeViews();
         launchTimer.Tick += (_, _) => PollLaunchStatus();
         FormClosed += (_, _) => { launchTimer.Stop(); launchTimer.Dispose(); launchProgress?.Dispose(); };
         ConfigureTooltips(help);
@@ -526,7 +527,9 @@ internal sealed partial class MainForm : LauncherForm
         ClientSize = window.ClientSizeAtDpi(DeviceDpi, available);
         if (StartPosition != FormStartPosition.Manual) Location = new Point(work.Left + (work.Width - Width) / 2, work.Top + (work.Height - Height) / 2);
         var collapsed = window.CollapsedSections;
-        window = LauncherWindow.FromClientSize(ClientSize, DeviceDpi) with { Maximized = window.Maximized, CollapsedSections = collapsed };
+        var advanced = UseAdvancedView(window);
+        window = LauncherWindow.FromClientSize(ClientSize, DeviceDpi) with { Maximized = window.Maximized, AdvancedView = advanced, CollapsedSections = collapsed };
+        viewPicker.Advanced = advanced;
         ApplyCollapsedSections(collapsed);
         if (window.Maximized) WindowState = FormWindowState.Maximized;
         windowLoaded = true;
@@ -544,7 +547,7 @@ internal sealed partial class MainForm : LauncherForm
         {
             var maximized = WindowState == FormWindowState.Maximized;
             var size = maximized || WindowState == FormWindowState.Minimized ? RestoreBounds.Size - (Size - ClientSize) : ClientSize;
-            window = LauncherWindow.FromClientSize(size, DeviceDpi) with { Maximized = maximized, CollapsedSections = window.CollapsedSections };
+            window = LauncherWindow.FromClientSize(size, DeviceDpi) with { Maximized = maximized, AdvancedView = window.AdvancedView, CollapsedSections = window.CollapsedSections };
             try { LauncherSettings.SaveWindow(window); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
         base.OnFormClosing(e);
@@ -594,6 +597,7 @@ internal sealed partial class MainForm : LauncherForm
         installCockpitTextures.Enabled = installCockpitFile.Enabled = idle && !cockpitTextureBusy && !cockpitTexturesInstalled;
         removeCockpitTextures.Enabled = idle && !cockpitTextureBusy && cockpitTexturesInstalled;
         EnableGraphicsEditors(!testing && !supervising && !recovering);
+        UpdateSimpleContext();
         state.Text = supervising ? (launchStatus is { Stage: not VrLaunchStatus.Running } starting ? starting.Message
                 : (launchStatus is null ? "" : "VR active · " + (Current.Runtime == OpenXrRuntimes.Default ? OpenXrRuntimes.DefaultLabel : Current.Runtime) + ". ") +
                     (Current.LaunchMode == "Normal"
