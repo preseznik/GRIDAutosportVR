@@ -390,7 +390,9 @@ void Bridge::initXR() {
     XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
     checked(xrGetInstanceProperties(instance, &properties), "xrGetInstanceProperties");
     AutosportLog("OpenXR runtime %s version %llu", properties.runtimeName, static_cast<unsigned long long>(properties.runtimeVersion));
-    require(!kind[0] || (!strcmp(kind, "VDXR") ? !strcmp(properties.runtimeName, "VirtualDesktopXR")
+    // xr-sim, the headset-free test runtime, stands in for either in the release checks
+    // (tools/release_check.py), whose manifest copy carries the chosen runtime's file name.
+    require(!kind[0] || !strcmp(properties.runtimeName, "xr-sim") || (!strcmp(kind, "VDXR") ? !strcmp(properties.runtimeName, "VirtualDesktopXR")
                                                : !strncmp(properties.runtimeName, "SteamVR/", 8)), "runtime_identity_mismatch");
     XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};
     systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;

@@ -21,8 +21,16 @@ internal static class OpenXrRuntimes
     public static bool Valid(string choice) => Choices.Contains(choice);
 
     // The manifest a choice uses, or null for Default (the loader then finds the system runtime).
+    // Release checks only (tools/release_check.py): the session supervisor may be given a stand-in
+    // VDXR manifest, named as Virtual Desktop's, so a launch through Steam runs on xr-sim. The
+    // launcher never sets it; the VR renderer accepts only a manifest with that file name.
+    internal const string TestVdxrManifest = "GASVR_TEST_VDXR_MANIFEST";
+    private static string? TestVdxr => Environment.GetEnvironmentVariable(TestVdxrManifest) is { Length: > 0 } path &&
+        Path.IsPathFullyQualified(path) && string.Equals(Path.GetFileName(path), "virtualdesktop-openxr-32.json", StringComparison.OrdinalIgnoreCase) ? path : null;
+
     public static string? Manifest(string choice) => choice switch
     {
+        Vdxr when TestVdxr is { } test => test,
         Vdxr => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Virtual Desktop Streamer", "OpenXR", "virtualdesktop-openxr-32.json"),
         SteamVr => SteamLibrary.SteamLibraries().Select(root => Path.Combine(root, "steamapps", "common", "SteamVR", "steamxr_win32.json"))
                        .FirstOrDefault(File.Exists),
