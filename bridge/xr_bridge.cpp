@@ -8,7 +8,9 @@
 #include <d3dcompiler.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <share.h>
 #include <cstring>
@@ -101,8 +103,46 @@ bool levelAnchor(const XrPosef& head, XrPosef& anchor, double distance = Autospo
               {p.x+float(distance*x),p.y-drop,p.z+float(distance*z)}};
     return true;
 }
+// Graphics → Last VR session in the launcher: the frame rate while the race is shown in stereo,
+// in one-second windows. A window holds only stereo frames without a gap over 250 ms, so menus,
+// the seated screen, pauses and loading end it. Written to performance.json in the session
+// folder when the bridge closes.
+struct FrameRate {
+    using clock = std::chrono::steady_clock;
+    clock::time_point start{}, last{};
+    unsigned frames{};
+    std::vector<float> windows;
+    void stereo() {
+        const auto now = clock::now();
+        if (frames == 0 || now - last > std::chrono::milliseconds(250)) { start = now; frames = 0; }
+        last = now; ++frames;
+        const double seconds = std::chrono::duration<double>(now - start).count();
+        if (seconds >= 1.0) {
+            if (windows.size() < 36000) windows.push_back(float((frames - 1) / seconds));
+            start = now; frames = 1;
+        }
+    }
+    void interrupt() { frames = 0; }
+    void write(double displayHz) const {
+        const wchar_t* folder = AutosportRunDirectory();
+        if (!folder || !*folder) return;
+        wchar_t path[MAX_PATH];
+        if (swprintf_s(path, L"%s\\performance.json", folder) < 0) return;
+        std::vector<float> sorted(windows);
+        std::sort(sorted.begin(), sorted.end());
+        auto at = [&](double share) { return sorted.empty() ? 0.0 : double(sorted[size_t(share * (sorted.size() - 1))]); };
+        const auto dips = displayHz > 0 ? std::count_if(sorted.begin(), sorted.end(), [&](float fps) { return fps < .95 * displayHz; }) : 0;
+        FILE* file{};
+        if (_wfopen_s(&file, path, L"wb") != 0 || !file) return;
+        fprintf(file, "{\"schema\":1,\"displayHz\":%.2f,\"windows\":%zu,\"fps\":{\"p50\":%.1f,\"p5\":%.1f,\"min\":%.1f},\"dips\":{\"share\":%.3f}}\n",
+                displayHz, sorted.size(), at(.5), at(.05), at(0), sorted.empty() ? 0.0 : double(dips) / sorted.size());
+        fclose(file);
+        AutosportLog("Frame rate windows=%zu p50=%.1f p5=%.1f display_hz=%.2f", sorted.size(), at(.5), at(.05), displayHz);
+    }
+};
 struct Bridge {
     DWORD owner{GetCurrentThreadId()};
+    FrameRate frameRate;
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context, deferred;
     ComPtr<ID3D11Texture2D> snapshot;
@@ -127,7 +167,7 @@ struct Bridge {
     uint64_t hiddenFrom{}, hiddenFrames{};
     ULONGLONG hiddenTick{};
     XrTime time{};
-    XrDuration period{};
+    XrDuration period{}, loggedPeriod{};
     XrView located[2]{};
     BridgeView views[2]{};
     Chain chains[2]{};
@@ -222,6 +262,7 @@ struct Bridge {
         AutosportLog("XR shutdown begin owner=%lu caller=%lu frame=%llu open=%u running=%u",
                      owner, GetCurrentThreadId(), serial, unsigned(frameOpen), unsigned(running));
         try { end(); } catch (const std::exception& error) { AutosportLog("XR shutdown frame_end=%s", error.what()); }
+        frameRate.write(loggedPeriod > 0 ? 1e9 / double(loggedPeriod) : 0.0);
         const char* outcome = stopSession();
         AutosportLog("XR shutdown handshake=%s releasing_gpu_and_swapchains", outcome);
         dropChains();
@@ -450,6 +491,13 @@ bool Bridge::locate() {
     XrFrameState frameState{XR_TYPE_FRAME_STATE};
     checked(xrWaitFrame(session, &wait, &frameState), "xrWaitFrame");
     time = frameState.predictedDisplayTime;
+    // The launcher compares the last session's frame rate with this (Graphics → Last VR session).
+    // Logged again only after a change of more than 1%, so a jittery period does not flood the log.
+    const XrDuration displayPeriod = frameState.predictedDisplayPeriod;
+    if (displayPeriod > 0 && (loggedPeriod == 0 || std::llabs(displayPeriod - loggedPeriod) * 100 > loggedPeriod)) {
+        loggedPeriod = displayPeriod;
+        AutosportLog("XR display period=%lld ns display_hz=%.2f", (long long)displayPeriod, 1e9/(double)displayPeriod);
+    }
     period = frameState.predictedDisplayPeriod;
     XrFrameBeginInfo begin{XR_TYPE_FRAME_BEGIN_INFO};
     const auto result = xrBeginFrame(session, &begin);
@@ -777,6 +825,7 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         // At most 2.4 m wide and 1.8 m tall at any distance (further away it covers less of the
         // view): 4:3 keeps the original 2.4 x 1.8 m.
         screen.size = aspect >= 2.4f / 1.8f ? XrExtent2Df{2.4f, 2.4f / aspect} : XrExtent2Df{1.8f * aspect, 1.8f};
+        frameRate.interrupt();
         end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screen));
         return true;
     }
@@ -805,6 +854,7 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
     }
     end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection),
         showPanel ? reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panel) : nullptr);
+    frameRate.stereo();
     return true;
 }
 

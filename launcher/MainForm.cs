@@ -4,7 +4,7 @@ namespace GRIDAutosportVR;
 
 // GRID2VR's launcher layout (header, status, tabs of collapsible sections, notice, footer) with
 // the Autosport actions: Steam game folder, normal VR play through the bridge, runtime checks.
-internal sealed class MainForm : LauncherForm
+internal sealed partial class MainForm : LauncherForm
 {
     private const string HudHelp = "Follow view off keeps the race HUD in place ahead of your seated position. On moves it with your head, as the game's own HUD does. Loading screens stay in place in both modes. Applies to the next VR launch.";
     private string? gameFolder;
@@ -139,6 +139,7 @@ internal sealed class MainForm : LauncherForm
         launcher.Controls.Add(TextLabel("Launch starts the unmodified game on the desktop through Steam."));
 
         var graphicsColumns = Columns(Page(Tabs, "Graphics")); var graphics = graphicsColumns.First;
+        InitializeGraphicsPreset(graphics);
         Section(graphics, "VR rendering");
         Field(graphics, "VR render scale", renderScale);
         graphics.Controls.Add(refreshHeadset);
@@ -169,6 +170,7 @@ internal sealed class MainForm : LauncherForm
         Field(graphics, "Distance", screenDistance);
         Field(graphics, "Intro shots", intro3d);
         graphics.Controls.Add(TextLabel("Startup videos, loading screens, menus and the pause menu appear on a 16:9 screen fixed in front of your seat, up to 2.4 m wide; further back makes it smaller in view, and it stays in place until you recenter. The pre-race intro shots use it too, unless Intro shots is on: then they are shown in 3D, without the game's 2D info panel. Finish cameras and results always use the screen. Applies to the next VR launch."));
+        InitializeQualityEditors(graphics);
 
         // GRID2VR's Controls tab: VR now; Seat and Driving join it with their own launcher items.
         var controlPage = new TabPage("Controls") { Name = "ControlsPage", Padding = new Padding(8) };
@@ -331,7 +333,7 @@ internal sealed class MainForm : LauncherForm
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Live input: " + error.Message; }
         };
         UpdateDrivingSummary();
-        renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); ChoiceEdited(); };
+        renderScale.ValueChanged += (_, _) => { UpdateVrSummary(); GraphicsEdited(); ChoiceEdited(); };
         refreshHeadset.Click += async (_, _) => await RunProbeAsync(false);
         recenter.Click += (_, _) => { capturingRecenter = true; recenter.Text = "Press a key…"; notice.Text = "Press the new recenter key, or Escape to cancel."; EnableActions(); };
         recenter.LostFocus += (_, _) => { if (capturingRecenter) { capturingRecenter = false; UpdateRecenterLabel(); EnableActions(); } };
@@ -371,7 +373,7 @@ internal sealed class MainForm : LauncherForm
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
-        ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value);
+        ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice);
 
     private void RefreshForceFeedback()
     {
@@ -473,7 +475,8 @@ internal sealed class MainForm : LauncherForm
         }
         finally { applying = false; }
         LauncherAppearance.Modern = choices.ModernInterface;
-        UpdateVrSummary();
+        graphicsUndo = null;
+        ShowGraphics(choices.GraphicsQuality, choices.VrMsaa, choices.VrRenderScale);
         EnableActions();
     }
 
@@ -582,6 +585,7 @@ internal sealed class MainForm : LauncherForm
             !testing && !supervising && !recovering && catalog.Cars.Count > 0;
         installCockpitTextures.Enabled = installCockpitFile.Enabled = idle && !cockpitTextureBusy && !cockpitTexturesInstalled;
         removeCockpitTextures.Enabled = idle && !cockpitTextureBusy && cockpitTexturesInstalled;
+        EnableGraphicsEditors(!testing && !supervising && !recovering);
         state.Text = supervising ? (Current.LaunchMode == "Normal"
                 ? "VR session in progress. Quit the game normally, or choose End session; the launcher then restores the original game files."
                 : $"{Current.LaunchMode} in progress. Pause in the game to restart or quit, or choose End session; the launcher then restores the original game files.")
@@ -664,7 +668,7 @@ internal sealed class MainForm : LauncherForm
         finally
         {
             supervising = false;
-            if (!IsDisposed) RefreshInstallation();
+            if (!IsDisposed) { UpdateLastPerformance(); RefreshInstallation(); }
         }
     }
 

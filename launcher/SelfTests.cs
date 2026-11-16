@@ -19,6 +19,7 @@ internal static class SelfTests
         if (Directory.Exists(data)) Directory.Delete(data, true);
         Directory.CreateDirectory(data);
         LauncherSettings.UseDataDirectory(data);
+        GraphicsPresetTests.UseFixture(data);
         MainForm.SelfTesting = true;
         try
         {
@@ -32,6 +33,7 @@ internal static class SelfTests
             DrivingControlsTests.Run(data, (condition, detail) => Check(condition, detail));
             CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
             VrLayerTests.Run(data, output, (condition, detail) => Check(condition, detail));
+            GraphicsPresetTests.Run(data, output, (condition, detail) => Check(condition, detail));
             UpdateTests.Run(output, (condition, detail) => Check(condition, detail));
             Form(output);
         }
@@ -40,7 +42,7 @@ internal static class SelfTests
             ++failures;
             Console.Error.WriteLine("FAIL (exception): " + error);
         }
-        finally { LauncherSettings.UseDataDirectory(null); }
+        finally { LauncherSettings.UseDataDirectory(null); GraphicsCatalog.UseConfig(null); }
         Console.WriteLine(failures == 0 ? "Self-test passed." : $"Self-test failed: {failures} check(s).");
         return failures == 0 ? 0 : 1;
     }
@@ -367,6 +369,30 @@ internal static class SelfTests
         Check(Throws<IOException>(() => VrPlaySession.Recover(game)) && File.Exists(Path.Combine(game, Installation.PlayLease)));
         File.WriteAllBytes(Path.Combine(game, "system", "flow.bin"), guarded);
         Check(VrPlaySession.Recover(game) && File.ReadAllBytes(Path.Combine(game, "system", "flow.bin")).SequenceEqual(stockFlow));
+        // Graphics preset: the player's settings file (the self-test fixture) carries the preset for
+        // the session and comes back afterwards, also when the game rewrote it meanwhile.
+        var settings = File.ReadAllBytes(GraphicsCatalog.ConfigPath);
+        var potato = GraphicsCatalog.ApplyPreset(GraphicsCatalog.Potato, "game", 100);
+        var plan = VrPlaySession.PlanGraphics(new Choices(GraphicsQuality: potato.Quality, VrMsaa: potato.Msaa))!;
+        var graphicsId = id.Replace('f', 'd');
+        VrPlaySession.Stage(game, bridge, graphicsId, null, null, plan);
+        Check(File.ReadAllBytes(GraphicsCatalog.ConfigPath).SequenceEqual(plan.Staged));
+        Check(VrPlaySession.Recover(game) && File.ReadAllBytes(GraphicsCatalog.ConfigPath).SequenceEqual(settings));
+        Check(!Directory.EnumerateFiles(Path.GetDirectoryName(GraphicsCatalog.ConfigPath)!).Any(f => f.EndsWith(".tmp")));
+        Check(!File.Exists(Path.Combine(LauncherSettings.DataDirectory, "sessions", graphicsId, "original-hardware-settings.xml")));
+        graphicsId = id.Replace('f', 'c');
+        VrPlaySession.Stage(game, bridge, graphicsId, null, null, plan);
+        File.WriteAllText(GraphicsCatalog.ConfigPath, "<hardware_settings_config changed=\"in-game\" />");
+        Check(VrPlaySession.Recover(game) && File.ReadAllBytes(GraphicsCatalog.ConfigPath).SequenceEqual(settings));
+        Check(File.ReadAllText(Path.Combine(LauncherSettings.DataDirectory, "sessions", graphicsId, "session-hardware-settings.xml")).Contains("in-game"));
+        // A lease naming another settings file is refused and preserved.
+        graphicsId = id.Replace('f', 'b');
+        VrPlaySession.Stage(game, bridge, graphicsId, null, null, plan with { Path = GraphicsCatalog.ConfigPath });
+        var lease = Path.Combine(game, Installation.PlayLease);
+        File.WriteAllText(lease, File.ReadAllText(lease).Replace(System.Text.Json.JsonEncodedText.Encode(GraphicsCatalog.ConfigPath).ToString(), System.Text.Json.JsonEncodedText.Encode(GraphicsCatalog.ConfigPath + ".other").ToString()));
+        Check(Throws<IOException>(() => VrPlaySession.Recover(game)) && File.Exists(lease));
+        File.WriteAllText(lease, File.ReadAllText(lease).Replace(System.Text.Json.JsonEncodedText.Encode(GraphicsCatalog.ConfigPath + ".other").ToString(), System.Text.Json.JsonEncodedText.Encode(GraphicsCatalog.ConfigPath).ToString()));
+        Check(VrPlaySession.Recover(game) && File.ReadAllBytes(GraphicsCatalog.ConfigPath).SequenceEqual(settings));
         DrivingControlsTests.Installed(real, game, bridge, (condition, detail) => Check(condition, detail));
         Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(game)))!, true);
     }
@@ -381,7 +407,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "VR compatibility", "Launcher preferences"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "VR compatibility", "Launcher preferences"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }

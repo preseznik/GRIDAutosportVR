@@ -30,6 +30,8 @@ internal static partial class VrPlaySession
         public bool Flow { get; set; }
         // Driving bindings: game input presets changed (or added) for this session (SessionInputMaps).
         public List<InputFile>? Inputs { get; set; }
+        // Graphics preset: the player's hardware_settings_config.xml in Documents (GraphicsCatalog).
+        public InputFile? Graphics { get; set; }
     }
     private sealed class InputFile
     {
@@ -39,6 +41,23 @@ internal static partial class VrPlaySession
     }
 
     private static string SessionFile(string id) => "GASVR_" + id + ".xml";
+    private static string GraphicsBackup(string saved) => Path.Combine(saved, "original-hardware-settings.xml");
+
+    // The player's graphics settings with the launcher's preset applied, or null when the game's
+    // own settings are used (Game settings, or a preset that matches them already).
+    internal sealed record GraphicsPlan(string Path, byte[] Original, byte[] Staged, string Description);
+
+    internal static GraphicsPlan? PlanGraphics(Choices choices, string? path = null)
+    {
+        if (choices.GraphicsQuality.Length == 0 && choices.VrMsaa == GraphicsCatalog.GameSettings) return null;
+        path ??= GraphicsCatalog.ConfigPath;
+        if (!File.Exists(path))
+            throw new IOException("GRID Autosport has not saved its graphics settings yet. Start it once with Launch, or set Graphics → Graphics preset to Game settings.");
+        var original = File.ReadAllBytes(path);
+        var staged = GraphicsCatalog.Apply(original, choices.GraphicsQuality, choices.VrMsaa);
+        return staged.AsSpan().SequenceEqual(original) ? null
+            : new GraphicsPlan(path, original, staged, GraphicsCatalog.Describe(choices.GraphicsQuality, choices.VrMsaa));
+    }
     private static string FlowFile(string folder) => Path.Combine(folder, "system", "flow.bin");
 
     private static string SessionFolder(string id) => Path.Combine(LauncherSettings.DataDirectory, "sessions", id);
@@ -217,10 +236,11 @@ internal static partial class VrPlaySession
             var inputs = SessionInputMaps.Plan(folder, controls);
             var claim = session is null ? null : DeviceClaim(controls);
             var cockpitPack = CockpitPack(choices, out var cockpitNote);
+            var graphics = PlanGraphics(choices);
             WriteCarNames();
             try
             {
-                Stage(folder, bridgePath, id, session, inputs);
+                Stage(folder, bridgePath, id, session, inputs, graphics);
                 OpenXrRuntimes.WriteSessionChoice(SessionFolder(id), choices.Runtime);
                 Record(id, "VR runtime: " + (choices.Runtime == OpenXrRuntimes.Default ? "this PC's default 32-bit OpenXR runtime." : choices.Runtime + " (" + OpenXrRuntimes.Manifest(choices.Runtime) + ")."));
                 VrApiLayers.WriteSessionFile(SessionFolder(id), layers ?? []);
@@ -238,7 +258,17 @@ internal static partial class VrPlaySession
                     if (steam is null) throw new IOException("Steam could not start GRID Autosport.");
                 using var recenterWatch = choices.RecenterDevice is { } recenterDevice
                     ? DeviceRecenter.Watch(SessionFolder(id), recenterDevice, message => Record(id, message)) : null;
-                return WaitForGame(folder, id, requested);
+                var exitCode = WaitForGame(folder, id, requested);
+                try
+                {
+                    if (VrPerformance.Capture(SessionFolder(id), choices, eyeSize) is { } performance)
+                        Record(id, "Frame rate while driving: " + performance.Describe());
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                {
+                    Record(id, "Frame rate summary not kept: " + error.Message);
+                }
+                return exitCode;
             }
             finally
             {
@@ -256,7 +286,8 @@ internal static partial class VrPlaySession
 
     // The marker and stock backup are committed before the lease. The lease is
     // committed before either game file is changed, including on an interrupted launch.
-    internal static void Stage(string folder, string bridgePath, string id, byte[]? session = null, IReadOnlyList<SessionInputMaps.Change>? inputs = null)
+    internal static void Stage(string folder, string bridgePath, string id, byte[]? session = null, IReadOnlyList<SessionInputMaps.Change>? inputs = null,
+        GraphicsPlan? graphics = null)
     {
         inputs ??= [];
         var executable = Path.Combine(folder, Avx);
@@ -280,7 +311,8 @@ internal static partial class VrPlaySession
         }).ToList();
         var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), SessionHash = session is null ? null : Hash(session), Flow = session is not null,
             Inputs = inputs.Count == 0 ? null : inputs.Select((change, i) => new InputFile { Path = change.RelativePath,
-                OriginalHash = inputOriginals[i] is { } original ? Hash(original) : null, StagedHash = Hash(change.Content) }).ToList() };
+                OriginalHash = inputOriginals[i] is { } original ? Hash(original) : null, StagedHash = Hash(change.Content) }).ToList(),
+            Graphics = graphics is null ? null : new InputFile { Path = graphics.Path, OriginalHash = Hash(graphics.Original), StagedHash = Hash(graphics.Staged) } };
         var saved = SessionFolder(id);
         Directory.CreateDirectory(saved);
         WriteNew(Path.Combine(saved, "session.id"), Encoding.ASCII.GetBytes(id));
@@ -297,6 +329,11 @@ internal static partial class VrPlaySession
                 WriteNew(InputBackup(saved, i), original);
                 if (FileHash(InputBackup(saved, i)) != info.Inputs![i].OriginalHash) throw new IOException("The input preset backup verification failed.");
             }
+        if (graphics is not null)
+        {
+            WriteNew(GraphicsBackup(saved), graphics.Original);
+            if (FileHash(GraphicsBackup(saved)) != info.Graphics!.OriginalHash) throw new IOException("The graphics settings backup verification failed.");
+        }
         var prefix = Path.Combine(folder, "gasvr-play-" + id);
         WriteNew(prefix + ".lease.tmp", JsonSerializer.SerializeToUtf8Bytes(info));
         File.Move(prefix + ".lease.tmp", Path.Combine(folder, Installation.PlayLease));
@@ -337,6 +374,17 @@ internal static partial class VrPlaySession
             if (FileHash(target) != entry.StagedHash) throw new IOException("The installed input preset verification failed: " + inputs[i].RelativePath);
         }
         if (inputs.Count > 0) Record(id, "Staged driving bindings in " + string.Join(", ", inputs.Select(c => c.RelativePath)) + ".");
+        if (graphics is not null)
+        {
+            var temporary = graphics.Path + ".gasvr-" + id + ".tmp";
+            WriteNew(temporary, graphics.Staged);
+            if (FileHash(temporary) != info.Graphics!.StagedHash) throw new IOException("The staged graphics settings verification failed.");
+            EnsureIdle(folder);
+            if (FileHash(graphics.Path) != info.Graphics.OriginalHash) throw new IOException("The game's graphics settings changed during staging.");
+            File.Replace(temporary, graphics.Path, null);
+            if (FileHash(graphics.Path) != info.Graphics.StagedHash) throw new IOException("The installed graphics settings verification failed.");
+            Record(id, "Graphics for this session: " + graphics.Description + " (" + graphics.Path + "; the player's own file is restored afterwards).");
+        }
         WriteNew(prefix + ".exe.tmp", candidate);
         EnsureIdle(folder);
         if (FileHash(executable) != StockSha256 || FileHash(prefix + ".exe.tmp") != VrSha256) throw new IOException("The game files changed during staging.");
@@ -420,6 +468,7 @@ internal static partial class VrPlaySession
         if (FileHash(executable) != StockSha256) throw new IOException("Stock restoration could not be verified.");
         if (info.Flow) RestoreFlow(folder, saved, prefix, id);
         if (info.Inputs is not null) RestoreInputs(folder, saved, prefix, id, info.Inputs);
+        if (info.Graphics is not null) RestoreGraphics(saved, id, info.Graphics);
         RemoveMatching(Path.Combine(folder, BridgeName), info.BridgeHash!, id);
         if (info.SessionHash is not null)
         {
@@ -435,7 +484,39 @@ internal static partial class VrPlaySession
         File.Delete(backup);
         if (info.Flow) File.Delete(Path.Combine(saved, "original-flow.bin"));
         for (var i = 0; i < (info.Inputs?.Count ?? 0); ++i) File.Delete(InputBackup(saved, i));
+        if (info.Graphics is not null) File.Delete(GraphicsBackup(saved));
         return true;
+    }
+
+    // The player's own graphics settings come back after every session. Changes made in the game
+    // during the session last for that session only (as GRID2VR); its final file is kept in the
+    // session folder.
+    private static void RestoreGraphics(string saved, string id, InputFile entry)
+    {
+        if (entry.Path is null || !string.Equals(Path.GetFullPath(entry.Path), Path.GetFullPath(GraphicsCatalog.ConfigPath), StringComparison.OrdinalIgnoreCase) ||
+            !Sha256Text().IsMatch(entry.OriginalHash ?? "") || !Sha256Text().IsMatch(entry.StagedHash ?? ""))
+            throw new IOException("Invalid graphics settings entry in the VR play lease. The game files were preserved.");
+        var target = entry.Path;
+        var current = File.Exists(target) ? FileHash(target) : null;
+        if (current != entry.OriginalHash)
+        {
+            var backup = GraphicsBackup(saved);
+            if (FileHash(backup) != entry.OriginalHash) throw new IOException("The graphics settings backup failed verification. Your settings file was preserved: " + target);
+            if (current is not null && current != entry.StagedHash)
+            {
+                File.Copy(target, Path.Combine(saved, "session-hardware-settings.xml"), true);
+                Record(id, "The game changed its graphics settings during the session; that copy is session-hardware-settings.xml.");
+            }
+            var restoreTemp = target + ".gasvr-" + id + "-restore.tmp";
+            if (File.Exists(restoreTemp)) File.Delete(restoreTemp);
+            WriteNew(restoreTemp, File.ReadAllBytes(backup));
+            if (FileHash(restoreTemp) != entry.OriginalHash) throw new IOException("The graphics settings restore copy failed verification.");
+            if (current is null) File.Move(restoreTemp, target); else File.Replace(restoreTemp, target, null);
+        }
+        if (FileHash(target) != entry.OriginalHash) throw new IOException("Graphics settings restoration could not be verified: " + target);
+        var stageTemp = target + ".gasvr-" + id + ".tmp";
+        if (File.Exists(stageTemp) && FileHash(stageTemp) == entry.StagedHash) File.Delete(stageTemp);
+        Record(id, "Restored and verified the player's graphics settings.");
     }
 
     private static string InputBackup(string saved, int index) => Path.Combine(saved, "original-input-" + index + ".xml");

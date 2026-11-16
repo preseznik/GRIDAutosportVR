@@ -15,7 +15,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     decimal HudDistance = 1m, decimal ScreenDistance = 3m, bool Intro3D = false, DrivingBinding? RecenterDevice = null,
     bool NewCockpitTextures = false, string SeatKeys = GRIDAutosportVR.SeatKeys.Default, string Runtime = OpenXrRuntimes.Default,
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
-    int ForceFeedbackVibration = 100)
+    int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -127,6 +127,18 @@ internal static class LauncherSettings
         catch (JsonException error) { throw new JsonException(error.Message + " in " + fileName, error); }
     }
 
+    // Graphics → Graphics preset: {"Shadows": "ultra", …} for every quality category; absent for Game settings.
+    private static string ReadQuality(JsonObject document, string fileName)
+    {
+        if (!document.TryGetPropertyValue("graphicsQuality", out var node) || node is null) return "";
+        try
+        {
+            if (node is not JsonObject values) throw new ArgumentException("not an object");
+            return GraphicsCatalog.Encode(values.ToDictionary(p => p.Key, p => p.Value is JsonValue v && v.TryGetValue(out string? text) ? text : ""));
+        }
+        catch (ArgumentException) { throw new JsonException("graphicsQuality must list a supported choice for every graphics setting in " + fileName); }
+    }
+
     internal static bool ValidCar(string text) => System.Text.RegularExpressions.Regex.IsMatch(text, @"\A[a-z0-9_]{1,32}\z");
     internal static bool ValidTrack(string text) => System.Text.RegularExpressions.Regex.IsMatch(text, @"\A(circuits|cities)/[a-z0-9_]{1,40}/route_\d{1,2}\z");
 
@@ -159,7 +171,9 @@ internal static class LauncherSettings
             ReadFlag(document, "forceFeedbackOverride", false, fileName),
             ReadPercent(document, "forceFeedbackStrength", 0, fileName),
             ReadPercent(document, "forceFeedbackWeight", Choices.FfbMinimumWeight, fileName),
-            ReadPercent(document, "forceFeedbackVibration", 0, fileName));
+            ReadPercent(document, "forceFeedbackVibration", 0, fileName),
+            ReadQuality(document, fileName),
+            ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -203,6 +217,10 @@ internal static class LauncherSettings
         document["forceFeedbackStrength"] = choices.ForceFeedbackStrength;
         document["forceFeedbackWeight"] = choices.ForceFeedbackWeight;
         document["forceFeedbackVibration"] = choices.ForceFeedbackVibration;
+        if (!GraphicsCatalog.ValidQuality(choices.GraphicsQuality) || !GraphicsCatalog.ValidMsaa(choices.VrMsaa)) throw new ArgumentException("Unsupported graphics setting.");
+        if (choices.GraphicsQuality.Length == 0) document.Remove("graphicsQuality");
+        else document["graphicsQuality"] = new JsonObject(GraphicsCatalog.Decode(choices.GraphicsQuality)!.Select(p => KeyValuePair.Create(p.Key, (JsonNode?)p.Value)));
+        document["vrMsaa"] = choices.VrMsaa;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);
