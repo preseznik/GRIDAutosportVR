@@ -16,7 +16,8 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool NewCockpitTextures = false, string SeatKeys = GRIDAutosportVR.SeatKeys.Default, string Runtime = OpenXrRuntimes.Default,
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
     int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
-    bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false)
+    bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false,
+    string TextureFiltering = TextureFilters.Sharp)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -29,6 +30,17 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
 
     // The bridge's -gasvrhudparts mask: 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position info.
     internal int HudParts => (HudShow ? 1 : 0) | (HudDial ? 2 : 0) | (HudMinimap ? 4 : 0) | (HudCounters ? 8 : 0) | (HudPositions ? 16 : 0);
+}
+
+// Graphics -> VR rendering -> Texture filtering (bridge/texture_filtering.cpp, -gasvrtexturefilter).
+internal static class TextureFilters
+{
+    public const string Game = "game", Sharp = "16x", Steady = "16x-steady";
+    public static readonly string[] Ids = [Game, Sharp, Steady];
+    public static readonly (string Id, string Label)[] Labels =
+        [(Game, "Game (mostly 4x anisotropic)"), (Sharp, "16x anisotropic"), (Steady, "16x and steadier distance")];
+    // The bridge's argument, or null for the game's own filtering.
+    public static string? Argument(string id) => id switch { Sharp => "-gasvrtexturefilter=1", Steady => "-gasvrtexturefilter=2", _ => null };
 }
 
 internal static class LauncherSettings
@@ -176,7 +188,8 @@ internal static class LauncherSettings
             ReadQuality(document, fileName),
             ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName),
             ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName),
-            ReadFlag(document, "classicColor", false, fileName));
+            ReadFlag(document, "classicColor", false, fileName),
+            ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -227,6 +240,8 @@ internal static class LauncherSettings
         document["diagnosticLogging"] = choices.DiagnosticLogging;
         document["performanceDisplay"] = choices.PerformanceDisplay;
         document["classicColor"] = choices.ClassicColor;
+        if (!TextureFilters.Ids.Contains(choices.TextureFiltering)) throw new ArgumentException("Unsupported texture filtering.");
+        document["textureFiltering"] = choices.TextureFiltering;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

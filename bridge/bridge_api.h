@@ -37,6 +37,8 @@ float AutosportHudDistance();
 bool AutosportDiagnosticLogging();
 bool AutosportPerformanceDisplay();
 bool AutosportClassicColor();
+// Texture filtering (texture_filtering.cpp): sampler logging and the 16x anisotropic override.
+void AutosportConfigureTextureFiltering(ID3D11Device* device);
 float AutosportScreenDistance();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);

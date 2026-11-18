@@ -489,6 +489,7 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     if (!seat && regularPlay && headset && adapterReady && directory[0]) { seat = true; AutosportSeatConfigure(directory); }
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
+    if (SUCCEEDED(hr) && device && *device && headset) AutosportConfigureTextureFiltering(*device);
     if (SUCCEEDED(hr) && device && *device && regularPlay) {
         wchar_t game[MAX_PATH]{};
         const DWORD length = GetModuleFileNameW(nullptr, game, MAX_PATH);
