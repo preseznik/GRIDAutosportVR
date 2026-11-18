@@ -36,6 +36,7 @@ bool AutosportHudParts(unsigned& mask);
 float AutosportHudDistance();
 bool AutosportDiagnosticLogging();
 bool AutosportPerformanceDisplay();
+bool AutosportClassicColor();
 float AutosportScreenDistance();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);

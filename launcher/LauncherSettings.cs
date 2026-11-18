@@ -16,7 +16,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool NewCockpitTextures = false, string SeatKeys = GRIDAutosportVR.SeatKeys.Default, string Runtime = OpenXrRuntimes.Default,
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
     int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
-    bool DiagnosticLogging = false, bool PerformanceDisplay = false)
+    bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -175,7 +175,8 @@ internal static class LauncherSettings
             ReadPercent(document, "forceFeedbackVibration", 0, fileName),
             ReadQuality(document, fileName),
             ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName),
-            ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName));
+            ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName),
+            ReadFlag(document, "classicColor", false, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -225,6 +226,7 @@ internal static class LauncherSettings
         document["vrMsaa"] = choices.VrMsaa;
         document["diagnosticLogging"] = choices.DiagnosticLogging;
         document["performanceDisplay"] = choices.PerformanceDisplay;
+        document["classicColor"] = choices.ClassicColor;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

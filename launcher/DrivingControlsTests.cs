@@ -54,10 +54,24 @@ internal static class DrivingControlsTests
         Directory.CreateDirectory(input);
         static string Map(string header, params string[] actions) =>
             "<!-- test map -->\r\n" + header + "\r\n" + string.Concat(actions.Select(a => $"  <Action id=\"{a}\">\r\n    <Axis id=\"\" />\r\n  </Action>\r\n")) + "</ActionMap>\r\n";
-        File.WriteAllText(Path.Combine(input, "keyboard.xml"), Map("<ActionMap name=\"keyboard_default\" device_type=\"keyboard\" priority=\"11\">", "Accelerate", "Pause"));
+        // The game's look defaults (dinput_default.xml): Look Up on Rz, Look Left on Z, Look Back on a
+        // button, and a menu action sharing Rz; the keyboard's Look Back on P.
+        static string With(string map, string actions) => map.Replace("</ActionMap>", actions + "</ActionMap>");
+        static string Action(string id, params string[] entries) =>
+            $"  <Action id=\"{id}\">\r\n" + string.Concat(entries.Select(e => "    " + e + "\r\n")) + "  </Action>\r\n";
+        const string rz = "<Axis id=\"di_z_axis_rotation\" type=\"biDirLower\" deadzone=\"0.3\" saturation=\"0.8\" />";
+        File.WriteAllText(Path.Combine(input, "keyboard.xml"), With(Map("<ActionMap name=\"keyboard_default\" device_type=\"keyboard\" priority=\"11\">", "Accelerate", "Pause"),
+            Action("Look Back", "<Axis id=\"vk_code_0x50\" />") + Action("Look Left", "<Axis id=\"vk_code_0x4A\" />")));
         File.WriteAllText(Path.Combine(input, "xinput_pad_0.xml"), Map("<ActionMap name=\"xinput_pad\" device_type=\"xinput_pad\" priority=\"5\">", "Accelerate", "Pause"));
-        File.WriteAllText(Path.Combine(input, "dinput_default.xml"), Map("<ActionMap name=\"di_default\" device_type=\"di_default\" priority=\"16\">", "Accelerate", "Steer Left"));
-        File.WriteAllText(Path.Combine(input, "tm_t300rs.xml"), Map($"<ActionMap name=\"tm_t300_rs\" device_type_0=\"{Known}\" device_type_1=\"{{B660044F-0000-0000-0000-504944564944}}\" priority=\"0\" shouldbindalldevicetypes=\"true\">", "Accelerate"));
+        File.WriteAllText(Path.Combine(input, "dinput_default.xml"), With(Map("<ActionMap name=\"di_default\" device_type=\"di_default\" priority=\"16\">", "Accelerate", "Steer Left"),
+            Action("Look Up", rz) + Action("Look Left", "<Axis id=\"di_z_axis\" type=\"biDirLower\" deadzone=\"0.3\" saturation=\"0.8\" />") +
+            Action("Look Back", "<Axis id=\"di_button_11\" />") + Action("Look Down", "<Axis id=\"di_button_5\" />") + Action("Fe Menu Up", rz)));
+        const string pedals = "{B660044F-0000-0000-0000-504944564944}";
+        File.WriteAllText(Path.Combine(input, "tm_t300rs.xml"), With(Map($"<ActionMap name=\"tm_t300_rs\" device_type_0=\"{Known}\" device_type_1=\"{pedals}\" priority=\"0\" shouldbindalldevicetypes=\"true\">"),
+            Action("Accelerate", $"<Axis id=\"di_y_axis\" type=\"uniDirNeg\" deadzone=\"0.0\" saturation=\"1.0\" restricted_device=\"{Known}\" />",
+                   $"<Axis id=\"di_x_axis_rotation\" type=\"uniDirNeg\" deadzone=\"0.0\" saturation=\"1.0\" restricted_device=\"{pedals}\" />") +
+            Action("Look Up", $"<Axis id=\"di_y_axis_rotation\" type=\"biDirLower\" deadzone=\"0.1\" saturation=\"1.0\" restricted_device=\"{pedals}\" />",
+                   "<Axis id=\"di_button_3\" />")));
         var paths = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<dataset>\r\n" + string.Concat(new[] { "dinput_default", "keyboard", "tm_t300rs", "xinput_pad_0" }.Select(f =>
             $"  <xmlreader processor=\"Input\" filename=\"input/{f}.xml\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"presets\" />\r\n")) +
             "  <xmlreader processor=\"InputStrings\" filename=\"input/strings.xml\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"strings\" />\r\n</dataset>\r\n";
@@ -69,6 +83,7 @@ internal static class DrivingControlsTests
         controls.Bindings = [Pad("Accelerate", "xinput_right_trigger"), Pad("Pause", "xinput_button_y"),
             new() { Action = "Pause", Device = "Keyboard", DeviceId = "keyboard", DeviceType = "keyboard", Input = "vk_code_0x50" },
             Direct("Steer Left", Wheel, "di_x_axis", "biDirLower", .05m, .9m), Direct("Gear 1", Wheel, "di_button_12"),
+            Direct("Brake", Wheel, "di_z_axis_rotation", "uniDirNeg"), Direct("Gear Up", Wheel, "di_button_11"),
             Direct("Accelerate", Known, "di_y_axis", "uniDirNeg")];
         var changes = SessionInputMaps.Plan(game, controls);
         check(changes.Select(c => c.RelativePath).Order(StringComparer.Ordinal).SequenceEqual(
@@ -81,13 +96,28 @@ internal static class DrivingControlsTests
         check(Axes(pad, "Pause") is [var button] && (string?)button.Attribute("id") == "xinput_button_y" && button.Attribute("type") is null, "pad button written without calibration");
         check((string?)pad.Attribute("priority") == "5" && (string?)pad.Attribute("name") == "xinput_pad", "the stock map keeps its name and priority");
         check(Axes(Root("input/keyboard.xml"), "Pause") is [var key] && (string?)key.Attribute("id") == "vk_code_0x50", "keyboard map");
-        check(Axes(Root("input/tm_t300rs.xml"), "Accelerate") is [var pedal] && (string?)pedal.Attribute("type") == "uniDirNeg", "known wheel uses its own preset (device_type_0)");
+        var t300 = Root("input/tm_t300rs.xml");
+        check(Axes(t300, "Accelerate") is [var other, var pedal] && (string?)other.Attribute("restricted_device") == pedals &&
+              (string?)pedal.Attribute("id") == "di_y_axis" && (string?)pedal.Attribute("type") == "uniDirNeg" && (string?)pedal.Attribute("restricted_device") == Known,
+              "known wheel uses its own preset (device_type_0), restricted to its device, the pedals' input kept");
+        check(Axes(t300, "Look Up") is [var otherLook, var lookButton] && (string?)otherLook.Attribute("restricted_device") == pedals && (string?)lookButton.Attribute("id") == "di_button_3",
+              "a two-device preset: the other device's look axis and the look button stay");
+        var keys = Root("input/keyboard.xml");
+        check(Axes(keys, "Look Back") is [var freedKey] && (string?)freedKey.Attribute("id") == "" &&
+              Axes(keys, "Look Left") is [var lookKey] && (string?)lookKey.Attribute("id") == "vk_code_0x4A", "keyboard: a look key bound to Pause is cleared, other look keys stay");
         var added = Root("input/gasvr_device_0.xml");
         check((string?)added.Attribute("device_type") == Wheel && (string?)added.Attribute("priority") == "0" && (string?)added.Attribute("name") == "gasvr_device_0" &&
               added.Attribute("shouldbindalldevicetypes") is null, "unknown wheel: new preset from di_default");
         check(Axes(added, "Steer Left") is [var steer] && (string?)steer.Attribute("deadzone") == "0.05" && (string?)steer.Attribute("saturation") == "0.9" &&
               Axes(added, "Gear 1") is [var gear] && (string?)gear.Attribute("id") == "di_button_12" && Axes(added, "Accelerate") is [var unbound] && (string?)unbound.Attribute("id") == "",
               "new preset: bound actions written, an added action appended, the rest unbound");
+        // The reported skew: Brake on Rz while the game's Look Up stayed on Rz.
+        check(Axes(added, "Look Up") is [var lookUp] && (string?)lookUp.Attribute("id") == "" && Axes(added, "Look Left") is [var lookLeft] && (string?)lookLeft.Attribute("id") == "" &&
+              Axes(added, "Look Back") is [var lookBack] && (string?)lookBack.Attribute("id") == "" &&
+              Axes(added, "Look Down") is [var lookDown] && (string?)lookDown.Attribute("id") == "di_button_5", "wheel: look axes and the look button bound to Gear Up cleared, other look buttons kept");
+        check(Axes(added, "Fe Menu Up") is [var menu] && (string?)menu.Attribute("id") == "di_z_axis_rotation", "menu actions keep their shared inputs");
+        check(!added.Elements("Action").Where(a => SessionInputMaps.LookAction((string)a.Attribute("id")!)).SelectMany(a => a.Elements("Axis"))
+                  .Any(a => (string?)a.Attribute("id") == "di_z_axis_rotation"), "no look action left on the brake axis");
         var newPaths = Encoding.ASCII.GetString(changes.Single(c => c.RelativePath == "input/paths.xml").Content);
         var lines = newPaths.Split("\r\n");
         check(newPaths.Replace("  <xmlreader processor=\"Input\" filename=\"input/gasvr_device_0.xml\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"presets\" />\r\n", "") == paths &&

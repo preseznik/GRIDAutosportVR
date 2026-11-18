@@ -65,12 +65,27 @@ DXGI_FORMAT typedFormat(DXGI_FORMAT f) {
     }
 }
 
+// The sRGB format with the same bytes, or UNKNOWN when there is none.
+DXGI_FORMAT srgbVariant(DXGI_FORMAT f) {
+    switch (f) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    case DXGI_FORMAT_B8G8R8X8_UNORM: return DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+    default: return DXGI_FORMAT_UNKNOWN;
+    }
+}
+bool isSrgb(DXGI_FORMAT f) {
+    return f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || f == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+}
+
 struct Chain {
     XrSwapchain handle{};
     unsigned width{}, height{};
     DXGI_FORMAT format{};
     std::vector<XrSwapchainImageD3D11KHR> images;
 };
+// How the game's picture reaches an eye swapchain (Bridge::submit).
+struct EyeFormat { DXGI_FORMAT format; bool copy, decode; };
 struct PredicateScope {
     ID3D11DeviceContext* ctx;
     ComPtr<ID3D11Predicate> old;
@@ -326,7 +341,9 @@ struct Bridge {
     }
     void copySource(ID3D11Texture2D* source, unsigned subresource, const RECT (&r)[2], unsigned used, D3D11_TEXTURE2D_DESC& desc);
     void createChain(Chain& chain, UINT width, UINT height, DXGI_FORMAT format);
-    void convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RECT& rect);
+    void convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RECT& rect, bool decode);
+    EyeFormat eyeFormat(DXGI_FORMAT source) const;
+    DXGI_FORMAT loggedSource{}, loggedTarget{};
     bool submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePresentation presentation);
 };
 // Explicit teardown on the render thread; never dispatch GPU/runtime work from DLL detach.
@@ -663,17 +680,41 @@ void Bridge::createChain(Chain& chain, UINT width, UINT height, DXGI_FORMAT form
 
 // Convert formats through a private deferred context. Executing with restore=TRUE
 // preserves the game's immediate-context shaders, targets, viewports and resources.
-void Bridge::convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RECT& rect) {
+// The game's final picture holds display-encoded (sRGB) colour in a plain UNORM or float texture.
+// OpenXR runtimes read a non-sRGB swapchain as linear light and encode it again for the display,
+// which lifts the shadows and flattens contrast (the "washed out" look). As GRID2VR, the eye
+// images go to an sRGB swapchain: the same bytes copied for 8-bit sources, else decoded to linear
+// by the conversion shader so the sRGB target's hardware write encodes them once. Classic colors
+// (-gasvrclassiccolor=1) keeps the earlier choice: the source's own format, else the first offered.
+EyeFormat Bridge::eyeFormat(DXGI_FORMAT source) const {
+    auto available = [&](DXGI_FORMAT f) { return std::find(formats.begin(), formats.end(), int64_t(f)) != formats.end(); };
+    if (!AutosportClassicColor()) {
+        if (isSrgb(source) && available(source)) return {source, true, false};
+        if (const auto same = srgbVariant(source); same != DXGI_FORMAT_UNKNOWN && available(same)) return {same, true, false};
+        for (const auto srgb : {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB})
+            if (available(srgb)) return {srgb, false, !isSrgb(source)};
+    }
+    if (available(source)) return {source, true, false};
+    constexpr DXGI_FORMAT alternatives[] = {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+                                            DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM};
+    const auto choice = std::find_if(std::begin(alternatives), std::end(alternatives), available);
+    require(choice != std::end(alternatives), "no_supported_xr_color_format");
+    return {*choice, false, false};
+}
+
+void Bridge::convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RECT& rect, bool decode) {
     if (!deferred) {
         checked(device->CreateDeferredContext(0, &deferred), "create_conversion_context");
         constexpr char shader[] = R"(
             Texture2D<float4> source : register(t0);
-            cbuffer Crop : register(b0) { int2 origin; int2 unused; };
+            cbuffer Crop : register(b0) { int2 origin; int decode; int unused; };
             float4 vs(uint id : SV_VertexID) : SV_Position {
                 return float4(id==1 ? 3 : -1, id==2 ? -3 : 1, 0, 1);
             }
             float4 ps(float4 position : SV_Position) : SV_Target {
-                return float4(source.Load(int3(origin + int2(position.xy), 0)).rgb, 1);
+                float3 c = source.Load(int3(origin + int2(position.xy), 0)).rgb;
+                if (decode) { c = saturate(c); c = c <= .04045 ? c / 12.92 : pow((c + .055) / 1.055, 2.4); }
+                return float4(c, 1);
             })";
         ComPtr<ID3DBlob> vs, ps;
         checked(D3DCompile(shader, sizeof(shader)-1, nullptr,nullptr,nullptr,"vs","vs_4_0",0,0,&vs,nullptr), "compile_conversion_vs");
@@ -689,7 +730,7 @@ void Bridge::convert(ID3D11Texture2D* target, DXGI_FORMAT targetFormat, const RE
     desc.Format = targetFormat; desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
     ComPtr<ID3D11RenderTargetView> rtv;
     checked(device->CreateRenderTargetView(target,&desc,&rtv), "create_conversion_target");
-    const LONG origin[4] = {rect.left,rect.top,0,0};
+    const LONG origin[4] = {rect.left,rect.top,decode ? 1 : 0,0};
     deferred->UpdateSubresource(cropBuffer.Get(),0,nullptr,origin,0,0);
     D3D11_VIEWPORT viewport{0,0,float(rect.right-rect.left),float(rect.bottom-rect.top),0,1};
     deferred->RSSetViewports(1,&viewport);
@@ -808,14 +849,12 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         return false;
     }
     const unsigned eyeCount = flat ? 1u : 2u;
-    auto available = [&](DXGI_FORMAT f) { return std::find(formats.begin(), formats.end(), f) != formats.end(); };
-    DXGI_FORMAT format = sourceFormat;
-    if (!available(format)) {
-        constexpr DXGI_FORMAT alternatives[] = {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
-                                                DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM};
-        auto choice = std::find_if(std::begin(alternatives), std::end(alternatives), available);
-        require(choice != std::end(alternatives), "no_supported_xr_color_format");
-        format = *choice;
+    const EyeFormat chosen = eyeFormat(sourceFormat);
+    const DXGI_FORMAT format = chosen.format;
+    if (sourceFormat != loggedSource || format != loggedTarget) {
+        loggedSource = sourceFormat; loggedTarget = format;
+        AutosportLog("Eye colour: source format=%u swapchain format=%u %s%s", unsigned(sourceFormat), unsigned(format),
+                     chosen.copy ? "copy" : chosen.decode ? "decode_to_srgb" : "convert", AutosportClassicColor() ? " (classic colors)" : "");
     }
     for (unsigned i=0; i<eyeCount; ++i) {
         const auto& r = rects[i];
@@ -837,11 +876,11 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
             require(index < chain.images.size() && chain.images[index].texture, "invalid_swapchain_image");
             auto* target = chain.images[index].texture;
             gpuUsed = true;
-            if (format == sourceFormat) {
+            if (chosen.copy) {
                 const D3D11_BOX box{UINT(r.left),UINT(r.top),0,UINT(r.right),UINT(r.bottom),1};
                 context->CopySubresourceRegion(target,0,0,0,0,snapshot.Get(),0,&box);
             } else {
-                convert(target,format,r);
+                convert(target,format,r,chosen.decode);
             }
         } catch (...) {
             xrReleaseSwapchainImage(chain.handle,&release);

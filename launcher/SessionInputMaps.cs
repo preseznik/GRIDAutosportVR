@@ -92,22 +92,52 @@ internal static class SessionInputMaps
         System.Text.RegularExpressions.Regex.IsMatch(relative, @"\Ainput/[A-Za-z0-9_]{1,64}\.xml\z") || relative == PathsFile;
 
     // Every bound action of the family replaces that action's inputs in the map; several bindings
-    // for one action (two pads, say) are all kept, as the game's own maps do.
-    private static void Apply(XDocument document, IEnumerable<DrivingBinding> bindings)
+    // for one action (two pads, say) are all kept, as the game's own maps do. In a preset for two
+    // devices (a wheel base and its pedals: device_type_0 / device_type_1) the bindings are
+    // restricted to this family's device, and the other device's inputs for the action are kept.
+    //
+    // The look actions the launcher does not bind are then cleared of clashing inputs, as the
+    // game's own remap screen does when an input moves to another action. The game's defaults put
+    // Look Left/Right and Up/Down on the Z and Rz axes (a gamepad's right stick; dinput_default.xml
+    // and the presets copied from it), and some wheel presets on their pedal axes, so with Brake on
+    // Rz the view skewed at rest and swung while braking. Look actions lose any input this family
+    // binds; on a DirectInput device (a wheel, pedals) they also lose every axis, since its Z and Rz
+    // are pedals more often than a stick, and head tracking does the looking in VR. Buttons stay
+    // (Look Back on a wheel button). Menu actions share inputs with driving by design and are left
+    // alone.
+    private static void Apply(XDocument document, IGrouping<string, DrivingBinding> family)
     {
         var root = document.Root!;
-        foreach (var action in bindings.GroupBy(b => b.Action))
+        var shared = DeviceTypes(root).Count() > 1;
+        var directInput = family.Key is not ("keyboard" or "xinput_pad");
+        bool Ours(XElement entry) => (string?)entry.Attribute("restricted_device") is not { Length: > 0 } device ||
+                                     string.Equals(device, family.Key, StringComparison.OrdinalIgnoreCase);
+        foreach (var action in family.GroupBy(b => b.Action))
         {
             var element = root.Elements("Action").FirstOrDefault(e => (string?)e.Attribute("id") == action.Key);
             if (element is null) root.Add(element = new XElement("Action", new XAttribute("id", action.Key)));
-            element.Elements().Remove();
+            element.Elements().Where(Ours).ToList().Remove();
             foreach (var binding in action.DistinctBy(b => (b.Input, b.Calibration)))
-                element.Add(binding.Axis
-                    ? new XElement("Axis", new XAttribute("id", binding.Input), new XAttribute("type", binding.Calibration),
-                        new XAttribute("deadzone", Number(binding.DeadZone)), new XAttribute("saturation", Number(binding.Saturation)))
-                    : new XElement("Axis", new XAttribute("id", binding.Input)));
+                element.Add(new XElement("Axis", new XAttribute("id", binding.Input),
+                    binding.Axis ? new object[] { new XAttribute("type", binding.Calibration), new XAttribute("deadzone", Number(binding.DeadZone)),
+                                                  new XAttribute("saturation", Number(binding.Saturation)) } : [],
+                    shared ? new XAttribute("restricted_device", family.Key) : null));
+        }
+        var actions = family.Select(b => b.Action).ToHashSet(StringComparer.Ordinal);
+        var inputs = family.Select(b => b.Input).Where(input => input.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var element in root.Elements("Action").Where(e => (string?)e.Attribute("id") is { } id && LookAction(id) && !actions.Contains(id)).ToList())
+        {
+            var stale = element.Elements("Axis").Where(entry => Ours(entry) && (string?)entry.Attribute("id") is { Length: > 0 } input &&
+                (inputs.Contains(input) || directInput && entry.Attribute("type") is not null)).ToList();
+            if (stale.Count == 0) continue;
+            stale.Remove();
+            if (!element.Elements("Axis").Any()) element.Add(new XElement("Axis", new XAttribute("id", "")));
         }
     }
+
+    // The in-race look actions and the frontend's car view tweak (the same axes in the game's maps).
+    internal static bool LookAction(string id) =>
+        id.StartsWith("Look ", StringComparison.Ordinal) || id.StartsWith("Fe View Tweak ", StringComparison.Ordinal);
 
     private static string Number(decimal value) => value.ToString("0.0###", CultureInfo.InvariantCulture);
     private static string Sanitize(string text) => new(text.Where(c => c >= ' ' && c < 127 && c != '-').ToArray());

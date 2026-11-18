@@ -2,6 +2,8 @@
 
 ## 0.2.1
 
+- **Colors in VR no longer look washed out.** The headset now shows the game's colors as a monitor does, with full contrast and dark shadows. **Graphics → VR rendering → Classic colors** keeps the lighter look of 0.2.0 and earlier if you prefer it.
+- **The view no longer skews when you brake.** With launcher driving controls, the game's own default look mappings stayed on wheel axes, so on many wheels (Logitech G29 and G920, Fanatec Clubsport and others) the brake or clutch pedal also moved the view. Look actions you have not bound now lose any input you bound for driving and, on wheels and pedals, every axis; look buttons stay. In presets for a wheel base with separate pedals, a binding now applies only to the device you bound it on.
 - **Performance display.** Settings → Diagnostics → Performance display shows a small panel below your view in the headset: frames per second against the headset's refresh rate (amber while below it) and how busy your graphics card is. Off by default.
 - **Diagnostic logging.** Settings → Diagnostics → Diagnostic logging adds troubleshooting detail to the session logs (the frame rate and GPU usage each second, and a summary of your PC and VR runtime) for bug reports. Off by default; **Open logs** shows the files.
 

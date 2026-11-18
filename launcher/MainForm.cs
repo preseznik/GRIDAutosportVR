@@ -55,6 +55,8 @@ internal sealed partial class MainForm : LauncherForm
     // Settings → Diagnostics (GRID2VR's options): more detail in the session logs (the bridge's
     // -gasvrdiagnostics) and the in-VR FPS and GPU panel (-gasvrperformance).
     private readonly CheckBox diagnosticLogging = new() { Name = "DiagnosticLogging", AccessibleName = "Diagnostic logging", Text = "On", AutoSize = true };
+    // Graphics -> VR rendering -> Classic colors: the lighter look of 0.2.0 and earlier (-gasvrclassiccolor).
+    private readonly CheckBox classicColor = new() { Name = "ClassicColor", AccessibleName = "Classic colors", Text = "On", AutoSize = true };
     private readonly CheckBox performanceDisplay = new() { Name = "PerformanceDisplay", AccessibleName = "Performance display", Text = "FPS + GPU usage (VR)", AutoSize = true };
     // GRID2VR's Controls -> Driving -> Force feedback (bridge/force_feedback.cpp).
     private readonly CheckBox ffbOverride = new() { Name = "ForceFeedbackOverride", AccessibleName = "Use launcher force feedback", Text = "Use launcher force feedback", AutoSize = true };
@@ -156,6 +158,8 @@ internal sealed partial class MainForm : LauncherForm
         vrSummary.Name = "VrResolutionSummary"; vrSummary.Tag = "hint";
         Field(graphics, "Next VR launch", vrSummary);
         graphics.Controls.Add(TextLabel("100% renders each eye at the connected headset's recommended resolution. Lower values trade detail for performance; higher values sharpen the image and use more GPU time and memory. Headset output stays at 100%. The launcher reads the headset's resolution before every VR launch."));
+        Field(graphics, "Classic colors", classicColor);
+        graphics.Controls.Add(TextLabel("The headset shows the game's colors as a monitor does. Classic colors keeps the lighter, lower-contrast look of version 0.2.0 and earlier. Applies to the next VR launch."));
         if (CockpitTexturePack.Current is { } pack)
         {
             Section(graphics, "Cockpit textures");
@@ -301,6 +305,7 @@ internal sealed partial class MainForm : LauncherForm
         skipIntro.CheckedChanged += (_, _) => ChoiceEdited();
         diagnosticLogging.CheckedChanged += (_, _) => ChoiceEdited();
         performanceDisplay.CheckedChanged += (_, _) => ChoiceEdited();
+        classicColor.CheckedChanged += (_, _) => ChoiceEdited();
         ffbOverride.CheckedChanged += (_, _) => { RefreshForceFeedback(); ChoiceEdited(); };
         foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.ValueChanged += (_, _) => ChoiceEdited();
         RefreshForceFeedback();
@@ -393,7 +398,7 @@ internal sealed partial class MainForm : LauncherForm
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
-        diagnosticLogging.Checked, performanceDisplay.Checked);
+        diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked);
 
     private void RefreshForceFeedback()
     {
@@ -472,6 +477,7 @@ internal sealed partial class MainForm : LauncherForm
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D; skipIntro.Checked = choices.SkipIntro;
         diagnosticLogging.Checked = choices.DiagnosticLogging; performanceDisplay.Checked = choices.PerformanceDisplay;
+        classicColor.Checked = choices.ClassicColor;
         if (choices.ValidForceFeedback)
         {
             ffbStrength.Value = choices.ForceFeedbackStrength; ffbWeight.Value = choices.ForceFeedbackWeight; ffbVibration.Value = choices.ForceFeedbackVibration;
@@ -1024,6 +1030,7 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(hudCounters, "The lap and time counters.");
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
         tips.SetToolTip(ffbOverride, ForceFeedbackHelp);
+        tips.SetToolTip(classicColor, "On: the lighter, lower-contrast colors of version 0.2.0 and earlier. Off (default): the headset matches the game on a monitor.");
         tips.SetToolTip(diagnosticLogging, "On: the next VR launch saves extra troubleshooting detail in its session logs (a line a second while driving). Leave off for normal play.");
         tips.SetToolTip(performanceDisplay, "On: the next VR launch shows FPS (frames sent to the headset each second, against its refresh rate) and GPU usage (the graphics card's busiest engine, other applications included) in a small panel below your view. N/A means unavailable.");
         tips.SetToolTip(skipIntro, "On: the game's two startup logo videos are skipped when it starts in VR. Applies to the next VR launch.");

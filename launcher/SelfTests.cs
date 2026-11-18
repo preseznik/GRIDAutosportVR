@@ -65,8 +65,8 @@ internal static class SelfTests
         // VR runtime choice: saved, refused when unknown; Default writes no session file.
         LauncherSettings.Save(new Choices(Runtime: OpenXrRuntimes.SteamVr, SkipIntro: true), file);
         Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr && LauncherSettings.Load(file).SkipIntro);
-        LauncherSettings.Save(new Choices(DiagnosticLogging: true, PerformanceDisplay: true), file);
-        Check(LauncherSettings.Load(file).DiagnosticLogging && LauncherSettings.Load(file).PerformanceDisplay);
+        LauncherSettings.Save(new Choices(DiagnosticLogging: true, PerformanceDisplay: true, ClassicColor: true), file);
+        Check(LauncherSettings.Load(file).DiagnosticLogging && LauncherSettings.Load(file).PerformanceDisplay && LauncherSettings.Load(file).ClassicColor);
         LauncherSettings.Save(new Choices(), file);
         Check(!LauncherSettings.Load(file).DiagnosticLogging && !LauncherSettings.Load(file).PerformanceDisplay);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
@@ -242,7 +242,9 @@ internal static class SelfTests
         Check(!new Choices().SkipIntro && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrskipintro=1"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(SkipIntro: true), null).Contains("-gasvrskipintro=1"));
         // Settings -> Diagnostics: both off by default, saved, and passed to the bridge only when on.
-        Check(!new Choices().DiagnosticLogging && !new Choices().PerformanceDisplay);
+        Check(!new Choices().DiagnosticLogging && !new Choices().PerformanceDisplay && !new Choices().ClassicColor);
+        Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrclassiccolor=1"));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ClassicColor: true), null).Contains("-gasvrclassiccolor=1"));
         var quiet = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null);
         Check(!quiet.Contains("-gasvrdiagnostics=1") && !quiet.Contains("-gasvrperformance=1"));
         var diagnostic = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(DiagnosticLogging: true, PerformanceDisplay: true), null);
