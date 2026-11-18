@@ -67,8 +67,8 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr && LauncherSettings.Load(file).SkipIntro);
         LauncherSettings.Save(new Choices(DiagnosticLogging: true, PerformanceDisplay: true, ClassicColor: true), file);
         Check(LauncherSettings.Load(file).DiagnosticLogging && LauncherSettings.Load(file).PerformanceDisplay && LauncherSettings.Load(file).ClassicColor);
-        LauncherSettings.Save(new Choices(TextureFiltering: TextureFilters.Steady), file);
-        Check(LauncherSettings.Load(file).TextureFiltering == TextureFilters.Steady);
+        LauncherSettings.Save(new Choices(TextureFiltering: TextureFilters.Steady, ShadowBias: 400), file);
+        Check(LauncherSettings.Load(file).TextureFiltering == TextureFilters.Steady && LauncherSettings.Load(file).ShadowBias == 400);
         LauncherSettings.Save(new Choices(), file);
         Check(!LauncherSettings.Load(file).DiagnosticLogging && !LauncherSettings.Load(file).PerformanceDisplay);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
@@ -234,7 +234,7 @@ internal static class SelfTests
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
              "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1",
-             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300", "-gasvrtexturefilter=1", "-gasvrseatkeys=9,38,40,37,39"]));
+             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300", "-gasvrtexturefilter=1", "-gasvrshadowbias=200", "-gasvrseatkeys=9,38,40,37,39"]));
         var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
         Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
@@ -251,6 +251,9 @@ internal static class SelfTests
         Check(new Choices().TextureFiltering == TextureFilters.Sharp && quietFilter("-gasvrtexturefilter=1", new Choices()) &&
               quietFilter("-gasvrtexturefilter=2", new Choices(TextureFiltering: TextureFilters.Steady)) &&
               !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(TextureFiltering: TextureFilters.Game), null).Any(a => a.StartsWith("-gasvrtexturefilter", StringComparison.Ordinal)));
+        // Shadow acne fix: 2x by default; Off passes nothing.
+        Check(new Choices().ShadowBias == 200 && quietFilter("-gasvrshadowbias=200", new Choices()) && quietFilter("-gasvrshadowbias=400", new Choices(ShadowBias: 400)) &&
+              !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ShadowBias: 100), null).Any(a => a.StartsWith("-gasvrshadowbias", StringComparison.Ordinal)));
         static bool quietFilter(string argument, Choices choices) => VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", choices, null).Contains(argument);
         var quiet = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null);
         Check(!quiet.Contains("-gasvrdiagnostics=1") && !quiet.Contains("-gasvrperformance=1"));

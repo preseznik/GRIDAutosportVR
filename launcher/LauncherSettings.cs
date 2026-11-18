@@ -17,7 +17,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
     int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
     bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false,
-    string TextureFiltering = TextureFilters.Sharp)
+    string TextureFiltering = TextureFilters.Sharp, int ShadowBias = ShadowBiases.Default)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -41,6 +41,16 @@ internal static class TextureFilters
         [(Game, "Game (mostly 4x anisotropic)"), (Sharp, "16x anisotropic"), (Steady, "16x and steadier distance")];
     // The bridge's argument, or null for the game's own filtering.
     public static string? Argument(string id) => id switch { Sharp => "-gasvrtexturefilter=1", Steady => "-gasvrtexturefilter=2", _ => null };
+}
+
+// Graphics -> VR rendering -> Shadow acne fix (bridge/shadow_bias.cpp, -gasvrshadowbias=PERCENT): the
+// game's shadow-pass depth bias, scaled. 100 is the game's own.
+internal static class ShadowBiases
+{
+    public const int Default = 200;
+    public static readonly (int Percent, string Label)[] Labels = [(100, "Off (game's shadows)"), (200, "2x shadow bias"), (400, "4x shadow bias")];
+    public static bool Valid(int percent) => Labels.Any(l => l.Percent == percent);
+    public static string? Argument(int percent) => percent == 100 ? null : "-gasvrshadowbias=" + percent.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 
 internal static class LauncherSettings
@@ -189,7 +199,15 @@ internal static class LauncherSettings
             ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName),
             ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName),
             ReadFlag(document, "classicColor", false, fileName),
-            ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName));
+            ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName),
+            ReadShadowBias(document, fileName));
+    }
+
+    private static int ReadShadowBias(JsonObject document, string fileName)
+    {
+        if (!document.TryGetPropertyValue("shadowBias", out var node)) return ShadowBiases.Default;
+        if (node is JsonValue value && value.TryGetValue(out int percent) && ShadowBiases.Valid(percent)) return percent;
+        throw new JsonException("shadowBias must be 100, 200 or 400 in " + fileName);
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -242,6 +260,8 @@ internal static class LauncherSettings
         document["classicColor"] = choices.ClassicColor;
         if (!TextureFilters.Ids.Contains(choices.TextureFiltering)) throw new ArgumentException("Unsupported texture filtering.");
         document["textureFiltering"] = choices.TextureFiltering;
+        if (!ShadowBiases.Valid(choices.ShadowBias)) throw new ArgumentException("Unsupported shadow bias.");
+        document["shadowBias"] = choices.ShadowBias;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

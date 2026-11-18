@@ -170,6 +170,7 @@ internal static partial class VrPlaySession
          .. choices.PerformanceDisplay ? new[] { "-gasvrperformance=1" } : [],
          .. choices.ClassicColor ? new[] { "-gasvrclassiccolor=1" } : [],
          .. TextureFilters.Argument(choices.TextureFiltering) is { } filter ? new[] { filter } : [],
+         .. ShadowBiases.Argument(choices.ShadowBias) is { } bias ? new[] { bias } : [],
          .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          "-gasvrseatkeys=" + choices.SeatKeys,
@@ -229,7 +230,7 @@ internal static partial class VrPlaySession
                "; system OpenXR runtime " + (system ?? "none") + "; OpenXR add-on layers " + (layers.Count == 0 ? "none" : string.Join(", ", layers)) +
                (disabled.Count > 0 ? " (" + disabled.Count + " disabled for this session)" : "") +
                $"; render scale {choices.VrRenderScale}%, HUD {(choices.HudFollowView ? "follows view" : "fixed")} at {choices.HudDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, " +
-               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}, {(choices.ClassicColor ? "classic" : "accurate")} colors, texture filtering {choices.TextureFiltering}.";
+               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}, {(choices.ClassicColor ? "classic" : "accurate")} colors, texture filtering {choices.TextureFiltering}, shadow bias {choices.ShadowBias}%.";
     }
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).

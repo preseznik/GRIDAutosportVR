@@ -39,6 +39,8 @@ bool AutosportPerformanceDisplay();
 bool AutosportClassicColor();
 // Texture filtering (texture_filtering.cpp): sampler logging and the 16x anisotropic override.
 void AutosportConfigureTextureFiltering(ID3D11Device* device);
+// Shadow acne (shadow_bias.cpp): rasterizer state logging and the -gasvrshadowbias depth bias scale.
+void AutosportConfigureShadowBias(ID3D11Device* device);
 float AutosportScreenDistance();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);

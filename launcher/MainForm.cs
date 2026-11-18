@@ -57,6 +57,7 @@ internal sealed partial class MainForm : LauncherForm
     private readonly CheckBox diagnosticLogging = new() { Name = "DiagnosticLogging", AccessibleName = "Diagnostic logging", Text = "On", AutoSize = true };
     // Graphics -> VR rendering -> Classic colors: the lighter look of 0.2.0 and earlier (-gasvrclassiccolor).
     private readonly ComboBox textureFiltering = new() { Name = "TextureFiltering", AccessibleName = "Texture filtering", DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
+    private readonly ComboBox shadowBias = new() { Name = "ShadowBias", AccessibleName = "Shadow acne fix", DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
     private readonly CheckBox classicColor = new() { Name = "ClassicColor", AccessibleName = "Classic colors", Text = "On", AutoSize = true };
     private readonly CheckBox performanceDisplay = new() { Name = "PerformanceDisplay", AccessibleName = "Performance display", Text = "FPS + GPU usage (VR)", AutoSize = true };
     // GRID2VR's Controls -> Driving -> Force feedback (bridge/force_feedback.cpp).
@@ -163,6 +164,10 @@ internal sealed partial class MainForm : LauncherForm
         textureFiltering.SelectedIndex = 1;
         Field(graphics, "Texture filtering", textureFiltering);
         graphics.Controls.Add(TextLabel("The game filters most surfaces at only 4x anisotropic, so building walls, barriers and the road shimmer as you drive. 16x anisotropic keeps them sharp and steady at steep angles. Steadier distance also softens distant textures slightly, for the least shimmer. A higher VR render scale reduces shimmer further. Applies to the next VR launch."));
+        foreach (var (percent, label) in ShadowBiases.Labels) shadowBias.Items.Add(new Option(percent.ToString(System.Globalization.CultureInfo.InvariantCulture), label));
+        shadowBias.SelectedIndex = 1;
+        Field(graphics, "Shadow acne fix", shadowBias);
+        graphics.Controls.Add(TextLabel("Thin shadow stripes across sunlit walls that move with your head are shadow acne: the game's shadow bias suits its desktop camera, not a headset's wider view. 2x or 4x shadow bias removes more of them; a stronger bias can lift shadows slightly off the surfaces they touch. Applies to the next VR launch."));
         Field(graphics, "Classic colors", classicColor);
         graphics.Controls.Add(TextLabel("The headset shows the game's colors as a monitor does. Classic colors keeps the lighter, lower-contrast look of version 0.2.0 and earlier. Applies to the next VR launch."));
         if (CockpitTexturePack.Current is { } pack)
@@ -312,6 +317,7 @@ internal sealed partial class MainForm : LauncherForm
         performanceDisplay.CheckedChanged += (_, _) => ChoiceEdited();
         classicColor.CheckedChanged += (_, _) => ChoiceEdited();
         textureFiltering.SelectedIndexChanged += (_, _) => ChoiceEdited();
+        shadowBias.SelectedIndexChanged += (_, _) => ChoiceEdited();
         ffbOverride.CheckedChanged += (_, _) => { RefreshForceFeedback(); ChoiceEdited(); };
         foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.ValueChanged += (_, _) => ChoiceEdited();
         RefreshForceFeedback();
@@ -405,7 +411,8 @@ internal sealed partial class MainForm : LauncherForm
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
         diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked,
-        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp);
+        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp,
+        int.TryParse((shadowBias.SelectedItem as Option)?.Id, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var bias) ? bias : ShadowBiases.Default);
 
     private void RefreshForceFeedback()
     {
@@ -486,6 +493,7 @@ internal sealed partial class MainForm : LauncherForm
         diagnosticLogging.Checked = choices.DiagnosticLogging; performanceDisplay.Checked = choices.PerformanceDisplay;
         classicColor.Checked = choices.ClassicColor;
         textureFiltering.SelectedIndex = Math.Max(0, Array.IndexOf(TextureFilters.Ids, choices.TextureFiltering));
+        shadowBias.SelectedIndex = Math.Max(0, Array.FindIndex(ShadowBiases.Labels, l => l.Percent == choices.ShadowBias));
         if (choices.ValidForceFeedback)
         {
             ffbStrength.Value = choices.ForceFeedbackStrength; ffbWeight.Value = choices.ForceFeedbackWeight; ffbVibration.Value = choices.ForceFeedbackVibration;
@@ -1039,6 +1047,7 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
         tips.SetToolTip(ffbOverride, ForceFeedbackHelp);
         tips.SetToolTip(textureFiltering, "How sharply the game's textures are filtered in VR. 16x anisotropic (default) reduces shimmer on walls and the road while driving; Steadier distance trades a little distant sharpness for less shimmer; Game keeps the game's own, mostly 4x.");
+        tips.SetToolTip(shadowBias, "Scales the game's shadow depth bias in VR, against thin shadow stripes (shadow acne) on sunlit walls. 2x by default; Off keeps the game's own.");
         tips.SetToolTip(classicColor, "On: the lighter, lower-contrast colors of version 0.2.0 and earlier. Off (default): the headset matches the game on a monitor.");
         tips.SetToolTip(diagnosticLogging, "On: the next VR launch saves extra troubleshooting detail in its session logs (a line a second while driving). Leave off for normal play.");
         tips.SetToolTip(performanceDisplay, "On: the next VR launch shows FPS (frames sent to the headset each second, against its refresh rate) and GPU usage (the graphics card's busiest engine, other applications included) in a small panel below your view. N/A means unavailable.");
