@@ -65,6 +65,10 @@ internal static class SelfTests
         // VR runtime choice: saved, refused when unknown; Default writes no session file.
         LauncherSettings.Save(new Choices(Runtime: OpenXrRuntimes.SteamVr, SkipIntro: true), file);
         Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr && LauncherSettings.Load(file).SkipIntro);
+        LauncherSettings.Save(new Choices(DiagnosticLogging: true, PerformanceDisplay: true), file);
+        Check(LauncherSettings.Load(file).DiagnosticLogging && LauncherSettings.Load(file).PerformanceDisplay);
+        LauncherSettings.Save(new Choices(), file);
+        Check(!LauncherSettings.Load(file).DiagnosticLogging && !LauncherSettings.Load(file).PerformanceDisplay);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
         // Launcher force feedback: saved, and refused outside strength 0-100, weight 1-100, vibration 0-100.
         var ffb = new Choices(ForceFeedbackOverride: true, ForceFeedbackStrength: 80, ForceFeedbackWeight: 40, ForceFeedbackVibration: 0);
@@ -237,6 +241,14 @@ internal static class SelfTests
         // Skip intro / logos: off by default, saved, and passed to the bridge only when on.
         Check(!new Choices().SkipIntro && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrskipintro=1"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(SkipIntro: true), null).Contains("-gasvrskipintro=1"));
+        // Settings -> Diagnostics: both off by default, saved, and passed to the bridge only when on.
+        Check(!new Choices().DiagnosticLogging && !new Choices().PerformanceDisplay);
+        var quiet = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null);
+        Check(!quiet.Contains("-gasvrdiagnostics=1") && !quiet.Contains("-gasvrperformance=1"));
+        var diagnostic = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(DiagnosticLogging: true, PerformanceDisplay: true), null);
+        Check(diagnostic.Contains("-gasvrdiagnostics=1") && diagnostic.Contains("-gasvrperformance=1") && !diagnostic.Contains("-gasvrperfdump=1"));
+        var summary = VrPlaySession.SystemSummary(new Choices(HudDistance: 1.5m, PerformanceDisplay: true), []);
+        Check(summary.StartsWith("Diagnostics: GRID Autosport VR ", StringComparison.Ordinal) && summary.Contains("HUD fixed at 1.5 m") && summary.Contains("performance display on"));
         // Force feedback: no argument when off or at 100/100/100 (the game's own force); otherwise S,W,V.
         Check(!new Choices().ForceFeedbackOverride && !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ForceFeedbackStrength: 50), null).Any(a => a.StartsWith("-gasvrffb")));
         Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ForceFeedbackOverride: true), null).Any(a => a.StartsWith("-gasvrffb")));
@@ -410,7 +422,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Headset check", "VR compatibility", "Launcher preferences", "Play", "Performance", "Controls & comfort"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Diagnostics", "Headset check", "VR compatibility", "Launcher preferences", "Play", "Performance", "Controls & comfort"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }

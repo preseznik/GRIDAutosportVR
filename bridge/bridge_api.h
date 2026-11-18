@@ -34,6 +34,8 @@ void __fastcall AutosportOpponentLodApply(void* manager, void*);
 bool AutosportHudFollowsView();
 bool AutosportHudParts(unsigned& mask);
 float AutosportHudDistance();
+bool AutosportDiagnosticLogging();
+bool AutosportPerformanceDisplay();
 float AutosportScreenDistance();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);

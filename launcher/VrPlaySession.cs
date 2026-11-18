@@ -166,6 +166,8 @@ internal static partial class VrPlaySession
          "-gasvrscreendistance=" + (int)(choices.ScreenDistance * 100m),
          .. choices.Intro3D ? new[] { "-gasvrintro3d=1" } : [],
          .. choices.SkipIntro ? new[] { "-gasvrskipintro=1" } : [],
+         .. choices.DiagnosticLogging ? new[] { "-gasvrdiagnostics=1" } : [],
+         .. choices.PerformanceDisplay ? new[] { "-gasvrperformance=1" } : [],
          .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          "-gasvrseatkeys=" + choices.SeatKeys,
@@ -214,6 +216,20 @@ internal static partial class VrPlaySession
         return pack.Version;
     }
 
+    // Settings → Diagnostics → Diagnostic logging: this PC and the launcher's choices, for bug reports.
+    internal static string SystemSummary(Choices choices, IReadOnlyList<VrLayerBypass> disabled)
+    {
+        var gpu = GraphicsRecommendation.DetectGpu();
+        var system = OpenXrRuntimes.SystemManifest();
+        var layers = VrApiLayers.Catalog().Select(layer => layer.LayerName).ToList();
+        return "Diagnostics: GRID Autosport VR " + Updates.CurrentVersion + " on " + Environment.OSVersion.VersionString +
+               (Environment.Is64BitOperatingSystem ? " 64-bit" : "") + "; GPU " + (gpu is null ? "unknown" : $"{gpu.Name} ({gpu.DedicatedMb} MB)") +
+               "; system OpenXR runtime " + (system ?? "none") + "; OpenXR add-on layers " + (layers.Count == 0 ? "none" : string.Join(", ", layers)) +
+               (disabled.Count > 0 ? " (" + disabled.Count + " disabled for this session)" : "") +
+               $"; render scale {choices.VrRenderScale}%, HUD {(choices.HudFollowView ? "follows view" : "fixed")} at {choices.HudDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, " +
+               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}.";
+    }
+
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
     // layers: OpenXR add-on layers the VR renderer disables for this session (VrApiLayers.cs).
     public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null,
@@ -252,6 +268,7 @@ internal static partial class VrPlaySession
                 if (cockpitNote is not null) Record(id, cockpitNote);
                 if (claim is not null) Record(id, "Practice / Race controller: the first connected of " + string.Join(", ", claim) + ".");
                 if (renderNote is not null) Record(id, renderNote);
+                if (choices.DiagnosticLogging) Record(id, SystemSummary(choices, layers ?? []));
                 if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
                 Record(id, "Requesting normal play through Steam.");
                 VrLaunchStatus.Report(VrLaunchStatus.Steam, "Steam is starting GRID Autosport…", id);

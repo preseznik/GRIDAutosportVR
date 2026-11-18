@@ -36,6 +36,10 @@ bool introShot;
 // 2D broadcast layer. Later shots (finish cameras, results) still use the seated screen.
 bool intro3d;
 bool skipIntro; // -gasvrskipintro=1: the startup movies end at once (skippingBinkWait).
+// Launcher Settings → Diagnostics: -gasvrdiagnostics=1 adds detail to bridge.log (a frame-rate and GPU
+// line each second in VR, sampled native frames); -gasvrperformance=1 shows the in-VR FPS / GPU panel.
+bool diagnosticLogging;
+bool performanceDisplay;
 bool carCameraSeen;
 // The game object whose byte +0x1301 is set while the in-race pause menu is open (recorded at
 // pause entry, forgotten on every loading state), and whether this native frame shows it.
@@ -93,6 +97,8 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
     startInCockpit = wcsstr(cmd, L" -gasvrcockpit=1") != nullptr;
     intro3d = wcsstr(cmd, L" -gasvrintro3d=1") != nullptr;
     skipIntro = wcsstr(cmd, L" -gasvrskipintro=1") != nullptr;
+    diagnosticLogging = wcsstr(cmd, L" -gasvrdiagnostics=1") != nullptr;
+    performanceDisplay = wcsstr(cmd, L" -gasvrperformance=1") != nullptr;
     constexpr wchar_t playArg[] = L" -gasvrplay=";
     if (const wchar_t* flag = wcsstr(cmd, playArg)) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
@@ -487,9 +493,9 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
             AutosportConfigureCockpitTextures(*device, directory, game);
         }
     }
-    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f",
+    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f diagnostics=%d performanceDisplay=%d",
                  hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession,
-                 hudPartsForced, hudParts, hudDistance, screenDistance);
+                 hudPartsForced, hudParts, hudDistance, screenDistance, diagnosticLogging, performanceDisplay);
     return hr;
 }
 
@@ -552,6 +558,8 @@ bool AutosportEyeSizeRequest(unsigned& width, unsigned& height) {
 bool AutosportHudFollowsView() { return uiComparison ? captures == 1 : hudFollowsView; }
 bool AutosportHudParts(unsigned& mask) { mask = hudParts; return hudPartsForced; }
 float AutosportHudDistance() { return hudDistance; }
+bool AutosportDiagnosticLogging() { return diagnosticLogging; }
+bool AutosportPerformanceDisplay() { return performanceDisplay; }
 float AutosportScreenDistance() { return screenDistance; }
 // Every bridge session (headset play and the capture benchmark) keeps the game running when its
 // window is inactive; the game otherwise drops to ~18 fps and pauses its startup videos.

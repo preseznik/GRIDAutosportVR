@@ -15,7 +15,8 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     decimal HudDistance = 1m, decimal ScreenDistance = 3m, bool Intro3D = false, DrivingBinding? RecenterDevice = null,
     bool NewCockpitTextures = false, string SeatKeys = GRIDAutosportVR.SeatKeys.Default, string Runtime = OpenXrRuntimes.Default,
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
-    int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings)
+    int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
+    bool DiagnosticLogging = false, bool PerformanceDisplay = false)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -173,7 +174,8 @@ internal static class LauncherSettings
             ReadPercent(document, "forceFeedbackWeight", Choices.FfbMinimumWeight, fileName),
             ReadPercent(document, "forceFeedbackVibration", 0, fileName),
             ReadQuality(document, fileName),
-            ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName));
+            ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName),
+            ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -221,6 +223,8 @@ internal static class LauncherSettings
         if (choices.GraphicsQuality.Length == 0) document.Remove("graphicsQuality");
         else document["graphicsQuality"] = new JsonObject(GraphicsCatalog.Decode(choices.GraphicsQuality)!.Select(p => KeyValuePair.Create(p.Key, (JsonNode?)p.Value)));
         document["vrMsaa"] = choices.VrMsaa;
+        document["diagnosticLogging"] = choices.DiagnosticLogging;
+        document["performanceDisplay"] = choices.PerformanceDisplay;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

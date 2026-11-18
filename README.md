@@ -18,6 +18,7 @@ The portable ZIP works the same way: extract it into your GRID Autosport folder 
 
 - **Settings → Paths and runtime → VR runtime** picks **OpenXR (system Default)** (your PC's 32-bit OpenXR runtime), **VDXR** (Virtual Desktop; keep SteamVR closed) or **SteamVR**, for the next VR launch only.
 - **Settings → Paths and runtime → Skip intro / logos** skips the two startup logo videos when the game starts in VR.
+- **Settings → Diagnostics → Performance display** shows frames per second (against the headset's rate) and GPU usage in a small panel below your view in VR. **Diagnostic logging** adds the frame rate and GPU usage each second and a summary of your PC and VR runtime to the session logs, for bug reports. Both are off by default.
 - **Controls → Driving → Force feedback**, with "Use launcher force feedback" on, shapes the force the game sends to your wheel in VR: Wheel weight scales the steady steering force, Vibration the kerbs, road surface and impacts, and Strength both. 100% is the game's own force, and the game's own force feedback settings still apply.
 - Press **F10** (or the key set under **Controls → VR**) to recenter. The game's own F11 also works. **Controls → VR → Controller / wheel recenter** adds a button on an Xbox controller or a wheel.
 - **Graphics → VR rendering** sets the VR render scale; 100% is the headset's recommended resolution.

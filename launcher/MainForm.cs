@@ -52,6 +52,10 @@ internal sealed partial class MainForm : LauncherForm
     private readonly ComboBox runtime = Choice("VrRuntime");
     // Settings → Paths and runtime → Skip intro / logos (GRID2VR's option; the bridge's -gasvrskipintro).
     private readonly CheckBox skipIntro = new() { Name = "SkipIntro", AccessibleName = "Skip intro / logos", Text = "On", AutoSize = true };
+    // Settings → Diagnostics (GRID2VR's options): more detail in the session logs (the bridge's
+    // -gasvrdiagnostics) and the in-VR FPS and GPU panel (-gasvrperformance).
+    private readonly CheckBox diagnosticLogging = new() { Name = "DiagnosticLogging", AccessibleName = "Diagnostic logging", Text = "On", AutoSize = true };
+    private readonly CheckBox performanceDisplay = new() { Name = "PerformanceDisplay", AccessibleName = "Performance display", Text = "FPS + GPU usage (VR)", AutoSize = true };
     // GRID2VR's Controls -> Driving -> Force feedback (bridge/force_feedback.cpp).
     private readonly CheckBox ffbOverride = new() { Name = "ForceFeedbackOverride", AccessibleName = "Use launcher force feedback", Text = "Use launcher force feedback", AutoSize = true };
     private readonly ValueSlider ffbWeight = new("ForceFeedbackWeight", Choices.FfbMinimumWeight, 100, 100, suffix: "%");
@@ -243,6 +247,10 @@ internal sealed partial class MainForm : LauncherForm
         settings.Controls.Add(TextLabel("OpenXR (system Default) uses this PC's 32-bit OpenXR runtime. VDXR connects through Virtual Desktop (keep SteamVR closed); SteamVR connects through SteamVR. The choice applies to the headset check and the next VR launch only; the system default is unchanged."));
         Field(settings, "Skip intro / logos", skipIntro);
         settings.Controls.Add(TextLabel("Skips the two startup logo videos when the game starts in VR. Practice and Race have none; the career's discipline videos and the pre-race intro shots still play. Applies to the next VR launch."));
+        Section(settings, "Diagnostics");
+        Field(settings, "Diagnostic logging", diagnosticLogging);
+        Field(settings, "Performance display", performanceDisplay);
+        settings.Controls.Add(TextLabel("Diagnostic logging adds detail to the session logs for troubleshooting: the frame rate and GPU usage each second, and this PC's graphics card, Windows version and OpenXR runtime. The performance display shows frames per second against the headset's rate and GPU usage in the headset, in a small panel below your view. Both apply to the next VR launch; Open logs shows the files."));
         Section(settings, "Headset check");
         settings.Controls.Add(TextLabel("Check the 32-bit OpenXR runtime, or show a marker in each eye for up to 20 seconds. Connect your headset first."));
         var probeActions = new FlowLayoutPanel { Name = "HeadsetCheckActions", AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8) };
@@ -291,6 +299,8 @@ internal sealed partial class MainForm : LauncherForm
         screenDistance.ValueChanged += (_, _) => ChoiceEdited();
         intro3d.CheckedChanged += (_, _) => ChoiceEdited();
         skipIntro.CheckedChanged += (_, _) => ChoiceEdited();
+        diagnosticLogging.CheckedChanged += (_, _) => ChoiceEdited();
+        performanceDisplay.CheckedChanged += (_, _) => ChoiceEdited();
         ffbOverride.CheckedChanged += (_, _) => { RefreshForceFeedback(); ChoiceEdited(); };
         foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.ValueChanged += (_, _) => ChoiceEdited();
         RefreshForceFeedback();
@@ -382,7 +392,8 @@ internal sealed partial class MainForm : LauncherForm
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
-        ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice);
+        ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
+        diagnosticLogging.Checked, performanceDisplay.Checked);
 
     private void RefreshForceFeedback()
     {
@@ -460,6 +471,7 @@ internal sealed partial class MainForm : LauncherForm
         hudShow.Checked = choices.HudShow; hudDial.Checked = choices.HudDial; hudMinimap.Checked = choices.HudMinimap;
         hudCounters.Checked = choices.HudCounters; hudPositions.Checked = choices.HudPositions; hudDistance.Value = choices.HudDistance;
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D; skipIntro.Checked = choices.SkipIntro;
+        diagnosticLogging.Checked = choices.DiagnosticLogging; performanceDisplay.Checked = choices.PerformanceDisplay;
         if (choices.ValidForceFeedback)
         {
             ffbStrength.Value = choices.ForceFeedbackStrength; ffbWeight.Value = choices.ForceFeedbackWeight; ffbVibration.Value = choices.ForceFeedbackVibration;
@@ -1012,6 +1024,8 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(hudCounters, "The lap and time counters.");
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
         tips.SetToolTip(ffbOverride, ForceFeedbackHelp);
+        tips.SetToolTip(diagnosticLogging, "On: the next VR launch saves extra troubleshooting detail in its session logs (a line a second while driving). Leave off for normal play.");
+        tips.SetToolTip(performanceDisplay, "On: the next VR launch shows FPS (frames sent to the headset each second, against its refresh rate) and GPU usage (the graphics card's busiest engine, other applications included) in a small panel below your view. N/A means unavailable.");
         tips.SetToolTip(skipIntro, "On: the game's two startup logo videos are skipped when it starts in VR. Applies to the next VR launch.");
         tips.SetToolTip(intro3d, "On: the camera shots before a race starts are shown in 3D around you, without the game's 2D info panel and wipes. Off: they play on the screen ahead of you. Finish cameras and results always use the screen. Applies to the next VR launch.");
         tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 3 m. Applies to the next VR launch.");

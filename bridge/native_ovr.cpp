@@ -725,7 +725,8 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
                              rects[1].left, rects[1].top, rects[1].right, rects[1].bottom, frame);
             }
         }
-        if (frame == 1 || frame % 1800 == 0 || result.captured)
+        // Diagnostic logging samples every 300th frame (about 3 s), else every 1800th.
+        if (frame == 1 || frame % (AutosportDiagnosticLogging() ? 300 : 1800) == 0 || result.captured)
             AutosportLog("Frame %llu pose-mask=%u packed=%p submitted=%u status=%s", frame, requestedEyes,
                          static_cast<void*>(eyes[0].texture), result.submitted, AutosportBridgeStatus());
         if (result.captured) {

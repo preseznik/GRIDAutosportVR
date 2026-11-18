@@ -1,6 +1,6 @@
 """Release checks for Launch VR on xr-sim, through Steam and the launcher's own session supervisor.
 
-    python tools/release_check.py LAUNCHER_FOLDER [--only preset,interrupted,normal]
+    python tools/release_check.py LAUNCHER_FOLDER [--only preset,interrupted,normal,diagnostics]
 
 LAUNCHER_FOLDER holds GRIDAutosportVR.exe with probe\\AutosportXRProbe.exe and renderer\\gasxr.dll
 (a package's GRIDAutosportVR folder, or a build with both copied in). Steam must already be running.
@@ -16,6 +16,8 @@ started by Steam runs on xr-sim (OpenXrRuntimes.TestVdxrManifest). xr-sim uses i
   interrupted  Practice with Potato; the supervisor and the game are killed mid-race, then
                --restore-play must restore the game files and the player's graphics settings.
   normal       Normal play with Game settings: the settings file is not touched.
+  diagnostics  Practice with Diagnostic logging and the performance display on: the system summary in
+               supervisor.log, the panel shown and redrawn, and a frame-rate and GPU line each second.
 
 The launcher's own files (settings.json, last-vr-performance.json, vr-launch.json, headset.json) and
 the player's hardware_settings_config.xml are backed up first and restored byte for byte at the end.
@@ -50,7 +52,7 @@ def running(name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("launcher")
-    parser.add_argument("--only", default="preset,interrupted,normal")
+    parser.add_argument("--only", default="preset,interrupted,normal,diagnostics")
     parser.add_argument("--drive", type=int, default=45, help="Seconds in VR before ending the session")
     args = parser.parse_args()
     exe = Path(args.launcher) / "GRIDAutosportVR.exe"
@@ -116,9 +118,12 @@ def main():
         row["configRestored"] = sha(CONFIG) == player_sha
         folder = DATA / "sessions" / (session_id or "-")
         log = (folder / "supervisor.log").read_text(errors="replace") if (folder / "supervisor.log").exists() else ""
-        row["supervisorLog"] = [line.split(" ", 1)[1] for line in log.splitlines() if any(k in line for k in ("Graphics", "graphics", "Frame rate", "Restored and verified", "exited", "VR runtime"))]
+        row["supervisorLog"] = [line.split(" ", 1)[1] for line in log.splitlines() if any(k in line for k in ("Graphics", "graphics", "Frame rate", "Restored and verified", "exited", "VR runtime", "Diagnostics:"))]
         bridge = (folder / "bridge.log").read_text(errors="replace") if (folder / "bridge.log").exists() else ""
-        row["bridge"] = [line.split("] ", 1)[1][:160] for line in bridge.splitlines() if any(k in line for k in ("OpenXR runtime", "VR failed", "display_hz", "Frame rate windows", "state=FOCUSED"))][:8]
+        row["bridge"] = [line.split("] ", 1)[1][:160] for line in bridge.splitlines() if any(k in line for k in ("OpenXR runtime", "VR failed", "display_hz=", "Frame rate windows", "state=FOCUSED", "Performance")) and "Frame rate second" not in line][:10]
+        seconds = [line for line in bridge.splitlines() if "Frame rate second" in line]
+        row["frameRateSeconds"] = len(seconds)
+        row["gpuSeconds"] = sum(1 for line in seconds if line.rstrip().endswith("%"))
         print(name, json.dumps(row, indent=1), flush=True)
         results[name] = row
         return row
@@ -144,6 +149,15 @@ def main():
             row = session("normal", drive=15)
             # The game rewrites its own file as it starts; the launcher must simply not stage one.
             row["pass"] = bool(row["configDuring"] is not None and not any("Graphics for this session" in l for l in row["supervisorLog"]) and
+                               not row["leaseAfter"] and row["steps"] and row["steps"][-1][1] == "VR is running.")
+        if "diagnostics" in only:
+            settings(launchMode="Practice", laps=3, graphicsQuality=None, vrMsaa="game", vrRenderScale=100, diagnosticLogging=True, performanceDisplay=True)
+            row = session("diagnostics", drive=20)
+            closing = next((l for l in row["bridge"] if l.startswith("Performance display=")), "")
+            updates = int(closing.split("updates=")[1].split()[0]) if "updates=" in closing else 0
+            row["pass"] = bool(any(l.startswith("Diagnostics: ") for l in row["supervisorLog"]) and
+                               "Performance meters: display=1 (shown) diagnostics=1 gpu_counter=1" in row["bridge"] and
+                               updates >= 15 and row["frameRateSeconds"] >= 15 and row["gpuSeconds"] >= 10 and
                                not row["leaseAfter"] and row["steps"] and row["steps"][-1][1] == "VR is running.")
     finally:
         # The game rewrites its settings file when it exits; the player's own comes back either way.

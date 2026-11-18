@@ -1,6 +1,7 @@
 #include "xr_bridge.h"
 #include "bridge_api.h"
 #include "eye_dump.h"
+#include "performance_display.h"
 #include <wrl/client.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -103,6 +104,28 @@ bool levelAnchor(const XrPosef& head, XrPosef& anchor, double distance = Autospo
               {p.x+float(distance*x),p.y-drop,p.z+float(distance*z)}};
     return true;
 }
+// performance-display.bmp (-gasvrperfdump=1): 32-bit, bottom-up, from RGBA pixels.
+void writePanelPicture(const std::vector<uint32_t>& rgba) {
+    const wchar_t* folder = AutosportRunDirectory();
+    if (!folder || !*folder) return;
+    wchar_t path[MAX_PATH];
+    if (swprintf_s(path, L"%s\\performance-display.bmp", folder) < 0) return;
+    constexpr unsigned w = PerformanceDisplay::Width, h = PerformanceDisplay::Height;
+    BITMAPFILEHEADER file{0x4d42, DWORD(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + w * h * 4), 0, 0,
+                          DWORD(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER))};
+    BITMAPINFOHEADER info{sizeof(BITMAPINFOHEADER), LONG(w), LONG(h), 1, 32, BI_RGB};
+    FILE* out{};
+    if (_wfopen_s(&out, path, L"wb") != 0 || !out) return;
+    fwrite(&file, sizeof(file), 1, out);
+    fwrite(&info, sizeof(info), 1, out);
+    for (unsigned y = h; y-- > 0;)
+        for (unsigned x = 0; x < w; ++x) {
+            const uint32_t p = rgba[size_t(y) * w + x];
+            const uint32_t bgra = (p & 0xff00ff00) | ((p & 0xff) << 16) | ((p >> 16) & 0xff);
+            fwrite(&bgra, 4, 1, out);
+        }
+    fclose(out);
+}
 // Graphics → Last VR session in the launcher: the frame rate while the race is shown in stereo,
 // in one-second windows. A window holds only stereo frames without a gap over 250 ms, so menus,
 // the seated screen, pauses and loading end it. Written to performance.json in the session
@@ -143,6 +166,16 @@ struct FrameRate {
 struct Bridge {
     DWORD owner{GetCurrentThreadId()};
     FrameRate frameRate;
+    // Settings -> Diagnostics (performance_display.h): frames sent each second, GPU usage, and the
+    // in-VR panel. Started with the first submitted frame when either option is on.
+    SubmittedFrameRate sent;
+    GpuUsageSampler gpu;
+    PerformanceDisplay meter;
+    bool metersStarted{};
+    double displayHz() const { return period > 0 ? 1e9 / double(period) : 0.0; }
+    void startMeters();
+    const XrCompositionLayerBaseHeader* meterLayer();
+    void frameSent();
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context, deferred;
     ComPtr<ID3D11Texture2D> snapshot;
@@ -174,16 +207,25 @@ struct Bridge {
     std::vector<int64_t> formats;
     void initXR();
     bool locate();
-    void end(const XrCompositionLayerBaseHeader* layer = nullptr, const XrCompositionLayerBaseHeader* overlay = nullptr) {
+    // The frame's layers in order (null entries skipped): the eye images or seated screen first,
+    // then the seat panel and the performance display over them.
+    void end(const XrCompositionLayerBaseHeader* layer = nullptr, const XrCompositionLayerBaseHeader* overlay = nullptr,
+             const XrCompositionLayerBaseHeader* top = nullptr) {
         active = false;
         if (!frameOpen) return;
         frameOpen = false;
-        const XrCompositionLayerBaseHeader* layers[2]{layer, overlay};
+        const XrCompositionLayerBaseHeader* layers[3]{};
+        uint32_t count = 0;
+        if (layer) {
+            layers[count++] = layer;
+            if (overlay) layers[count++] = overlay;
+            if (top) layers[count++] = top;
+        }
         XrFrameEndInfo info{XR_TYPE_FRAME_END_INFO};
         info.displayTime = time;
         info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-        info.layerCount = layer ? (overlay ? 2u : 1u) : 0u;
-        info.layers = layer ? layers : nullptr;
+        info.layerCount = count;
+        info.layers = count ? layers : nullptr;
         checked(xrEndFrame(session, &info), "xrEndFrame");
     }
     // The in-game seat panel (seat.cpp, picture from seat_panel.cpp): a quad in front of the seat,
@@ -267,6 +309,12 @@ struct Bridge {
         AutosportLog("XR shutdown handshake=%s releasing_gpu_and_swapchains", outcome);
         dropChains();
         dropPanel();
+        if (metersStarted && (AutosportPerformanceDisplay() || AutosportDiagnosticLogging())) {
+            AutosportLog("Performance display=%u updates=%u last_fps=%.1f last_gpu=%.0f display_hz=%.2f",
+                         unsigned(meter.Enabled()), meter.Updates(), sent.Fps(), gpu.Percent(), displayHz());
+            gpu.Stop();
+            if (!meter.Shutdown()) AutosportLog("XR shutdown performance_display_swapchain=failed");
+        }
         AutosportLog("XR shutdown swapchains_released destroying_spaces");
         if (headSpace) { checked(xrDestroySpace(headSpace), "xrDestroyViewSpace"); headSpace = {}; }
         if (local) { checked(xrDestroySpace(local), "xrDestroySpace"); local = {}; }
@@ -828,7 +876,8 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         // view): 4:3 keeps the original 2.4 x 1.8 m.
         screen.size = aspect >= 2.4f / 1.8f ? XrExtent2Df{2.4f, 2.4f / aspect} : XrExtent2Df{1.8f * aspect, 1.8f};
         frameRate.interrupt();
-        end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screen));
+        end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&screen), meterLayer());
+        frameSent();
         return true;
     }
     XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -855,9 +904,43 @@ bool Bridge::submit(const RECT (&rects)[2], DXGI_FORMAT sourceFormat, BridgePres
         panel.size = {.6f, .8f};
     }
     end(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection),
-        showPanel ? reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panel) : nullptr);
+        showPanel ? reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panel) : nullptr, meterLayer());
     frameRate.stereo();
+    frameSent();
     return true;
+}
+
+void Bridge::startMeters() {
+    metersStarted = true;
+    const bool display = AutosportPerformanceDisplay(), diagnostics = AutosportDiagnosticLogging();
+    if (!display && !diagnostics) return;
+    const bool sampling = gpu.Start(device.Get());
+    const bool shown = display && meter.Initialize(session, headSpace, device.Get(), context.Get(), formats, AutosportHudDistance());
+    AutosportLog("Performance meters: display=%u (%s) diagnostics=%u gpu_counter=%u", unsigned(display),
+                 display ? (shown ? "shown" : "unavailable") : "off", unsigned(diagnostics), unsigned(sampling));
+}
+// The performance display's quad for this frame, or null.
+const XrCompositionLayerBaseHeader* Bridge::meterLayer() {
+    if (!metersStarted) startMeters();
+    if (!meter.Enabled()) return nullptr;
+    const auto* quad = meter.Layer(GetTickCount64(), sent.Fps(), displayHz(), gpu.Percent(), gpuUsed);
+    if (!quad && !meter.Enabled()) AutosportLog("Performance display stopped: its swapchain image could not be updated");
+    // Test only (never passed by the launcher): -gasvrperfdump=1 saves the panel's first picture
+    // as performance-display.bmp in the session folder, so it can be checked without a headset.
+    static bool dumped;
+    if (quad && meter.Updates() == 1 && !dumped && wcsstr(GetCommandLineW(), L" -gasvrperfdump=1")) {
+        dumped = true;
+        writePanelPicture(PerformanceDisplay::Pixels(sent.Fps(), displayHz(), gpu.Percent()));
+    }
+    return reinterpret_cast<const XrCompositionLayerBaseHeader*>(quad);
+}
+// A frame reached the headset: the frames-sent rate, and with diagnostic logging a line a second.
+void Bridge::frameSent() {
+    if (!sent.Frame(GetTickCount64()) || !AutosportDiagnosticLogging()) return;
+    const double usage = gpu.Percent();
+    char gpuText[16];
+    if (usage < 0) strcpy_s(gpuText, "n/a"); else sprintf_s(gpuText, "%.0f%%", usage);
+    AutosportLog("Frame rate second fps=%.1f display_hz=%.2f gpu=%s", sent.Fps(), displayHz(), gpuText);
 }
 
 bool Bridge::updatePanel(const SeatPanelState& seat) {
