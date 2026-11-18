@@ -3,8 +3,9 @@
 // desktop camera; each VR eye's much wider view spreads the shadow cascades over more of the world
 // per texel, and that bias no longer covers it. ID3D11Device::CreateRasterizerState (vtable slot
 // 22) is watched in VR sessions: with diagnostic logging each distinct state is logged once, and
-// -gasvrshadowbias=PERCENT scales the depth bias and slope-scaled depth bias of the states that
-// have one (100 leaves them unchanged).
+// -gasvrshadowbias=PERCENT (test only; the launcher never passes it) scales the depth bias and
+// slope-scaled depth bias of the states that have one. In the headset even 4x made no difference:
+// the moving shadows come from the cascades being refitted to each view.
 #include "bridge_api.h"
 #include <windows.h>
 #include <d3d11.h>
