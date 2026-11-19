@@ -2,7 +2,7 @@
 
 ## 0.2.2
 
-- **No more shadow stripes on buildings.** With the sun behind you, sunlit walls showed dark stripes that changed as you turned your head. The game keeps the scene's depth in 16 bits, too coarse for the cockpit camera's close near plane, so its shadows misjudged where walls are. VR now keeps the scene's depth in 32 bits. The test build's **VR shadows** option is gone: it did not help.
+- **No more shadow stripes on buildings.** With the sun behind you, sunlit walls showed dark stripes that changed as you turned your head. The game keeps the scene's depth in 16 bits, too coarse for the cockpit camera's close near plane, so its shadows misjudged where walls are. VR now keeps the scene's depth in 32 bits.
 - **The 2014 GRIDAutosport.exe works too.** Besides the Steam version, the launcher now accepts GRIDAutosport.exe 1.0.103.1840 from 2014 in any folder, starts it directly instead of through Steam, and the VR renderer supports it with all the same features. When a chosen folder is not usable, the launcher says why.
 
 ## 0.2.1
