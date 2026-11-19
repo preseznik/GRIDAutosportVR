@@ -905,7 +905,8 @@ bool AutosportInstallNativeOvr() noexcept {
         site(0x14949B, 0x2C1250, hudEnabled),
         site(0x1494E8, 0x9F0F90, hudPartSetting), site(0x149538, 0x9F0F90, hudPartSetting),
         site(0x149586, 0x9F0F90, hudPartSetting), site(0x1495D1, 0x9F0F90, hudPartSetting),
-        site(0x255EB2, 0x247C60, pauseEntered), site(0x5FE647, 0x5FDB40, AutosportOpponentLodApply)
+        site(0x255EB2, 0x247C60, pauseEntered), site(0x5FE647, 0x5FDB40, AutosportOpponentLodApply),
+        site(0x28B7E4, 0x284BF0, AutosportShadowFit)
     };
     // Original worker return: clear both active flags, pop EBX (only on the
     // results path), then the common pop ESI / pop EBP / ret 4.
@@ -945,6 +946,7 @@ bool AutosportInstallNativeOvr() noexcept {
         pages[count++] = {page, original};
     }
     stockEyeDesc = reinterpret_cast<NativeEyeDesc>(base + 0x678000);
+    AutosportConfigureShadowProbe(base);
     stockOrtho = reinterpret_cast<NativeOrtho>(base + 0xA9E6D0);
     stockCameraUpdate = reinterpret_cast<NativeCameraUpdate>(base + 0x11D4D0);
     AutosportBindLoadingOverlay(base);
@@ -974,4 +976,18 @@ bool AutosportInstallNativeOvr() noexcept {
         if (!FlushInstructionCache(GetCurrentProcess(), pages[i].address, 4096)) ok = false;
     }
     return ok;
+}
+
+uint64_t AutosportNativeFrame() { return frame; }
+void AutosportHeadOrientation(float (&q)[4]) {
+    const auto& r = poses[0].q;
+    q[0] = r.x; q[1] = r.y; q[2] = r.z; q[3] = r.w;
+}
+bool AutosportHeadsetFov(float (&tangents)[4]) {
+    if (!descriptors) return false;
+    const Fov& a = descriptors[0].fov;
+    const Fov& b = descriptors[1].fov;
+    tangents[0] = (std::max)(a.up, b.up); tangents[1] = (std::max)(a.down, b.down);
+    tangents[2] = (std::max)(a.left, b.left); tangents[3] = (std::max)(a.right, b.right);
+    return true;
 }

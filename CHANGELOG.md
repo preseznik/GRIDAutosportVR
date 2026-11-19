@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- **Steadier shadows on buildings.** With the sun behind you, shadows on walls changed shape as you moved your head: the game fits its detailed shadows to its desktop camera, about 50 degrees straight ahead, while a headset sees about twice that wherever you look. **Graphics → VR rendering → VR shadows** now fits them to your view (**Follow your view**, the default), or covers the headset's view around the car's direction (**Wide around the car**), or keeps the game's fit. Covering more ground makes shadows a little softer; a higher shadow quality sharpens them again.
+
 ## 0.2.1
 
 - **Colors in VR no longer look washed out.** The headset now shows the game's colors as a monitor does, with full contrast and dark shadows. **Graphics → VR rendering → Classic colors** keeps the lighter look of 0.2.0 and earlier if you prefer it.

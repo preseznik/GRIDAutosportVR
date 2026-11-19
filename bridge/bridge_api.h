@@ -1,5 +1,6 @@
 #pragma once
 #include <d3d11.h>
+#include <cstdint>
 
 bool AutosportUseHeadset();
 bool AutosportRegularPlay();
@@ -41,6 +42,14 @@ bool AutosportClassicColor();
 void AutosportConfigureTextureFiltering(ID3D11Device* device);
 // Shadow acne (shadow_bias.cpp): rasterizer state logging and the -gasvrshadowbias depth bias scale.
 void AutosportConfigureShadowBias(ID3D11Device* device);
+// Shadow cascades (shadow_probe.cpp): the fit call (RVA 28B7E4 -> 284BF0) and its research probe.
+void __fastcall AutosportShadowFit(void* self, void* edx, void* a0, void* a1, void* a2, void* a3, void* camera);
+void AutosportConfigureShadowProbe(const BYTE* image);
+// The native frame serial and the head orientation (x, y, z, w) given to the game (native_ovr.cpp).
+uint64_t AutosportNativeFrame();
+void AutosportHeadOrientation(float (&q)[4]);
+// Both eyes' field of view as tangents (up, down, left, right, each the larger of the two eyes).
+bool AutosportHeadsetFov(float (&tangents)[4]);
 float AutosportScreenDistance();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);
