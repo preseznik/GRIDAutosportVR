@@ -1,5 +1,6 @@
 #include "native_ovr.h"
 #include "loading_overlay.h"
+#include "game_build.h"
 #include "bridge_api.h"
 #include "xr_bridge.h"
 #include <algorithm>
@@ -750,9 +751,9 @@ void __cdecl endFrame(Hmd* target, const Pose*, const EyeTexture* eyes) {
 
 struct Site { UINT call, target; void (__cdecl *replacement)(); UINT resume; };
 void __cdecl prepareGameExit() {
-    AutosportLog("Native terminal cleanup RVA=49E8E0 callerThread=%lu", GetCurrentThreadId());
+    AutosportLog("Native terminal cleanup RVA=%X callerThread=%lu", AutosportGameBuild()->terminalCleanup, GetCurrentThreadId());
     AutosportPrepareForGameExit();
-    reinterpret_cast<void (__cdecl*)()>(gameImage + 0x49E8E0)();
+    reinterpret_cast<void (__cdecl*)()>(gameImage + AutosportGameBuild()->terminalCleanup)();
 }
 void __cdecl finishBenchmark() {
     // The benchmark worker has already committed to ExitProcess(0). Let it
@@ -767,7 +768,7 @@ void __cdecl finishBenchmark() {
     }
     AutosportLog("Native benchmark window unavailable; forwarding original terminal exit");
     AutosportPrepareForGameExit();
-    reinterpret_cast<void (__cdecl*)()>(gameImage + 0x4EE040)();
+    reinterpret_cast<void (__cdecl*)()>(gameImage + AutosportGameBuild()->terminalExit)();
     ExitProcess(0);
 }
 // Race start camera. When the race scene begins, RVA 2D4AE5 looks up the player's view by
@@ -789,7 +790,7 @@ int __fastcall raceStartView(void* manager, void*, const char* requested) {
     if (cockpit >= 0) {
         using ViewFn = const BYTE* (__thiscall*)(void*, int);
         __try {
-            const BYTE* view = reinterpret_cast<ViewFn>(const_cast<BYTE*>(gameImage) + 0x80DEE0)(manager, cockpit);
+            const BYTE* view = reinterpret_cast<ViewFn>(const_cast<BYTE*>(gameImage) + AutosportGameBuild()->vehicleView)(manager, cockpit);
             const BYTE* owner = *reinterpret_cast<const BYTE* const*>(view + 0x84);
             const char* name = *reinterpret_cast<const char* const*>(owner + 8);
             for (int i = 0; i < 3 && name[i]; ++i) car[i] = name[i];
@@ -826,9 +827,9 @@ struct ForcedSetting { void* const* vtable; int value; };
 int __fastcall forcedSettingValue(const ForcedSetting* self, void*) { return self->value; }
 void* forcedSettingTable[4]{};
 ForcedSetting forcedOff{forcedSettingTable, 0}, forcedOn{forcedSettingTable, 1};
-// The RVAs of the interned setting names the four lookups pass, and the launcher's bit for each.
-constexpr struct { UINT name; unsigned bit; } hudPartNames[] = {
-    {0xCD6A68, 2}, {0xCD6A5C, 4}, {0xCD6A4C, 8}, {0xCD6A3C, 16}}; // dial, minimap, counters, positions_OSD
+// The launcher's bit for each of the interned setting names the four lookups pass (GameBuild
+// hudNames): dial, minimap, counters, positions_OSD.
+constexpr unsigned hudPartBits[] = {2, 4, 8, 16};
 int __fastcall hudEnabled(void* settings, void*) {
     unsigned mask;
     if (!AutosportHudParts(mask)) return stockHudEnabled(settings);
@@ -839,8 +840,8 @@ int __fastcall hudEnabled(void* settings, void*) {
 void* __fastcall hudPartSetting(void* container, void*, void* category, const char* name) {
     unsigned mask;
     if (AutosportHudParts(mask))
-        for (const auto& part : hudPartNames)
-            if (name == reinterpret_cast<const char*>(gameImage + part.name)) return mask & part.bit ? &forcedOn : &forcedOff;
+        for (int i = 0; i < 4; ++i)
+            if (name == reinterpret_cast<const char*>(gameImage + AutosportGameBuild()->hudNames[i])) return mask & hudPartBits[i] ? &forcedOn : &forcedOff;
     return stockSettingLookup(container, category, name);
 }
 
@@ -854,7 +855,7 @@ int __fastcall pauseEntered(void* state, void*) {
     __try {
         const BYTE* context = *reinterpret_cast<BYTE* const*>(static_cast<BYTE*>(state) + 0xC);
         BYTE* const* services = *reinterpret_cast<BYTE* const* const*>(context + 4);
-        const unsigned index = *reinterpret_cast<const unsigned*>(gameImage + 0xE5749C);
+        const unsigned index = *reinterpret_cast<const unsigned*>(gameImage + AutosportGameBuild()->pauseService);
         AutosportSetPauseState(services[index]);
         AutosportLog("Race pause entered at frame=%llu flag=%u", frame, unsigned(services[index][0x1301]));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -870,48 +871,67 @@ template<class F> Site site(UINT call, UINT target, F callback, UINT resume = 0)
 
 bool AutosportInstallNativeOvr() noexcept {
     auto* base = reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));
-    if (!base) return false;
-    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
-    const auto* pe = reinterpret_cast<const IMAGE_NT_HEADERS32*>(base + dos->e_lfanew);
-    if (pe->Signature != IMAGE_NT_SIGNATURE || pe->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
-        pe->FileHeader.TimeDateStamp != 0x5c8007d1 || pe->OptionalHeader.SizeOfImage != 0x1083000) return false;
-    // All HMD-dependent game→SDK calls in GRIDAutosport_avx.exe, plus SDK initialization and shutdown.
+    const GameBuild* build = AutosportGameBuild();
+    if (!base || !build) return false;
+    AutosportLog("Game build: %s", build->name);
+    // All HMD-dependent game->SDK calls, plus SDK initialization and shutdown (game_build.h).
     // The game retains its shared perspective and ortho projections. Only the named OSD
     // camera temporarily receives the seated projection during its stereo draw.
     const BYTE drawFrame[] = {0x53,0x8b,0xdc,0x83,0xec,0x08,0x83,0xe4,0xf0,0x83,0xc4,0x04,0x55,0x8b,0x6b,0x04};
     const BYTE osdCaller[] = {0x8b,0x86,0x64,0x01,0x00,0x00,0x8b,0x88,0x98,0x00,0x00,0x00,
         0x8b,0x90,0x94,0x00,0x00,0x00,0x8b,0x86,0xbc,0x00,0x00,0x00,0x6a,0x10,
-        0x6a,0x00,0x51,0x52,0x50,0xe8,0x90,0x90,0x56,0x00};
-    if (std::memcmp(base + 0x720B80, drawFrame, sizeof(drawFrame)) ||
-        std::memcmp(base + 0x1B7ACC, osdCaller, sizeof(osdCaller))) return false;
-    const Site sites[] = {
-        site(0x2B29A3, 0x49E8E0, prepareGameExit),
-        site(0x685011, 0x4EE040, finishBenchmark, 0x68506B),
-        site(0x6851F4, 0x4EE040, finishBenchmark, 0x68505C),
-        site(0x1B7B63, 0x720B80, AutosportDrawFrontendOverlay), site(0x1B7B98, 0x720B80, AutosportDrawFrontendOverlay),
-        site(0x1B7C09, 0x720B80, AutosportDrawFrontendOverlay),
-        site(0x1D5221, 0x9FFBC0, AutosportSlateVisibility), site(0x1D5482, 0x9FFBC0, AutosportSlateVisibility),
-        site(0x243F26, 0x9F6C80, AutosportLoadingEntered), site(0x243FC9, 0x9F6C80, AutosportLoadingExitedThunk),
-        site(0x4DBFCB, 0xA9E420, endFrame), site(0x4DC25D, 0xA9E3B0, beginFrame),
-        site(0x4DEF77, 0xA9E240, destroyHmd), site(0x4DEF7F, 0xA9DE10, shutdownLegacySdk),
-        site(0x4DFF38, 0xA9EB40, initialize), site(0x4DFF3F, 0xA9E750, createHmd),
-        site(0x4E06BB, 0xA9E1F0, attachWindow), site(0x4E119A, 0xA9E690, dismissHealthWarning),
-        site(0x59E7F6, 0xA9E350, textureSize), site(0x59E894, 0xA9E850, eyePose),
-        site(0x59E92B, 0xA9DEA0, recenterTracking), site(0x5C52EE, 0xA9DED0, configureRenderer),
-        site(0x5C5306, 0xA9DE40, setCaps), site(0x5C5316, 0xA9DE60, configureTracking),
-        site(0x680311, 0x678000, selectProjectionEye), site(0x6803E9, 0xA9E6D0, hudOrtho),
-        site(0x720C4A, 0x11D4D0, uiCameraCall), site(0x2D4AE5, 0x830300, raceStartView),
-        site(0x14949B, 0x2C1250, hudEnabled),
-        site(0x1494E8, 0x9F0F90, hudPartSetting), site(0x149538, 0x9F0F90, hudPartSetting),
-        site(0x149586, 0x9F0F90, hudPartSetting), site(0x1495D1, 0x9F0F90, hudPartSetting),
-        site(0x255EB2, 0x247C60, pauseEntered), site(0x5FE647, 0x5FDB40, AutosportOpponentLodApply),
-        site(0x28B7E4, 0x284BF0, AutosportShadowFit)
-    };
+        0x6a,0x00,0x51,0x52,0x50,0xe8};
+    UINT osdDelta;
+    std::memcpy(&osdDelta, base + build->osdCaller + sizeof(osdCaller), sizeof(osdDelta));
+    if (std::memcmp(base + build->drawFrontend, drawFrame, sizeof(drawFrame)) ||
+        std::memcmp(base + build->osdCaller, osdCaller, sizeof(osdCaller)) ||
+        build->osdCaller + sizeof(osdCaller) + 4 != build->osdLayoutReturn || build->osdLayoutReturn + osdDelta != build->drawFrontend) return false;
+    // In NativeSite order.
+    void (__cdecl* const replacements[SiteCount])() = {
+        reinterpret_cast<void (__cdecl*)()>(prepareGameExit),
+        reinterpret_cast<void (__cdecl*)()>(finishBenchmark),
+        reinterpret_cast<void (__cdecl*)()>(finishBenchmark),
+        reinterpret_cast<void (__cdecl*)()>(AutosportDrawFrontendOverlay),
+        reinterpret_cast<void (__cdecl*)()>(AutosportDrawFrontendOverlay),
+        reinterpret_cast<void (__cdecl*)()>(AutosportDrawFrontendOverlay),
+        reinterpret_cast<void (__cdecl*)()>(AutosportSlateVisibility),
+        reinterpret_cast<void (__cdecl*)()>(AutosportSlateVisibility),
+        reinterpret_cast<void (__cdecl*)()>(AutosportLoadingEntered),
+        reinterpret_cast<void (__cdecl*)()>(AutosportLoadingExitedThunk),
+        reinterpret_cast<void (__cdecl*)()>(endFrame),
+        reinterpret_cast<void (__cdecl*)()>(beginFrame),
+        reinterpret_cast<void (__cdecl*)()>(destroyHmd),
+        reinterpret_cast<void (__cdecl*)()>(shutdownLegacySdk),
+        reinterpret_cast<void (__cdecl*)()>(initialize),
+        reinterpret_cast<void (__cdecl*)()>(createHmd),
+        reinterpret_cast<void (__cdecl*)()>(attachWindow),
+        reinterpret_cast<void (__cdecl*)()>(dismissHealthWarning),
+        reinterpret_cast<void (__cdecl*)()>(textureSize),
+        reinterpret_cast<void (__cdecl*)()>(eyePose),
+        reinterpret_cast<void (__cdecl*)()>(recenterTracking),
+        reinterpret_cast<void (__cdecl*)()>(configureRenderer),
+        reinterpret_cast<void (__cdecl*)()>(setCaps),
+        reinterpret_cast<void (__cdecl*)()>(configureTracking),
+        reinterpret_cast<void (__cdecl*)()>(selectProjectionEye),
+        reinterpret_cast<void (__cdecl*)()>(hudOrtho),
+        reinterpret_cast<void (__cdecl*)()>(uiCameraCall),
+        reinterpret_cast<void (__cdecl*)()>(raceStartView),
+        reinterpret_cast<void (__cdecl*)()>(hudEnabled),
+        reinterpret_cast<void (__cdecl*)()>(hudPartSetting),
+        reinterpret_cast<void (__cdecl*)()>(hudPartSetting),
+        reinterpret_cast<void (__cdecl*)()>(hudPartSetting),
+        reinterpret_cast<void (__cdecl*)()>(hudPartSetting),
+        reinterpret_cast<void (__cdecl*)()>(pauseEntered),
+        reinterpret_cast<void (__cdecl*)()>(AutosportOpponentLodApply),
+        reinterpret_cast<void (__cdecl*)()>(AutosportShadowFit)};
+    Site sites[SiteCount];
+    for (unsigned i = 0; i < SiteCount; ++i)
+        sites[i] = {build->sites[i].call, build->sites[i].target, replacements[i],
+                    i == SiteBenchmarkEnd ? build->benchmarkEndResume : i == SiteBenchmarkResults ? build->benchmarkResultsResume : 0};
     // Original worker return: clear both active flags, pop EBX (only on the
     // results path), then the common pop ESI / pop EBP / ret 4.
     const BYTE workerReturn[] = {0xc6,0x86,0x8a,0,0,0,0,0xc6,0x86,0x94,0,0,0,0,0x5b,0x5e,0x5d,0xc2,4,0};
-    if (std::memcmp(base + 0x68505C, workerReturn, sizeof(workerReturn))) return false;
+    if (std::memcmp(base + build->benchmarkResultsResume, workerReturn, sizeof(workerReturn))) return false;
     // The benchmark worker's terminal ExitProcess (benchmark end, and in-game Quit in a launcher
     // Practice / Race, which runs on -benchmarkAttract) becomes a window close, so the game's own
     // teardown releases the OpenXR session. Normal play never reaches it.
@@ -925,7 +945,7 @@ bool AutosportInstallNativeOvr() noexcept {
             UINT slot;
             std::memcpy(&slot, base + s.call + 9, sizeof(slot));
             if (std::memcmp(base + s.call + 5, "\x6a\x00\xff\x15", 4) ||
-                slot != reinterpret_cast<UINT>(base + 0xBC20F4)) return false;
+                slot != reinterpret_cast<UINT>(base + build->exitProcessSlot)) return false;
         }
     }
     struct Page { BYTE* address; DWORD original; };
@@ -934,7 +954,9 @@ bool AutosportInstallNativeOvr() noexcept {
     for (auto& s : sites) {
         // Each verified five-byte instruction lies wholly inside a single 4 KiB page.
         auto* page = base + (s.call & ~UINT(0xfff));
-        if (count && pages[count-1].address == page) continue;
+        bool seen = false;
+        for (size_t i = 0; i < count; ++i) seen = seen || pages[i].address == page;
+        if (seen) continue;
         DWORD original;
         if (!VirtualProtect(page, 4096, PAGE_EXECUTE_READWRITE, &original)) {
             for (size_t i = 0; i < count; ++i) {
@@ -945,18 +967,18 @@ bool AutosportInstallNativeOvr() noexcept {
         }
         pages[count++] = {page, original};
     }
-    stockEyeDesc = reinterpret_cast<NativeEyeDesc>(base + 0x678000);
+    stockEyeDesc = reinterpret_cast<NativeEyeDesc>(base + build->eyeDesc);
     AutosportConfigureShadowProbe(base);
-    stockOrtho = reinterpret_cast<NativeOrtho>(base + 0xA9E6D0);
-    stockCameraUpdate = reinterpret_cast<NativeCameraUpdate>(base + 0x11D4D0);
+    stockOrtho = reinterpret_cast<NativeOrtho>(base + build->hudOrtho);
+    stockCameraUpdate = reinterpret_cast<NativeCameraUpdate>(base + build->cameraUpdate);
     AutosportBindLoadingOverlay(base);
     gameImage = base;
-    osdLayoutReturn = base + 0x1B7AF0;
-    stockViewLookup = reinterpret_cast<ViewLookupFn>(base + 0x830300);
-    stockHudEnabled = reinterpret_cast<HudEnabledFn>(base + 0x2C1250);
-    stockSettingLookup = reinterpret_cast<SettingLookupFn>(base + 0x9F0F90);
+    osdLayoutReturn = base + build->osdLayoutReturn;
+    stockViewLookup = reinterpret_cast<ViewLookupFn>(base + build->viewLookup);
+    stockHudEnabled = reinterpret_cast<HudEnabledFn>(base + build->hudEnabled);
+    stockSettingLookup = reinterpret_cast<SettingLookupFn>(base + build->settingLookup);
     forcedSettingTable[2] = reinterpret_cast<void*>(&forcedSettingValue);
-    stockPauseEntry = reinterpret_cast<PauseEntryFn>(base + 0x247C60);
+    stockPauseEntry = reinterpret_cast<PauseEntryFn>(base + build->pauseEntry);
     for (auto& s : sites) {
         if (s.resume && !benchmarkExit) continue;
         UINT delta = reinterpret_cast<UINT>(s.replacement) - reinterpret_cast<UINT>(base + s.call + 5);
@@ -982,12 +1004,4 @@ uint64_t AutosportNativeFrame() { return frame; }
 void AutosportHeadOrientation(float (&q)[4]) {
     const auto& r = poses[0].q;
     q[0] = r.x; q[1] = r.y; q[2] = r.z; q[3] = r.w;
-}
-bool AutosportHeadsetFov(float (&tangents)[4]) {
-    if (!descriptors) return false;
-    const Fov& a = descriptors[0].fov;
-    const Fov& b = descriptors[1].fov;
-    tangents[0] = (std::max)(a.up, b.up); tangents[1] = (std::max)(a.down, b.down);
-    tangents[2] = (std::max)(a.left, b.left); tangents[3] = (std::max)(a.right, b.right);
-    return true;
 }

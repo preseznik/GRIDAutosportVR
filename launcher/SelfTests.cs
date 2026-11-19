@@ -67,8 +67,8 @@ internal static class SelfTests
         Check(LauncherSettings.Load(file).Runtime == OpenXrRuntimes.SteamVr && LauncherSettings.Load(file).SkipIntro);
         LauncherSettings.Save(new Choices(DiagnosticLogging: true, PerformanceDisplay: true, ClassicColor: true), file);
         Check(LauncherSettings.Load(file).DiagnosticLogging && LauncherSettings.Load(file).PerformanceDisplay && LauncherSettings.Load(file).ClassicColor);
-        LauncherSettings.Save(new Choices(TextureFiltering: TextureFilters.Steady, VrShadows: ShadowViews.Wide), file);
-        Check(LauncherSettings.Load(file).TextureFiltering == TextureFilters.Steady && LauncherSettings.Load(file).VrShadows == ShadowViews.Wide);
+        LauncherSettings.Save(new Choices(TextureFiltering: TextureFilters.Steady), file);
+        Check(LauncherSettings.Load(file).TextureFiltering == TextureFilters.Steady);
         LauncherSettings.Save(new Choices(), file);
         Check(!LauncherSettings.Load(file).DiagnosticLogging && !LauncherSettings.Load(file).PerformanceDisplay);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Runtime: "Oculus"), file)));
@@ -200,7 +200,16 @@ internal static class SelfTests
         var game = Path.Combine(library, "steamapps", "common", "GRID Autosport");
         Directory.CreateDirectory(game);
         File.WriteAllText(Path.Combine(library, "steamapps", "appmanifest_255220.acf"), "\"appid\" \"255220\"\n\"installdir\" \"GRID Autosport\"\n");
-        Check(Program.InstallProblem(true, library)!.Contains("not a Steam installation") && Program.InstallProblem(false, library) is null);
+        Check(Program.InstallProblem(true, library)!.Contains("has no GRIDAutosport.exe") && Program.InstallProblem(false, library) is null);
+        // A copy that is not the current Steam build (no GRIDAutosport_avx.exe), and one outside a Steam library.
+        var other = Path.Combine(LauncherSettings.DataDirectory, "other-copy");
+        Directory.CreateDirectory(other);
+        File.WriteAllBytes(Path.Combine(other, "GRIDAutosport.exe"), [0]);
+        Check(Installation.FolderProblem(other).Contains("does not support") && Installation.VrLaunchProblem(other, null, null)!.Contains("2014") &&
+              GameBuilds.Detect(other) is null && !Installation.GameExists(other));
+        File.WriteAllBytes(Path.Combine(other, "GRIDAutosport_avx.exe"), [0]);
+        Check(Installation.FolderProblem(other).Contains("appmanifest_255220.acf") && Program.InstallProblem(true, other)!.Contains("Steam knows about"));
+        Directory.Delete(other, true);
         File.WriteAllBytes(Path.Combine(game, "GRIDAutosport.exe"), [0]);
         Check(Program.InstallProblem(true, game) is null && Program.InstallProblem(false, game) is null);
         File.WriteAllText(Path.Combine(game, Installation.PlayLease), "{}");
@@ -234,7 +243,7 @@ internal static class SelfTests
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
              "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1",
-             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300", "-gasvrtexturefilter=1", "-gasvrshadowview=follow", "-gasvrseatkeys=9,38,40,37,39"]));
+             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300", "-gasvrtexturefilter=1", "-gasvrseatkeys=9,38,40,37,39"]));
         var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
         Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
@@ -251,10 +260,6 @@ internal static class SelfTests
         Check(new Choices().TextureFiltering == TextureFilters.Sharp && quietFilter("-gasvrtexturefilter=1", new Choices()) &&
               quietFilter("-gasvrtexturefilter=2", new Choices(TextureFiltering: TextureFilters.Steady)) &&
               !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(TextureFiltering: TextureFilters.Game), null).Any(a => a.StartsWith("-gasvrtexturefilter", StringComparison.Ordinal)));
-        // VR shadows: follow the view by default; Game passes nothing.
-        Check(new Choices().VrShadows == ShadowViews.Follow && quietFilter("-gasvrshadowview=follow", new Choices()) &&
-              quietFilter("-gasvrshadowview=wide", new Choices(VrShadows: ShadowViews.Wide)) &&
-              !VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(VrShadows: ShadowViews.Game), null).Any(a => a.StartsWith("-gasvrshadowview", StringComparison.Ordinal)));
         static bool quietFilter(string argument, Choices choices) => VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", choices, null).Contains(argument);
         var quiet = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null);
         Check(!quiet.Contains("-gasvrdiagnostics=1") && !quiet.Contains("-gasvrperformance=1"));
@@ -358,6 +363,39 @@ internal static class SelfTests
         Check(PracticeFlow.Changes.All(c => c.Before.Length == c.After.Length && c.Before != c.After));
         Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(game)))!, true);
         InstalledGame(Environment.GetEnvironmentVariable("GASVR_TEST_GAME"));
+        Check(GameBuilds.ById(null) == GameBuilds.Steam && GameBuilds.ById("2014") == GameBuilds.Classic2014 && GameBuilds.Detect(null) is null);
+        Check(GameBuilds.Steam.ThroughSteam && !GameBuilds.Classic2014.ThroughSteam && GameBuilds.Classic2014.ProcessName == "GRIDAutosport");
+        ClassicGame(Environment.GetEnvironmentVariable("GASVR_TEST_CLASSIC"));
+    }
+
+    // With GASVR_TEST_CLASSIC set to the 2014 GRIDAutosport.exe (read only): a copy in a folder
+    // outside any Steam library is a usable installation that starts directly, and a VR session
+    // stages its VR copy and restores the original.
+    private static void ClassicGame(string? exe)
+    {
+        if (string.IsNullOrEmpty(exe)) { Console.WriteLine("2014 build checks skipped (set GASVR_TEST_CLASSIC)."); return; }
+        var game = Path.Combine(LauncherSettings.DataDirectory, "classic-2014-test");
+        if (Directory.Exists(game)) Directory.Delete(game, true);
+        Directory.CreateDirectory(game);
+        var target = Path.Combine(game, "GRIDAutosport.exe");
+        File.Copy(exe, target);
+        Check(GameBuilds.Detect(game) == GameBuilds.Classic2014 && Installation.GameExists(game));
+        var bridge = Path.Combine(LauncherSettings.DataDirectory, "bridge-test.dll");
+        File.WriteAllBytes(bridge, [1, 2, 3]);
+        Check(Installation.VrLaunchProblem(game, bridge, bridge) is null, Installation.VrLaunchProblem(game, bridge, bridge) ?? "");
+        var desktop = Installation.DesktopStartInfo(game);
+        Check(desktop.FileName == target && desktop.WorkingDirectory == game && desktop.ArgumentList.SequenceEqual(["-noavx"]));
+        const string id = "0123456789abcdeffedcba9876543210";
+        VrPlaySession.Stage(game, bridge, id, build: GameBuilds.Classic2014);
+        Check(GameBuilds.CachedHash(target) == GameBuilds.Classic2014.VrSha256 && GameBuilds.Detect(game) == GameBuilds.Classic2014);
+        Check(File.ReadAllText(Path.Combine(game, Installation.PlayLease)).Contains("\"Build\":\"2014\""));
+        Check(Installation.VrLaunchProblem(game, bridge, bridge)!.Contains("Restore original files"));
+        Check(VrPlaySession.Recover(game));
+        Check(GameBuilds.CachedHash(target) == GameBuilds.Classic2014.StockSha256);
+        Check(Directory.EnumerateFiles(game).Select(Path.GetFileName).SequenceEqual(["GRIDAutosport.exe"]), string.Join(",", Directory.EnumerateFiles(game)));
+        Directory.Delete(game, true);
+        File.Delete(bridge);
+        Console.WriteLine("2014 build: detected, staged and restored.");
     }
 
     // With GASVR_TEST_GAME set to a real installation (read only): the real catalog and flow patch,

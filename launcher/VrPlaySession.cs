@@ -13,10 +13,7 @@ namespace GRIDAutosportVR;
 // lease, supervise the game, then restore the stock files. Ported from the VB launcher.
 internal static partial class VrPlaySession
 {
-    internal const string StockSha256 = "c88929ba8ed5327799fb6f57dc7889b2f5e8baec47b92832038af913ff54fc48";
-    private const string VrSha256 = "9d3e8f9a36571e20707187f1da86967201ab74e72f9f72e8ec446f01dbe59856";
-    private const int ImportNameOffset = 0xE0C23C;
-    private const string Avx = "GRIDAutosport_avx.exe";
+    internal static string StockSha256 => GameBuilds.Steam.StockSha256;
     private const string BridgeName = "gasxr.dll";
     private const string SessionMutex = Installation.SessionMutex;
 
@@ -25,6 +22,8 @@ internal static partial class VrPlaySession
         public string? Id { get; set; }
         public string? GameFolder { get; set; }
         public string? BridgeHash { get; set; }
+        // The game build staged (GameBuilds); null in leases from before the 2014 build: Steam.
+        public string? Build { get; set; }
         // Practice / Race: the session file in the game folder and the swapped system/flow.bin.
         public string? SessionHash { get; set; }
         public bool Flow { get; set; }
@@ -149,7 +148,7 @@ internal static partial class VrPlaySession
 
     private static string CheckedFolder(string? folder)
     {
-        if (!Installation.GameExists(folder)) throw new IOException("Select the registered Steam installation of GRID Autosport.");
+        if (!Installation.GameExists(folder)) throw new IOException("Select your GRID Autosport installation.");
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder!));
     }
 
@@ -170,7 +169,6 @@ internal static partial class VrPlaySession
          .. choices.PerformanceDisplay ? new[] { "-gasvrperformance=1" } : [],
          .. choices.ClassicColor ? new[] { "-gasvrclassiccolor=1" } : [],
          .. TextureFilters.Argument(choices.TextureFiltering) is { } filter ? new[] { filter } : [],
-         .. ShadowViews.Argument(choices.VrShadows) is { } shadows ? new[] { shadows } : [],
          .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          "-gasvrseatkeys=" + choices.SeatKeys,
@@ -230,7 +228,7 @@ internal static partial class VrPlaySession
                "; system OpenXR runtime " + (system ?? "none") + "; OpenXR add-on layers " + (layers.Count == 0 ? "none" : string.Join(", ", layers)) +
                (disabled.Count > 0 ? " (" + disabled.Count + " disabled for this session)" : "") +
                $"; render scale {choices.VrRenderScale}%, HUD {(choices.HudFollowView ? "follows view" : "fixed")} at {choices.HudDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, " +
-               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}, {(choices.ClassicColor ? "classic" : "accurate")} colors, texture filtering {choices.TextureFiltering}, VR shadows {choices.VrShadows}.";
+               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}, {(choices.ClassicColor ? "classic" : "accurate")} colors, texture filtering {choices.TextureFiltering}.";
     }
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
@@ -239,10 +237,15 @@ internal static partial class VrPlaySession
         IReadOnlyList<VrLayerBypass>? layers = null)
     {
         var folder = CheckedFolder(gameFolder);
-        var client = SteamLibrary.SteamClient() ?? throw new IOException("Steam.exe was not found. Start Steam, then try again.");
-        var library = Directory.GetParent(folder)!.Parent!.Parent!.FullName;
-        if (!SteamLibrary.SteamLibraries().Any(root => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), library, StringComparison.OrdinalIgnoreCase)))
-            throw new IOException("The selected installation is outside Steam's registered libraries.");
+        var build = GameBuilds.Detect(folder) ?? throw new IOException("This version of GRID Autosport is unsupported. Verify the game files in Steam.");
+        string? client = null;
+        if (build.ThroughSteam)
+        {
+            client = SteamLibrary.SteamClient() ?? throw new IOException("Steam.exe was not found. Start Steam, then try again.");
+            var library = Directory.GetParent(folder)!.Parent!.Parent!.FullName;
+            if (!SteamLibrary.SteamLibraries().Any(root => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), library, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("The selected installation is outside Steam's registered libraries.");
+        }
         var choices = LauncherSettings.Load();
         return UnderLock(() =>
         {
@@ -260,27 +263,31 @@ internal static partial class VrPlaySession
             WriteCarNames();
             try
             {
-                Stage(folder, bridgePath, id, session, inputs, graphics);
+                Stage(folder, bridgePath, id, session, inputs, graphics, build);
                 OpenXrRuntimes.WriteSessionChoice(SessionFolder(id), choices.Runtime);
                 Record(id, "VR runtime: " + (choices.Runtime == OpenXrRuntimes.Default ? "this PC's default 32-bit OpenXR runtime." : choices.Runtime + " (" + OpenXrRuntimes.Manifest(choices.Runtime) + ")."));
                 VrApiLayers.WriteSessionFile(SessionFolder(id), layers ?? []);
                 if (layers is { Count: > 0 })
                     Record(id, "OpenXR layers disabled for this session: " + string.Join(", ", layers.Select(layer => layer.LayerName + " (" + layer.DisableVariable + ")")) + ".");
-                var start = new ProcessStartInfo(client) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) };
-                foreach (var arg in SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack)) start.ArgumentList.Add(arg);
+                // The Steam build starts through Steam (-applaunch); the 2014 build starts directly.
+                var start = build.ThroughSteam
+                    ? new ProcessStartInfo(client!) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) }
+                    : new ProcessStartInfo(Path.Combine(folder, build.Executable)) { UseShellExecute = false, WorkingDirectory = folder };
+                foreach (var arg in build.Arguments.Concat(SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack).Skip(build.ThroughSteam ? 0 : 2)))
+                    start.ArgumentList.Add(arg);
                 if (cockpitNote is not null) Record(id, cockpitNote);
                 if (claim is not null) Record(id, "Practice / Race controller: the first connected of " + string.Join(", ", claim) + ".");
                 if (renderNote is not null) Record(id, renderNote);
                 if (choices.DiagnosticLogging) Record(id, SystemSummary(choices, layers ?? []));
                 if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
-                Record(id, "Requesting normal play through Steam.");
-                VrLaunchStatus.Report(VrLaunchStatus.Steam, "Steam is starting GRID Autosport…", id);
+                Record(id, build.ThroughSteam ? "Requesting normal play through Steam." : "Starting the " + build.Label + " directly.");
+                VrLaunchStatus.Report(VrLaunchStatus.Steam, build.ThroughSteam ? "Steam is starting GRID Autosport…" : "Starting GRID Autosport…", id);
                 var requested = DateTime.UtcNow;
                 using (var steam = Process.Start(start))
-                    if (steam is null) throw new IOException("Steam could not start GRID Autosport.");
+                    if (steam is null) throw new IOException((build.ThroughSteam ? "Steam" : "Windows") + " could not start GRID Autosport.");
                 using var recenterWatch = choices.RecenterDevice is { } recenterDevice
                     ? DeviceRecenter.Watch(SessionFolder(id), recenterDevice, message => Record(id, message)) : null;
-                var exitCode = WaitForGame(folder, id, requested);
+                var exitCode = WaitForGame(folder, id, requested, build);
                 try
                 {
                     if (VrPerformance.Capture(SessionFolder(id), choices, eyeSize) is { } performance)
@@ -309,21 +316,22 @@ internal static partial class VrPlaySession
     // The marker and stock backup are committed before the lease. The lease is
     // committed before either game file is changed, including on an interrupted launch.
     internal static void Stage(string folder, string bridgePath, string id, byte[]? session = null, IReadOnlyList<SessionInputMaps.Change>? inputs = null,
-        GraphicsPlan? graphics = null)
+        GraphicsPlan? graphics = null, GameBuild? build = null)
     {
         inputs ??= [];
-        var executable = Path.Combine(folder, Avx);
+        build ??= GameBuilds.Steam;
+        var executable = Path.Combine(folder, build.Executable);
         var dll = Path.Combine(folder, BridgeName);
         if (File.Exists(dll) || File.Exists(Path.Combine(folder, Installation.PlayLease)))
             throw new IOException("A VR bridge or play session already exists in the game folder. Existing files were preserved.");
         var stockFlow = session is null ? null : File.ReadAllBytes(FlowFile(folder));
         var guardedFlow = stockFlow is null ? null : PracticeFlow.Guarded(stockFlow);
         var stock = File.ReadAllBytes(executable);
-        if (Hash(stock) != StockSha256 || !stock.AsSpan(ImportNameOffset, 10).SequenceEqual("d3d11.dll\0"u8))
-            throw new IOException("This GRID Autosport AVX executable is not the supported Steam build.");
+        if (Hash(stock) != build.StockSha256 || !stock.AsSpan(build.ImportNameOffset, 10).SequenceEqual("d3d11.dll\0"u8))
+            throw new IOException("This " + build.Executable + " is not the supported " + build.Label + ".");
         var candidate = (byte[])stock.Clone();
-        Encoding.ASCII.GetBytes(BridgeName).CopyTo(candidate, ImportNameOffset);
-        if (Hash(candidate) != VrSha256) throw new IOException("The VR executable verification failed.");
+        Encoding.ASCII.GetBytes(BridgeName).CopyTo(candidate, build.ImportNameOffset);
+        if (Hash(candidate) != build.VrSha256) throw new IOException("The VR executable verification failed.");
         var payload = File.ReadAllBytes(bridgePath);
         var inputOriginals = inputs.Select(change =>
         {
@@ -331,15 +339,15 @@ internal static partial class VrPlaySession
             var target = Path.Combine(folder, change.RelativePath);
             return File.Exists(target) ? File.ReadAllBytes(target) : null;
         }).ToList();
-        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), SessionHash = session is null ? null : Hash(session), Flow = session is not null,
+        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), Build = build == GameBuilds.Steam ? null : build.Id, SessionHash = session is null ? null : Hash(session), Flow = session is not null,
             Inputs = inputs.Count == 0 ? null : inputs.Select((change, i) => new InputFile { Path = change.RelativePath,
                 OriginalHash = inputOriginals[i] is { } original ? Hash(original) : null, StagedHash = Hash(change.Content) }).ToList(),
             Graphics = graphics is null ? null : new InputFile { Path = graphics.Path, OriginalHash = Hash(graphics.Original), StagedHash = Hash(graphics.Staged) } };
         var saved = SessionFolder(id);
         Directory.CreateDirectory(saved);
         WriteNew(Path.Combine(saved, "session.id"), Encoding.ASCII.GetBytes(id));
-        WriteNew(Path.Combine(saved, "original-avx.exe"), stock);
-        if (FileHash(Path.Combine(saved, "original-avx.exe")) != StockSha256) throw new IOException("The stock backup verification failed.");
+        WriteNew(Path.Combine(saved, build.BackupName), stock);
+        if (FileHash(Path.Combine(saved, build.BackupName)) != build.StockSha256) throw new IOException("The stock backup verification failed.");
         if (stockFlow is not null)
         {
             WriteNew(Path.Combine(saved, "original-flow.bin"), stockFlow);
@@ -409,10 +417,10 @@ internal static partial class VrPlaySession
         }
         WriteNew(prefix + ".exe.tmp", candidate);
         EnsureIdle(folder);
-        if (FileHash(executable) != StockSha256 || FileHash(prefix + ".exe.tmp") != VrSha256) throw new IOException("The game files changed during staging.");
+        if (FileHash(executable) != build.StockSha256 || FileHash(prefix + ".exe.tmp") != build.VrSha256) throw new IOException("The game files changed during staging.");
         File.Replace(prefix + ".exe.tmp", executable, null);
-        if (FileHash(executable) != VrSha256) throw new IOException("The installed VR executable verification failed.");
-        Record(id, "Staged verified AVX executable and bridge " + info.BridgeHash + ".");
+        if (FileHash(executable) != build.VrSha256) throw new IOException("The installed VR executable verification failed.");
+        Record(id, "Staged verified " + build.Executable + " (" + build.Label + ") and bridge " + info.BridgeHash + ".");
     }
 
     private static void RemoveMatching(string fileName, string expected, string id)
@@ -469,25 +477,23 @@ internal static partial class VrPlaySession
         var id = info.Id!;
         var saved = SessionFolder(id);
         if (!File.ReadAllBytes(Path.Combine(saved, "session.id")).SequenceEqual(Encoding.ASCII.GetBytes(id))) throw new IOException("Session identity mismatch. The game files were preserved.");
-        var backup = Path.Combine(saved, "original-avx.exe");
-        if (FileHash(backup) != StockSha256) throw new IOException("The original AVX backup failed verification. The game files were preserved.");
+        var build = GameBuilds.ById(info.Build);
+        var backup = Path.Combine(saved, build.BackupName);
+        if (FileHash(backup) != build.StockSha256) throw new IOException("The original game executable backup failed verification. The game files were preserved.");
         var prefix = Path.Combine(folder, "gasvr-play-" + id);
-        var executable = Path.Combine(folder, Avx);
-        switch (FileHash(executable))
+        var executable = Path.Combine(folder, build.Executable);
+        var current = FileHash(executable);
+        if (current == build.VrSha256)
         {
-            case VrSha256:
-                var restoreTemp = prefix + ".restore.tmp";
-                if (File.Exists(restoreTemp) && FileHash(restoreTemp) != StockSha256) restoreTemp = prefix + ".restore-" + Guid.NewGuid().ToString("N") + ".tmp";
-                if (!File.Exists(restoreTemp)) WriteNew(restoreTemp, File.ReadAllBytes(backup));
-                if (FileHash(restoreTemp) != StockSha256) throw new IOException("The restore copy failed verification.");
-                File.Replace(restoreTemp, executable, null);
-                break;
-            case StockSha256:
-                break; // Staging stopped before the swap, or recovery already restored the executable.
-            default:
-                throw new IOException("The installed game executable changed independently. The current file and backup were preserved.");
+            var restoreTemp = prefix + ".restore.tmp";
+            if (File.Exists(restoreTemp) && FileHash(restoreTemp) != build.StockSha256) restoreTemp = prefix + ".restore-" + Guid.NewGuid().ToString("N") + ".tmp";
+            if (!File.Exists(restoreTemp)) WriteNew(restoreTemp, File.ReadAllBytes(backup));
+            if (FileHash(restoreTemp) != build.StockSha256) throw new IOException("The restore copy failed verification.");
+            File.Replace(restoreTemp, executable, null);
         }
-        if (FileHash(executable) != StockSha256) throw new IOException("Stock restoration could not be verified.");
+        else if (current != build.StockSha256) // Stock: staging stopped before the swap, or recovery already restored it.
+            throw new IOException("The installed game executable changed independently. The current file and backup were preserved.");
+        if (FileHash(executable) != build.StockSha256) throw new IOException("Stock restoration could not be verified.");
         if (info.Flow) RestoreFlow(folder, saved, prefix, id);
         if (info.Inputs is not null) RestoreInputs(folder, saved, prefix, id, info.Inputs);
         if (info.Graphics is not null) RestoreGraphics(saved, id, info.Graphics);
@@ -497,10 +503,10 @@ internal static partial class VrPlaySession
             RemoveMatching(Path.Combine(folder, SessionFile(id)), info.SessionHash, id);
             RemoveStageTemp(prefix + ".xml.tmp", info.SessionHash, id);
         }
-        RemoveStageTemp(prefix + ".exe.tmp", VrSha256, id);
+        RemoveStageTemp(prefix + ".exe.tmp", build.VrSha256, id);
         RemoveStageTemp(prefix + ".dll.tmp", info.BridgeHash!, id);
-        RemoveStageTemp(prefix + ".restore.tmp", StockSha256, id);
-        Record(id, "Restored and verified stock AVX " + StockSha256 + ".");
+        RemoveStageTemp(prefix + ".restore.tmp", build.StockSha256, id);
+        Record(id, "Restored and verified stock " + build.Executable + " " + build.StockSha256 + ".");
         File.Delete(leaseFile);
         File.Delete(Path.Combine(saved, "session.id"));
         File.Delete(backup);
@@ -670,7 +676,7 @@ internal static partial class VrPlaySession
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
-    private static int WaitForGame(string folder, string id, DateTime requested)
+    private static int WaitForGame(string folder, string id, DateTime requested, GameBuild build)
     {
         var watched = new Dictionary<int, Process>();
         Process? renderer = null;
@@ -689,7 +695,7 @@ internal static partial class VrPlaySession
                         {
                             if (watched.ContainsKey(proc.Id) || proc.StartTime.ToUniversalTime() < requested.AddSeconds(-2) || !IsOurGame(proc, folder, id)) continue;
                             watched.Add(proc.Id, proc);
-                            if (name == "GRIDAutosport_avx") { renderer = proc; VrLaunchStatus.Report(VrLaunchStatus.Loading, "GRID Autosport is loading…", id); }
+                            if (name == build.ProcessName) { renderer = proc; VrLaunchStatus.Report(VrLaunchStatus.Loading, "GRID Autosport is loading…", id); }
                             Record(id, "Watching " + name + " PID " + proc.Id + ".");
                             proc = null; // The dictionary now owns its process handle.
                         }
@@ -715,7 +721,7 @@ internal static partial class VrPlaySession
                 }
                 else exitedBeforeObservation = null;
                 if (renderer is null && clock.Elapsed >= TimeSpan.FromSeconds(90))
-                    throw new IOException("Steam did not start a matching GRID Autosport AVX VR session within 90 seconds. Close any open game before recovery.");
+                    throw new IOException((build.ThroughSteam ? "Steam did not start" : "Windows did not start") + " a matching GRID Autosport VR session within 90 seconds. Close any open game before recovery.");
                 Thread.Sleep(200);
             }
         }

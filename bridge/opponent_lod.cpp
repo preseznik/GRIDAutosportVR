@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <cmath>
 #include <cwchar>
+#include "game_build.h"
 #include "bridge_api.h"
 
 namespace {
@@ -40,7 +41,7 @@ float distance2(const BYTE* a, const BYTE* b) {
 
 unsigned floorNearby(BYTE* manager) {
     const BYTE* image = AutosportGameImage();
-    const BYTE* focus = reinterpret_cast<FocusFn>(const_cast<BYTE*>(image) + 0x270B00)(manager);
+    const BYTE* focus = reinterpret_cast<FocusFn>(const_cast<BYTE*>(image) + AutosportGameBuild()->focusedCar)(manager);
     const int count = *reinterpret_cast<const int*>(manager + countOffset);
     BYTE* records = *reinterpret_cast<BYTE**>(manager + recordsOffset);
     if (!focus || !records || count <= 0) return 0;
@@ -100,5 +101,5 @@ void __fastcall AutosportOpponentLodApply(void* manager, void*) {
         if (passes % 3600 == 0)
             AutosportLog("Nearby opponent LOD: %llu passes, %llu raises", passes, raised);
     }
-    reinterpret_cast<ApplyFn>(const_cast<BYTE*>(AutosportGameImage()) + 0x5FDB40)(manager);
+    reinterpret_cast<ApplyFn>(const_cast<BYTE*>(AutosportGameImage()) + AutosportGameBuild()->opponentLodApply)(manager);
 }

@@ -5,7 +5,7 @@
 // 22) is watched in VR sessions: with diagnostic logging each distinct state is logged once, and
 // -gasvrshadowbias=PERCENT (test only; the launcher never passes it) scales the depth bias and
 // slope-scaled depth bias of the states that have one. In the headset even 4x made no difference:
-// the moving shadows come from the cascades being refitted to each view.
+// the stripes came from the 16-bit scene depth the shadow mask reads (depth_precision.cpp).
 #include "bridge_api.h"
 #include <windows.h>
 #include <d3d11.h>

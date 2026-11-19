@@ -17,7 +17,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
     int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
     bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false,
-    string TextureFiltering = TextureFilters.Sharp, string VrShadows = ShadowViews.Follow)
+    string TextureFiltering = TextureFilters.Sharp)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -41,17 +41,6 @@ internal static class TextureFilters
         [(Game, "Game (mostly 4x anisotropic)"), (Sharp, "16x anisotropic"), (Steady, "16x and steadier distance")];
     // The bridge's argument, or null for the game's own filtering.
     public static string? Argument(string id) => id switch { Sharp => "-gasvrtexturefilter=1", Steady => "-gasvrtexturefilter=2", _ => null };
-}
-
-// Graphics -> VR rendering -> VR shadows (bridge/shadow_probe.cpp, -gasvrshadowview): what the game's
-// two shadow cascades cover. The game fits them to its desktop camera, about 50 degrees ahead.
-internal static class ShadowViews
-{
-    public const string Follow = "follow", Wide = "wide", Game = "game";
-    public static readonly string[] Ids = [Follow, Wide, Game];
-    public static readonly (string Id, string Label)[] Labels =
-        [(Follow, "Follow your view"), (Wide, "Wide around the car"), (Game, "Game (desktop camera)")];
-    public static string? Argument(string id) => id == Game ? null : "-gasvrshadowview=" + id;
 }
 
 internal static class LauncherSettings
@@ -200,8 +189,7 @@ internal static class LauncherSettings
             ReadText(document, "vrMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName),
             ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName),
             ReadFlag(document, "classicColor", false, fileName),
-            ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName),
-            ReadText(document, "vrShadows", ShadowViews.Follow, ShadowViews.Ids.Contains, fileName));
+            ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -254,8 +242,6 @@ internal static class LauncherSettings
         document["classicColor"] = choices.ClassicColor;
         if (!TextureFilters.Ids.Contains(choices.TextureFiltering)) throw new ArgumentException("Unsupported texture filtering.");
         document["textureFiltering"] = choices.TextureFiltering;
-        if (!ShadowViews.Ids.Contains(choices.VrShadows)) throw new ArgumentException("Unsupported VR shadows.");
-        document["vrShadows"] = choices.VrShadows;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

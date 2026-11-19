@@ -130,7 +130,7 @@ internal static class Program
     {
         var valid = Installation.GameExists(game);
         if (install && !valid)
-            return "This folder is not a Steam installation of GRID Autosport. Choose the folder that contains GRIDAutosport.exe.";
+            return Installation.FolderProblem(game);
         if (!valid) return null; // The game was moved or removed: nothing of ours can be staged there.
         if (Installation.SessionPending(game) || File.Exists(Path.Combine(game, "gasxr.dll")))
             return "A GRID Autosport VR session is active or was interrupted. Close the game, open GRID Autosport VR and choose Restore original files first.";

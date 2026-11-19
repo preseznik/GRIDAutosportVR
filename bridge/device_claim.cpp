@@ -17,6 +17,7 @@
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
+#include "game_build.h"
 #include "bridge_api.h"
 
 namespace {
@@ -38,7 +39,7 @@ void* exitingState; // StateLoading's `this` (ESI at the exit call site), captur
 
 unsigned intern(const char* text) {
     unsigned id = 0;
-    reinterpret_cast<InternFn>(image + 0x98AE00)(&id, text);
+    reinterpret_cast<InternFn>(image + AutosportGameBuild()->internName)(&id, text);
     return id;
 }
 
@@ -46,12 +47,12 @@ unsigned intern(const char* text) {
 bool enumerate(BYTE* input, Device (&out)[32], unsigned& count) {
     BYTE* library = input + 0x80;
     DeviceVector vector{*reinterpret_cast<void**>(library), nullptr, nullptr, 0, -1};
-    const unsigned result = reinterpret_cast<EnumerateFn>(image + 0x97DAB0)(library + 4, &vector);
+    const unsigned result = reinterpret_cast<EnumerateFn>(image + AutosportGameBuild()->enumerateDevices)(library + 4, &vector);
     const auto bytes = reinterpret_cast<UINT_PTR>(vector.end) - reinterpret_cast<UINT_PTR>(vector.begin);
     const bool shape = result == 0 && vector.end >= vector.begin && bytes % sizeof(Device) == 0 && bytes / sizeof(Device) <= 32;
     count = shape ? static_cast<unsigned>(bytes / sizeof(Device)) : 0;
     if (count) std::memcpy(out, vector.begin, count * sizeof(Device));
-    reinterpret_cast<ReleaseFn>(image + 0x8E1C0)(&vector, 0, -1);
+    reinterpret_cast<ReleaseFn>(image + AutosportGameBuild()->releaseVector)(&vector, 0, -1);
     return shape;
 }
 
@@ -59,8 +60,8 @@ void claim(const BYTE* state) {
     done = true;
     const BYTE* context = *reinterpret_cast<BYTE* const*>(state + 0xC);
     BYTE* const* services = *reinterpret_cast<BYTE* const* const*>(context + 4);
-    BYTE* input = services[*reinterpret_cast<const unsigned*>(image + 0xE57334)];
-    const BYTE* players = services[*reinterpret_cast<const unsigned*>(image + 0xE574D4)];
+    BYTE* input = services[*reinterpret_cast<const unsigned*>(image + AutosportGameBuild()->inputService)];
+    const BYTE* players = services[*reinterpret_cast<const unsigned*>(image + AutosportGameBuild()->playersService)];
     const BYTE* player = players ? *reinterpret_cast<BYTE* const*>(players + 0x44) : nullptr;
     if (!input || !player) { AutosportLog("Device claim: no input service or player 0"); return; }
     const unsigned map = *reinterpret_cast<const unsigned*>(player + 0xC);
@@ -82,7 +83,7 @@ void claim(const BYTE* state) {
             const Device& device = devices[i];
             if (!device.backend || !device.family || device.index == 0xFFFFFFFFu || device.family == keyboard ||
                 (device.family != ids[0] && device.family != ids[1])) continue;
-            const unsigned result = reinterpret_cast<BindFn>(image + 0x78E4B0)(input, map, &device);
+            const unsigned result = reinterpret_cast<BindFn>(image + AutosportGameBuild()->bindDevice)(input, map, &device);
             AutosportLog("Device claim: bound %s (device %u) to player map %u, native result %u%s", families[f], i, map, result,
                          result == 0x58 ? " (the game found no preset for it)" : "");
             return;

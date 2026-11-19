@@ -17,11 +17,16 @@ internal static class Installation
 
     public static string LogDirectory => Path.Combine(LauncherSettings.DataDirectory, "logs");
 
-    // Steam opens the registered application. Match the selected installation to its
-    // library manifest before enabling launch, including when the user browses to it.
+    // A usable installation: the Steam version, matched to its library manifest (Steam opens the
+    // registered application), or the 2014 GRIDAutosport.exe in any folder (GameBuilds).
     public static bool GameExists(string? folder)
     {
         if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder)) return false;
+        return SteamGame(folder) || GameBuilds.Detect(folder) == GameBuilds.Classic2014;
+    }
+
+    private static bool SteamGame(string folder)
+    {
         try
         {
             var game = new DirectoryInfo(folder);
@@ -35,6 +40,19 @@ internal static class Installation
                    Regex.IsMatch(fields, "(?im)^\\s*\"installdir\"\\s+\"" + Regex.Escape(game.Name) + "\"\\s*$");
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
+    }
+
+    // Why a folder the player chose is not a usable installation, in words they can act on.
+    public static string FolderProblem(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder) || !Directory.Exists(folder))
+            return "Choose your GRID Autosport folder.";
+        if (!File.Exists(Path.Combine(folder, "GRIDAutosport.exe")))
+            return "This folder has no GRIDAutosport.exe. Choose your GRID Autosport folder.";
+        if (!File.Exists(Path.Combine(folder, "GRIDAutosport_avx.exe")))
+            return "This GRIDAutosport.exe is a version GRID Autosport VR does not support. It supports the Steam version and GRIDAutosport.exe 1.0.103.1840 from 2014.";
+        return "This folder is not a GRID Autosport installation that Steam knows about (no matching appmanifest_255220.acf in its Steam library). " +
+               "Choose the folder Steam installed the game in (steamapps\\common\\GRID Autosport).";
     }
 
     public static string? FindGame()
@@ -54,6 +72,12 @@ internal static class Installation
     public static ProcessStartInfo DesktopStartInfo(string? folder)
     {
         if (!GameExists(folder)) throw new IOException("Select the Steam installation of GRID Autosport.");
+        if (GameBuilds.Detect(folder) is { ThroughSteam: false } direct)
+        {
+            var start = new ProcessStartInfo(Path.Combine(folder!, direct.Executable)) { UseShellExecute = false, WorkingDirectory = folder };
+            foreach (var arg in direct.Arguments) start.ArgumentList.Add(arg);
+            return start;
+        }
         var client = SteamLibrary.SteamClient();
         if (client is not null)
         {
@@ -81,21 +105,24 @@ internal static class Installation
 
     public static string? VrLaunchProblem(string? folder, string? probe, string? renderer)
     {
-        if (!GameExists(folder)) return "Choose your GRID Autosport Steam folder in Settings.";
+        if (!GameExists(folder)) return folder is null ? "Choose your GRID Autosport Steam folder in Settings." : FolderProblem(folder);
         if (!File.Exists(renderer)) return @"The launcher package is missing renderer\gasxr.dll.";
         if (!File.Exists(probe)) return "The launcher package is missing the 32-bit OpenXR probe.";
-        if (SteamLibrary.SteamClient() is null) return "The Steam client could not be located.";
+        var build = GameBuilds.Detect(folder);
+        if (build?.ThroughSteam != false && SteamLibrary.SteamClient() is null) return "The Steam client could not be located.";
         if (File.Exists(Path.Combine(folder!, BenchmarkLease))) return "Finish or restore the VR benchmark before launching the game.";
         if (File.Exists(Path.Combine(folder!, PlayLease))) return "A VR session is active or needs recovery. After the game exits, choose Restore original files.";
         if (File.Exists(Path.Combine(folder!, "gasxr.dll"))) return "A gasxr.dll is already installed in the game folder. Check that file before launching VR.";
-        var executable = Path.Combine(folder!, "GRIDAutosport_avx.exe");
-        if (!File.Exists(executable)) return "The Steam installation is missing GRIDAutosport_avx.exe.";
+        if (build is null)
+            return File.Exists(Path.Combine(folder!, GameBuilds.Steam.Executable))
+                ? "This version of GRID Autosport is unsupported. Verify the game files in Steam."
+                : "The Steam installation is missing GRIDAutosport_avx.exe. Update GRID Autosport in Steam, or verify its files.";
         try
         {
             VrPlaySession.EnsureIdle(folder);
-            using var stream = File.OpenRead(executable);
-            if (!Convert.ToHexString(SHA256.HashData(stream)).Equals(VrPlaySession.StockSha256, StringComparison.OrdinalIgnoreCase))
-                return "This version of GRID Autosport is unsupported. Verify the game files in Steam.";
+            if (GameBuilds.CachedHash(Path.Combine(folder!, build.Executable)) != build.StockSha256)
+                return build.ThroughSteam ? "This version of GRID Autosport is unsupported. Verify the game files in Steam."
+                    : build.Executable + " is not the original file. Put the original back before launching VR.";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return error.Message; }
         return null;

@@ -42,14 +42,16 @@ bool AutosportClassicColor();
 void AutosportConfigureTextureFiltering(ID3D11Device* device);
 // Shadow acne (shadow_bias.cpp): rasterizer state logging and the -gasvrshadowbias depth bias scale.
 void AutosportConfigureShadowBias(ID3D11Device* device);
+// Test only: -gasvrshadowcb=N logs the shadow mask draws' constants (shadow_constants.cpp).
+void AutosportConfigureShadowConstants(ID3D11Device* device);
+// VR scene depth in 32-bit float instead of the game's 16 bits (depth_precision.cpp).
+void AutosportConfigureDepthPrecision(ID3D11Device* device);
 // Shadow cascades (shadow_probe.cpp): the fit call (RVA 28B7E4 -> 284BF0) and its research probe.
 void __fastcall AutosportShadowFit(void* self, void* edx, void* a0, void* a1, void* a2, void* a3, void* camera);
 void AutosportConfigureShadowProbe(const BYTE* image);
 // The native frame serial and the head orientation (x, y, z, w) given to the game (native_ovr.cpp).
 uint64_t AutosportNativeFrame();
 void AutosportHeadOrientation(float (&q)[4]);
-// Both eyes' field of view as tangents (up, down, left, right, each the larger of the two eyes).
-bool AutosportHeadsetFov(float (&tangents)[4]);
 float AutosportScreenDistance();
 bool AutosportKeepActive();
 bool AutosportRecenterShortcut(unsigned& key, unsigned& modifiers);

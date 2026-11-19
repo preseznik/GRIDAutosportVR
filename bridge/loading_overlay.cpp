@@ -1,4 +1,5 @@
 #include "loading_overlay.h"
+#include "game_build.h"
 #include "bridge_api.h"
 #include <atomic>
 
@@ -27,8 +28,8 @@ constexpr ULONGLONG sampleOffsetsMs[] = {900, 1800};
 
 void AutosportBindLoadingOverlay(const void* module) {
     const auto* base = static_cast<const unsigned char*>(module);
-    makeVisibility = reinterpret_cast<MakeVisibility>(base + 0x9ffbc0);
-    drawFrontend = reinterpret_cast<DrawFrontend>(base + 0x720b80);
+    makeVisibility = reinterpret_cast<MakeVisibility>(base + AutosportGameBuild()->makeVisibility);
+    drawFrontend = reinterpret_cast<DrawFrontend>(base + AutosportGameBuild()->drawFrontend);
 }
 
 void* __fastcall AutosportSlateVisibility(void* message, void*, unsigned int visible) {

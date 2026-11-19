@@ -1,3 +1,4 @@
+#include "game_build.h"
 #include "bridge_api.h"
 #include "native_ovr.h"
 #include "play_session.h"
@@ -59,22 +60,19 @@ unsigned captureTime = 90;
 unsigned captureFrame;
 float captureSeconds;
 SRWLOCK logLock = SRWLOCK_INIT;
-constexpr DWORD benchmark = 0xf399b8;
 enum class Phase { Startup, Loading, Scene };
 std::atomic<Phase> phase{Phase::Startup};
 
+// A supported game build (game_build.h) running under its own file name, with the VR import.
 bool supportedHost() {
+    const GameBuild* build = AutosportGameBuild();
+    if (!build) return false;
     wchar_t filename[MAX_PATH]{};
     const DWORD count = GetModuleFileNameW(nullptr, filename, MAX_PATH);
     if (!count || count >= MAX_PATH) return false;
     const wchar_t* name = wcsrchr(filename, L'\\');
-    if (!name || _wcsicmp(name + 1, L"GRIDAutosport_avx.exe")) return false;
-    const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
-    const auto pe = reinterpret_cast<const IMAGE_NT_HEADERS32*>(image + dos->e_lfanew);
-    if (pe->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 || pe->FileHeader.TimeDateStamp != 0x5c8007d1 ||
-        pe->OptionalHeader.SizeOfImage != 0x1083000) return false;
-    return !memcmp(image + 0xe0d83c, "gasxr.dll", 10) &&
-           !memcmp(image + 0x6792ec, "\xc5\xfa\x11\x89\xec\x45\x00\x00", 8);
+    if (!name || _wcsicmp(name + 1, build->executable)) return false;
+    return !memcmp(image + build->importName, "gasxr.dll", 10);
 }
 
 // The decimal value of " -NAME=DIGITS" ending at a space, tab or the end; false if absent or malformed.
@@ -392,10 +390,11 @@ void hookIntroVideoStates() {
     if (attempted || !regularPlay || !headset) return;
     attempted = true;
     StateLeaveFn champLeave = nullptr;
-    const bool discipline = patchSlot(0xCFD178, 3, 0x25A7D0, reinterpret_cast<void*>(&disciplineEnter), reinterpret_cast<void**>(&stockDisciplineEnter)) &&
-                            patchSlot(0xCFD178, 12, 0x239E20, reinterpret_cast<void*>(&introVideoLeave), reinterpret_cast<void**>(&stockVideoLeave));
-    const bool champ = patchSlot(0xCFD1C0, 3, 0x23F560, reinterpret_cast<void*>(&champEnter), reinterpret_cast<void**>(&stockChampEnter)) &&
-                       patchSlot(0xCFD1C0, 12, 0x239E20, reinterpret_cast<void*>(&introVideoLeave), reinterpret_cast<void**>(&champLeave));
+    const GameBuild& build = *AutosportGameBuild();
+    const bool discipline = patchSlot(build.disciplineTable, 3, build.disciplineEnter, reinterpret_cast<void*>(&disciplineEnter), reinterpret_cast<void**>(&stockDisciplineEnter)) &&
+                            patchSlot(build.disciplineTable, 12, build.videoLeave, reinterpret_cast<void*>(&introVideoLeave), reinterpret_cast<void**>(&stockVideoLeave));
+    const bool champ = patchSlot(build.championshipTable, 3, build.championshipEnter, reinterpret_cast<void*>(&champEnter), reinterpret_cast<void**>(&stockChampEnter)) &&
+                       patchSlot(build.championshipTable, 12, build.videoLeave, reinterpret_cast<void*>(&introVideoLeave), reinterpret_cast<void**>(&champLeave));
     AutosportLog("Intro video states watched discipline=%d champ=%d", discipline, champ);
 }
 
@@ -489,7 +488,7 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     if (!seat && regularPlay && headset && adapterReady && directory[0]) { seat = true; AutosportSeatConfigure(directory); }
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
-    if (SUCCEEDED(hr) && device && *device && headset) { AutosportConfigureTextureFiltering(*device); AutosportConfigureShadowBias(*device); }
+    if (SUCCEEDED(hr) && device && *device && headset) { AutosportConfigureTextureFiltering(*device); AutosportConfigureShadowBias(*device); AutosportConfigureShadowConstants(*device); AutosportConfigureDepthPrecision(*device); }
     if (SUCCEEDED(hr) && device && *device && regularPlay) {
         wchar_t game[MAX_PATH]{};
         const DWORD length = GetModuleFileNameW(nullptr, game, MAX_PATH);
@@ -669,7 +668,7 @@ bool AutosportFlatScreen() {
     if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && ((introShot && !AutosportPreRaceIntro3D()) || pauseMenu));
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
-    const BYTE* state = image + benchmark;
+    const BYTE* state = image + AutosportGameBuild()->benchmarkState;
     return !(*reinterpret_cast<const unsigned*>(state + 0x84) == 1 && state[0x94] == 1 &&
              state[0x8a] == 0 && *reinterpret_cast<const unsigned*>(state + 0x45e8) > 0);
 }
@@ -687,17 +686,17 @@ void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* eve
     pauseState = nullptr;
     pauseMenu = false;
     AutosportLog("StateLoading entered");
-    reinterpret_cast<LoadingDispatch>(image + 0x9f6c80)(dispatcher, event);
+    reinterpret_cast<LoadingDispatch>(image + AutosportGameBuild()->loadingDispatch)(dispatcher, event);
 }
 void __fastcall AutosportLoadingExited(void* dispatcher, void*, const void* event) {
-    reinterpret_cast<LoadingDispatch>(image + 0x9f6c80)(dispatcher, event);
+    reinterpret_cast<LoadingDispatch>(image + AutosportGameBuild()->loadingDispatch)(dispatcher, event);
     phase.store(Phase::Scene);
     AutosportLog("StateLoading exited");
 }
 const wchar_t* AutosportRunDirectory() { return directory; }
 bool AutosportCaptureRequested() {
     if (regularPlay || captured || !adapterReady) return false;
-    const BYTE* state = image + benchmark;
+    const BYTE* state = image + AutosportGameBuild()->benchmarkState;
     if (*reinterpret_cast<const unsigned*>(state + 0x84) != 1 || state[0x94] != 1 || state[0x8a] != 0) return false;
     captureFrame = *reinterpret_cast<const unsigned*>(state + 0x45e8);
     captureSeconds = *reinterpret_cast<const float*>(state + 0x45ec);

@@ -56,7 +56,6 @@ internal sealed partial class MainForm : LauncherForm
     // -gasvrdiagnostics) and the in-VR FPS and GPU panel (-gasvrperformance).
     private readonly CheckBox diagnosticLogging = new() { Name = "DiagnosticLogging", AccessibleName = "Diagnostic logging", Text = "On", AutoSize = true };
     // Graphics -> VR rendering -> Classic colors: the lighter look of 0.2.0 and earlier (-gasvrclassiccolor).
-    private readonly ComboBox vrShadows = new() { Name = "VrShadows", AccessibleName = "VR shadows", DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
     private readonly ComboBox textureFiltering = new() { Name = "TextureFiltering", AccessibleName = "Texture filtering", DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
     private readonly CheckBox classicColor = new() { Name = "ClassicColor", AccessibleName = "Classic colors", Text = "On", AutoSize = true };
     private readonly CheckBox performanceDisplay = new() { Name = "PerformanceDisplay", AccessibleName = "Performance display", Text = "FPS + GPU usage (VR)", AutoSize = true };
@@ -162,10 +161,6 @@ internal sealed partial class MainForm : LauncherForm
         graphics.Controls.Add(TextLabel("100% renders each eye at the connected headset's recommended resolution. Lower values trade detail for performance; higher values sharpen the image and use more GPU time and memory. Headset output stays at 100%. The launcher reads the headset's resolution before every VR launch."));
         foreach (var (id, label) in TextureFilters.Labels) textureFiltering.Items.Add(new Option(id, label));
         textureFiltering.SelectedIndex = 1;
-        foreach (var (id, label) in ShadowViews.Labels) vrShadows.Items.Add(new Option(id, label));
-        vrShadows.SelectedIndex = 0;
-        Field(graphics, "VR shadows", vrShadows);
-        graphics.Controls.Add(TextLabel("The game fits its detailed shadows to its desktop camera, about 50 degrees straight ahead. A headset sees about twice that wherever you look, so shadows on walls to the side change shape as you move your head. Follow your view fits them to where you look, Wide around the car covers the headset's view around the car's direction; both cover more ground, so shadows are a little softer. Higher shadow quality sharpens them again. Applies to the next VR launch."));
         Field(graphics, "Texture filtering", textureFiltering);
         graphics.Controls.Add(TextLabel("The game filters most surfaces at only 4x anisotropic, which blurs building walls, barriers and the road at steep angles. 16x anisotropic keeps them sharp. Steadier distance also softens distant textures slightly, so fine detail flickers less. Applies to the next VR launch."));
         Field(graphics, "Classic colors", classicColor);
@@ -251,7 +246,7 @@ internal sealed partial class MainForm : LauncherForm
         Section(settings, "Paths and runtime");
         Field(settings, "Game folder", gamePath);
         settings.Controls.Add(browse);
-        settings.Controls.Add(TextLabel("Uses your Steam installation of GRID Autosport (build with GRIDAutosport_avx.exe). The VR files are added only for a VR session and removed when it ends."));
+        settings.Controls.Add(TextLabel("Uses your GRID Autosport installation: the Steam version, or GRIDAutosport.exe 1.0.103.1840 from 2014 in any folder. The VR files are added only for a VR session and removed when it ends."));
         runtime.Items.AddRange(OpenXrRuntimes.Choices.Cast<object>().ToArray());
         runtime.SelectedItem = OpenXrRuntimes.Default;
         runtime.FormattingEnabled = true;
@@ -317,7 +312,6 @@ internal sealed partial class MainForm : LauncherForm
         performanceDisplay.CheckedChanged += (_, _) => ChoiceEdited();
         classicColor.CheckedChanged += (_, _) => ChoiceEdited();
         textureFiltering.SelectedIndexChanged += (_, _) => ChoiceEdited();
-        vrShadows.SelectedIndexChanged += (_, _) => ChoiceEdited();
         ffbOverride.CheckedChanged += (_, _) => { RefreshForceFeedback(); ChoiceEdited(); };
         foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.ValueChanged += (_, _) => ChoiceEdited();
         RefreshForceFeedback();
@@ -411,8 +405,7 @@ internal sealed partial class MainForm : LauncherForm
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
         diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked,
-        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp,
-        (vrShadows.SelectedItem as Option)?.Id ?? ShadowViews.Follow);
+        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp);
 
     private void RefreshForceFeedback()
     {
@@ -493,7 +486,6 @@ internal sealed partial class MainForm : LauncherForm
         diagnosticLogging.Checked = choices.DiagnosticLogging; performanceDisplay.Checked = choices.PerformanceDisplay;
         classicColor.Checked = choices.ClassicColor;
         textureFiltering.SelectedIndex = Math.Max(0, Array.IndexOf(TextureFilters.Ids, choices.TextureFiltering));
-        vrShadows.SelectedIndex = Math.Max(0, Array.IndexOf(ShadowViews.Ids, choices.VrShadows));
         if (choices.ValidForceFeedback)
         {
             ffbStrength.Value = choices.ForceFeedbackStrength; ffbWeight.Value = choices.ForceFeedbackWeight; ffbVibration.Value = choices.ForceFeedbackVibration;
@@ -640,7 +632,7 @@ internal sealed partial class MainForm : LauncherForm
             : recoveryError is not null ? "Restore original files needs attention: " + recoveryError
             : playLease ? "A VR session is active or was interrupted. After the game exits, choose Restore original files."
             : pending ? "A VR benchmark session is pending. Restore it with bridge/run.py --restore before launching."
-            : !valid ? "Choose your GRID Autosport Steam folder in Settings → Paths and runtime."
+            : !valid ? (gameFolder is null ? "Choose your GRID Autosport Steam folder in Settings → Paths and runtime." : Installation.FolderProblem(gameFolder))
             : problem is not null ? problem
             : "Ready. Connect your headset, then choose Launch VR.";
     }
@@ -661,12 +653,12 @@ internal sealed partial class MainForm : LauncherForm
 
     private void ChooseGame()
     {
-        using var dialog = new FolderBrowserDialog { Description = "Select the GRID Autosport folder in your Steam library.", ShowNewFolderButton = false, UseDescriptionForTitle = true };
+        using var dialog = new FolderBrowserDialog { Description = "Select your GRID Autosport folder.", ShowNewFolderButton = false, UseDescriptionForTitle = true };
         if (gameFolder is not null) dialog.InitialDirectory = gameFolder;
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         if (!Installation.GameExists(dialog.SelectedPath))
         {
-            notice.Text = "This folder does not match the GRID Autosport Steam manifest.";
+            notice.Text = Installation.FolderProblem(dialog.SelectedPath);
             return;
         }
         gameFolder = dialog.SelectedPath;
@@ -1046,7 +1038,6 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(hudCounters, "The lap and time counters.");
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
         tips.SetToolTip(ffbOverride, ForceFeedbackHelp);
-        tips.SetToolTip(vrShadows, "What the game's detailed shadows cover in VR. Follow your view (default) keeps shadows on walls steady as you look around; Wide around the car covers the headset's view around the car's direction; Game keeps the desktop fit (sharpest, but shadows to the side change shape as you move your head).");
         tips.SetToolTip(textureFiltering, "How sharply the game's textures are filtered in VR. 16x anisotropic (default) keeps walls and the road sharp at steep angles; Steadier distance trades a little distant sharpness for less flicker in fine detail; Game keeps the game's own, mostly 4x.");
         tips.SetToolTip(classicColor, "On: the lighter, lower-contrast colors of version 0.2.0 and earlier. Off (default): the headset matches the game on a monitor.");
         tips.SetToolTip(diagnosticLogging, "On: the next VR launch saves extra troubleshooting detail in its session logs (a line a second while driving). Leave off for normal play.");
