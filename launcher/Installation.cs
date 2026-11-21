@@ -103,11 +103,12 @@ internal static class Installation
     public static bool SessionPending(string? folder) => GameExists(folder) &&
         (File.Exists(Path.Combine(folder!, PlayLease)) || File.Exists(Path.Combine(folder!, BenchmarkLease)));
 
-    public static string? VrLaunchProblem(string? folder, string? probe, string? renderer)
+    // desktop: a desktop Practice / Race session, which needs no OpenXR probe.
+    public static string? VrLaunchProblem(string? folder, string? probe, string? renderer, bool desktop = false)
     {
         if (!GameExists(folder)) return folder is null ? "Choose your GRID Autosport Steam folder in Settings." : FolderProblem(folder);
         if (!File.Exists(renderer)) return @"The launcher package is missing renderer\gasxr.dll.";
-        if (!File.Exists(probe)) return "The launcher package is missing the 32-bit OpenXR probe.";
+        if (!desktop && !File.Exists(probe)) return "The launcher package is missing the 32-bit OpenXR probe.";
         var build = GameBuilds.Detect(folder);
         if (build?.ThroughSteam != false && SteamLibrary.SteamClient() is null) return "The Steam client could not be located.";
         if (File.Exists(Path.Combine(folder!, BenchmarkLease))) return "Finish or restore the VR benchmark before launching the game.";
@@ -143,6 +144,19 @@ internal static class Installation
         start.ArgumentList.Add(folder);
         if (approved is { Count: > 0 }) { start.ArgumentList.Add(XrLayerBypassArgument); start.ArgumentList.Add(VrApiLayers.Encode(approved)); }
         if (remember is { Count: > 0 }) { start.ArgumentList.Add(RememberXrLayersArgument); start.ArgumentList.Add(VrApiLayers.Encode(remember)); }
+        return start;
+    }
+
+    // The session supervisor for desktop Launch with Practice / Race (Program.PlayDesktop).
+    public static ProcessStartInfo DesktopSessionStartInfo(string folder)
+    {
+        var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, LauncherName))
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, WorkingDirectory = AppContext.BaseDirectory
+        };
+        start.ArgumentList.Add("--play-desktop");
+        start.ArgumentList.Add("--game-dir");
+        start.ArgumentList.Add(folder);
         return start;
     }
 

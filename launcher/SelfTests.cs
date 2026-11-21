@@ -355,6 +355,11 @@ internal static class SelfTests
         Check(VrPlaySession.DeviceClaim(new DrivingControls()).SequenceEqual(["xinput_pad"]));
         Check(VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true, ["xinput_pad"]).Contains("-gasvrdevice=xinput_pad"));
         Check(!VrPlaySession.SteamArguments(id, new Choices(), null, false, ["xinput_pad"]).Any(a => a.StartsWith("-gasvrdevice")));
+        // Desktop Launch with Practice / Race: the session and the claim, none of the headset's choices.
+        var desktopArgs = VrPlaySession.DesktopArguments(id, new Choices(LaunchMode: "Practice", ForceFeedbackOverride: true, ForceFeedbackStrength: 80), ["xinput_pad"]);
+        Check(desktopArgs.SequenceEqual(["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=desktop", "-gasvrffb=80,100,100",
+            "-benchmarkAttract", "GASVR_" + id + ".xml", "-gasvrdevice=xinput_pad"]));
+        Check(!VrPlaySession.DesktopArguments(id, new Choices(LaunchMode: "Race")).Any(a => a.StartsWith("-gasvrdevice") || a.StartsWith("-gasvrffb")));
         Check(!VrPlaySession.EndSession(game, TimeSpan.Zero)); // No game runs from the fake folder.
 
         // The flow patch: only the pinned stock file is accepted.

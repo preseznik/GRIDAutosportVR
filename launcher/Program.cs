@@ -43,8 +43,9 @@ internal static class Program
             return CheckForInstaller(args[0] == "--check-install", game, errorLog);
         var inspect = args.Length > 0 && args[0] == "--inspect";
         var play = args.Length > 0 && args[0] == "--play-vr";
+        var playDesktop = args.Length > 0 && args[0] == "--play-desktop";
         var restore = args.Length > 0 && args[0] == "--restore-play";
-        var options = inspect || play || restore ? args[1..] : args;
+        var options = inspect || play || playDesktop || restore ? args[1..] : args;
         // Launch VR after the OpenXR layer prompt: the layers the player chose to disable (VrApiLayers.cs).
         IReadOnlyList<VrLayerBypass> approved = [], remember = [];
         try
@@ -59,7 +60,7 @@ internal static class Program
             }
         }
         catch (IOException error) { Console.Error.WriteLine(error.Message); return 64; }
-        if (((play || restore) && options.Length != 2) || (options.Length != 0 && (options.Length != 2 || options[0] != "--game-dir")))
+        if (((play || playDesktop || restore) && options.Length != 2) || (options.Length != 0 && (options.Length != 2 || options[0] != "--game-dir")))
         {
             Console.Error.WriteLine(Usage);
             return 64;
@@ -75,6 +76,7 @@ internal static class Program
             var probe = Installation.FindProbe(AppContext.BaseDirectory);
             var renderer = Installation.FindRenderer(AppContext.BaseDirectory);
             if (play) return PlayVr(folder, probe, renderer, approved, remember);
+            if (playDesktop) return PlayDesktop(folder, renderer);
             if (inspect) return Inspect(folder, probe, renderer);
             ApplicationConfiguration.Initialize();
             Application.SetColorMode(SystemColorMode.System);
@@ -89,7 +91,7 @@ internal static class Program
         }
         catch (Exception error)
         {
-            if (inspect || play || restore) Console.Error.WriteLine(error.Message);
+            if (inspect || play || playDesktop || restore) Console.Error.WriteLine(error.Message);
             else MessageBox.Show(error.Message, Branding.Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
@@ -199,6 +201,17 @@ internal static class Program
         return VrPlaySession.Run(folder!, renderer!, (width, height),
             $"Render {width}x{height} per eye at {used}% (requested {scale}%) of {headset.Headset} {headset.Width}x{headset.Height} via {headset.Runtime}.",
             c => Session(folder!, c), layers);
+    }
+
+    // The session supervisor the launcher window starts for desktop Launch with Practice / Race.
+    private static int PlayDesktop(string? folder, string? renderer)
+    {
+        if (!Installation.GameExists(folder)) throw new IOException("Select your GRID Autosport installation.");
+        VrPlaySession.Recover(folder);
+        if (Installation.VrLaunchProblem(folder, null, renderer, desktop: true) is { } problem) throw new IOException(problem);
+        var choices = LauncherSettings.Load();
+        if (choices.LaunchMode == "Normal") throw new IOException("Choose Practice or Race for a desktop session.");
+        return VrPlaySession.Run(folder!, renderer!, sessionXml: c => RaceSession.SessionXml(c, RaceSession.Load(folder!), Random.Shared.Next()), desktop: true);
     }
 
     private static int Inspect(string? folder, string? probe, string? renderer)

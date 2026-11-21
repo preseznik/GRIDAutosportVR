@@ -175,6 +175,15 @@ internal static partial class VrPlaySession
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
          .. session && claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
+    // Desktop Launch with Practice / Race: the session file and the controller claim, while the game
+    // renders on the desktop as it always does (-gasvrmode=desktop). The force feedback override
+    // applies too; the VR-only choices (HUD, cockpit, seat, graphics preset) do not.
+    internal static string[] DesktopArguments(string id, Choices choices, IReadOnlyList<string>? claim = null) =>
+        ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=desktop",
+         .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
+         "-benchmarkAttract", SessionFile(id),
+         .. claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
+
     // Practice / Race never shows the Press Start screen, where the game makes the device that
     // pressed Start the player's controller; without it only the keyboard drives. The bridge makes
     // the same native bind for the first of these that is connected: the devices the launcher's
@@ -233,8 +242,9 @@ internal static partial class VrPlaySession
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
     // layers: OpenXR add-on layers the VR renderer disables for this session (VrApiLayers.cs).
+    // desktop: a desktop Practice / Race session (DesktopArguments), without the headset.
     public static int Run(string gameFolder, string bridgePath, (int Width, int Height)? eyeSize = null, string? renderNote = null, Func<Choices, byte[]?>? sessionXml = null,
-        IReadOnlyList<VrLayerBypass>? layers = null)
+        IReadOnlyList<VrLayerBypass>? layers = null, bool desktop = false)
     {
         var folder = CheckedFolder(gameFolder);
         var build = GameBuilds.Detect(folder) ?? throw new IOException("This version of GRID Autosport is unsupported. Verify the game files in Steam.");
@@ -255,39 +265,47 @@ internal static partial class VrPlaySession
             var id = Guid.NewGuid().ToString("N");
             VrLaunchStatus.Report(VrLaunchStatus.Preparing, "Preparing the game files…", id);
             var session = sessionXml?.Invoke(choices);
+            if (desktop && session is null) throw new IOException("Launch on the desktop through the launcher needs Practice or Race.");
             var controls = DrivingControls.Load();
             var inputs = SessionInputMaps.Plan(folder, controls);
             var claim = session is null ? null : DeviceClaim(controls);
-            var cockpitPack = CockpitPack(choices, out var cockpitNote);
-            var graphics = PlanGraphics(choices);
+            string? cockpitNote = null;
+            var cockpitPack = desktop ? null : CockpitPack(choices, out cockpitNote);
+            var graphics = desktop ? null : PlanGraphics(choices);
             WriteCarNames();
             try
             {
                 Stage(folder, bridgePath, id, session, inputs, graphics, build);
-                OpenXrRuntimes.WriteSessionChoice(SessionFolder(id), choices.Runtime);
-                Record(id, "VR runtime: " + (choices.Runtime == OpenXrRuntimes.Default ? "this PC's default 32-bit OpenXR runtime." : choices.Runtime + " (" + OpenXrRuntimes.Manifest(choices.Runtime) + ")."));
-                VrApiLayers.WriteSessionFile(SessionFolder(id), layers ?? []);
-                if (layers is { Count: > 0 })
+                if (desktop) Record(id, "Desktop session: the game renders on the desktop; no headset.");
+                else
+                {
+                    OpenXrRuntimes.WriteSessionChoice(SessionFolder(id), choices.Runtime);
+                    Record(id, "VR runtime: " + (choices.Runtime == OpenXrRuntimes.Default ? "this PC's default 32-bit OpenXR runtime." : choices.Runtime + " (" + OpenXrRuntimes.Manifest(choices.Runtime) + ")."));
+                    VrApiLayers.WriteSessionFile(SessionFolder(id), layers ?? []);
+                }
+                if (!desktop && layers is { Count: > 0 })
                     Record(id, "OpenXR layers disabled for this session: " + string.Join(", ", layers.Select(layer => layer.LayerName + " (" + layer.DisableVariable + ")")) + ".");
                 // The Steam build starts through Steam (-applaunch); the 2014 build starts directly.
                 var start = build.ThroughSteam
                     ? new ProcessStartInfo(client!) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) }
                     : new ProcessStartInfo(Path.Combine(folder, build.Executable)) { UseShellExecute = false, WorkingDirectory = folder };
-                foreach (var arg in build.Arguments.Concat(SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack).Skip(build.ThroughSteam ? 0 : 2)))
+                var arguments = desktop ? DesktopArguments(id, choices, claim) : SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack);
+                foreach (var arg in build.Arguments.Concat(arguments.Skip(build.ThroughSteam ? 0 : 2)))
                     start.ArgumentList.Add(arg);
                 if (cockpitNote is not null) Record(id, cockpitNote);
                 if (claim is not null) Record(id, "Practice / Race controller: the first connected of " + string.Join(", ", claim) + ".");
                 if (renderNote is not null) Record(id, renderNote);
-                if (choices.DiagnosticLogging) Record(id, SystemSummary(choices, layers ?? []));
+                if (choices.DiagnosticLogging && !desktop) Record(id, SystemSummary(choices, layers ?? []));
                 if (session is not null) Record(id, choices.LaunchMode + " session: " + Encoding.UTF8.GetString(session).ReplaceLineEndings(" "));
                 Record(id, build.ThroughSteam ? "Requesting normal play through Steam." : "Starting the " + build.Label + " directly.");
                 VrLaunchStatus.Report(VrLaunchStatus.Steam, build.ThroughSteam ? "Steam is starting GRID Autosport…" : "Starting GRID Autosport…", id);
                 var requested = DateTime.UtcNow;
                 using (var steam = Process.Start(start))
                     if (steam is null) throw new IOException((build.ThroughSteam ? "Steam" : "Windows") + " could not start GRID Autosport.");
-                using var recenterWatch = choices.RecenterDevice is { } recenterDevice
+                using var recenterWatch = !desktop && choices.RecenterDevice is { } recenterDevice
                     ? DeviceRecenter.Watch(SessionFolder(id), recenterDevice, message => Record(id, message)) : null;
-                var exitCode = WaitForGame(folder, id, requested, build);
+                var exitCode = WaitForGame(folder, id, requested, build, desktop);
+                if (desktop) return exitCode;
                 try
                 {
                     if (VrPerformance.Capture(SessionFolder(id), choices, eyeSize) is { } performance)
@@ -645,14 +663,16 @@ internal static partial class VrPlaySession
         finally { Marshal.FreeHGlobal(buffer); }
     }
 
-    private static bool Activated(string id, DateTime requested)
+    // desktop: the renderer has no VR renderer to configure; its device creation in a desktop session counts.
+    private static bool Activated(string id, DateTime requested, bool desktop = false)
     {
         var log = Path.Combine(SessionFolder(id), "bridge.log");
         if (!File.Exists(log) || File.GetLastWriteTimeUtc(log) < requested.AddSeconds(-2)) return false;
         using var stream = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var lines = new StreamReader(stream);
         while (lines.ReadLine() is { } line)
-            if (line.Contains("native renderer configured:", StringComparison.Ordinal)) return true;
+            if (desktop ? line.Contains("] D3D11 creation hr=00000000 ", StringComparison.Ordinal) && line.Contains(" desktop=1 ", StringComparison.Ordinal)
+                        : line.Contains("native renderer configured:", StringComparison.Ordinal)) return true;
         return false;
     }
 
@@ -676,7 +696,7 @@ internal static partial class VrPlaySession
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
-    private static int WaitForGame(string folder, string id, DateTime requested, GameBuild build)
+    private static int WaitForGame(string folder, string id, DateTime requested, GameBuild build, bool desktop = false)
     {
         var watched = new Dictionary<int, Process>();
         Process? renderer = null;
@@ -695,7 +715,11 @@ internal static partial class VrPlaySession
                         {
                             if (watched.ContainsKey(proc.Id) || proc.StartTime.ToUniversalTime() < requested.AddSeconds(-2) || !IsOurGame(proc, folder, id)) continue;
                             watched.Add(proc.Id, proc);
-                            if (name == build.ProcessName) { renderer = proc; VrLaunchStatus.Report(VrLaunchStatus.Loading, "GRID Autosport is loading…", id); }
+                            if (name == build.ProcessName)
+                            {
+                                renderer = proc;
+                                VrLaunchStatus.Report(desktop ? VrLaunchStatus.Running : VrLaunchStatus.Loading, desktop ? "GRID Autosport is running on the desktop." : "GRID Autosport is loading…", id);
+                            }
                             Record(id, "Watching " + name + " PID " + proc.Id + ".");
                             proc = null; // The dictionary now owns its process handle.
                         }
@@ -705,12 +729,12 @@ internal static partial class VrPlaySession
                         }
                         finally { proc?.Dispose(); }
                     }
-                if (renderer is not null) ReportProgress(id, ref progress);
+                if (renderer is not null && !desktop) ReportProgress(id, ref progress);
                 if (renderer is not null && watched.Values.All(p => p.HasExited))
                 {
                     foreach (var p in watched.Values) Record(id, $"PID {p.Id} exited 0x{p.ExitCode:X8}.");
-                    if (renderer.ExitCode == 0 && !Activated(id, requested))
-                        throw new IOException("GRID Autosport exited without activating its VR renderer. See " + SessionFolder(id));
+                    if (renderer.ExitCode == 0 && !Activated(id, requested, desktop))
+                        throw new IOException("GRID Autosport exited without " + (desktop ? "starting its Practice / Race session" : "activating its VR renderer") + ". See " + SessionFolder(id));
                     return renderer.ExitCode;
                 }
                 if (renderer is null && watched.Values.All(p => p.HasExited) && File.Exists(Path.Combine(SessionFolder(id), "bridge.log")))

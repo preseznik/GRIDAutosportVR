@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- **Practice and Race on the desktop.** **Launch** now starts the chosen Practice or Race on the desktop too, with your car, track, laps and opponents, and your controller or wheel already in charge. The launcher adds its session files for the run and restores the original files when the game exits, as for VR. With **Normal**, Launch still starts the unmodified game.
+
 ## 0.2.2
 
 - **No more shadow stripes on buildings.** With the sun behind you, sunlit walls showed dark stripes that changed as you turned your head. The game keeps the scene's depth in 16 bits, too coarse for the cockpit camera's close near plane, so its shadows misjudged where walls are. VR now keeps the scene's depth in 32 bits.

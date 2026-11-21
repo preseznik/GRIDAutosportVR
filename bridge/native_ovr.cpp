@@ -869,11 +869,11 @@ template<class F> Site site(UINT call, UINT target, F callback, UINT resume = 0)
 }
 } // namespace
 
-bool AutosportInstallNativeOvr() noexcept {
+bool AutosportInstallNativeOvr(bool desktop) noexcept {
     auto* base = reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));
     const GameBuild* build = AutosportGameBuild();
     if (!base || !build) return false;
-    AutosportLog("Game build: %s", build->name);
+    AutosportLog("Game build: %s%s", build->name, desktop ? ", desktop session" : "");
     // All HMD-dependent game->SDK calls, plus SDK initialization and shutdown (game_build.h).
     // The game retains its shared perspective and ortho projections. Only the named OSD
     // camera temporarily receives the seated projection during its stereo draw.
@@ -935,9 +935,14 @@ bool AutosportInstallNativeOvr() noexcept {
     // The benchmark worker's terminal ExitProcess (benchmark end, and in-game Quit in a launcher
     // Practice / Race, which runs on -benchmarkAttract) becomes a window close, so the game's own
     // teardown releases the OpenXR session. Normal play never reaches it.
-    const bool benchmarkExit = !AutosportRegularPlay() || AutosportPracticeSession();
-    for (auto& s : sites) {
-        if (s.resume && !benchmarkExit) continue;
+    // A desktop session needs no window close for that: no OpenXR session is open.
+    const bool benchmarkExit = !desktop && (!AutosportRegularPlay() || AutosportPracticeSession());
+    bool used[SiteCount];
+    for (unsigned i = 0; i < SiteCount; ++i)
+        used[i] = desktop ? i == SiteLoadingEntered || i == SiteLoadingExited : !sites[i].resume || benchmarkExit;
+    for (unsigned i = 0; i < SiteCount; ++i) {
+        if (!used[i]) continue;
+        const Site& s = sites[i];
         UINT delta;
         std::memcpy(&delta, base + s.call + 1, sizeof(delta));
         if (base[s.call] != 0xE8 || s.call + 5 + delta != s.target) return false;
@@ -951,7 +956,9 @@ bool AutosportInstallNativeOvr() noexcept {
     struct Page { BYTE* address; DWORD original; };
     Page pages[sizeof(sites)/sizeof(sites[0])]{};
     size_t count = 0;
-    for (auto& s : sites) {
+    for (unsigned site = 0; site < SiteCount; ++site) {
+        if (!used[site]) continue;
+        const Site& s = sites[site];
         // Each verified five-byte instruction lies wholly inside a single 4 KiB page.
         auto* page = base + (s.call & ~UINT(0xfff));
         bool seen = false;
@@ -979,8 +986,9 @@ bool AutosportInstallNativeOvr() noexcept {
     stockSettingLookup = reinterpret_cast<SettingLookupFn>(base + build->settingLookup);
     forcedSettingTable[2] = reinterpret_cast<void*>(&forcedSettingValue);
     stockPauseEntry = reinterpret_cast<PauseEntryFn>(base + build->pauseEntry);
-    for (auto& s : sites) {
-        if (s.resume && !benchmarkExit) continue;
+    for (unsigned i = 0; i < SiteCount; ++i) {
+        if (!used[i]) continue;
+        const Site& s = sites[i];
         UINT delta = reinterpret_cast<UINT>(s.replacement) - reinterpret_cast<UINT>(base + s.call + 5);
         std::memcpy(base + s.call + 1, &delta, sizeof(delta));
         if (s.resume) {

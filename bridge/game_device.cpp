@@ -16,6 +16,9 @@ const BYTE* image;
 wchar_t directory[MAX_PATH]{};
 bool headset;
 bool regularPlay;
+// -gasvrmode=desktop (launcher Launch with Practice / Race): the session file and the controller
+// claim on the desktop. The game renders as it always does; nothing of the headset path runs.
+bool desktopPlay;
 bool practiceSession; // A play session started with its own -benchmarkAttract file (launcher Practice / Race).
 bool hudFollowsView;
 // -gasvrhudparts=MASK (launcher VR HUD): 1 entire HUD, 2 dial, 4 minimap, 8 counters, 16 position
@@ -106,7 +109,10 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
         const wchar_t* value = flag + ARRAYSIZE(playArg) - 1;
         const size_t length = wcscspn(value, L" \t");
         const wchar_t* xr = wcsstr(cmd, L" -gasvrmode=openxr");
-        if (length != 32 || !xr || wcscspn(xr + 1, L" \t") != wcslen(L"-gasvrmode=openxr") ||
+        const wchar_t* flat = wcsstr(cmd, L" -gasvrmode=desktop");
+        const bool xrMode = xr && wcscspn(xr + 1, L" \t") == wcslen(L"-gasvrmode=openxr");
+        const bool flatMode = flat && wcscspn(flat + 1, L" \t") == wcslen(L"-gasvrmode=desktop");
+        if (length != 32 || xrMode == flatMode || (xr && !xrMode) || (flat && !flatMode) ||
             wcsstr(value, playArg) || wcsstr(cmd, L" -gasvrdir=")) return false;
         wchar_t token[33]{}, localData[MAX_PATH]{};
         wmemcpy(token, value, length);
@@ -119,12 +125,15 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
                 wcsstr(bench + size, L" -benchmark")) return false;
             practiceSession = true;
         }
+        // A desktop session exists only for Practice / Race.
+        if (flatMode && !practiceSession) return false;
         DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", localData, ARRAYSIZE(localData));
         if (!count || count >= ARRAYSIZE(localData) || !AutosportPlayDirectory(token, localData, directory)) return false;
         const wchar_t* follow = wcsstr(cmd, L" -gasvrhudfollow=1");
         hudFollowsView = follow && wcscspn(follow + 1, L" \t") == wcslen(L"-gasvrhudfollow=1");
-        wcscpy_s(mode, L"openxr");
+        wcscpy_s(mode, flatMode ? L"desktop" : L"openxr");
         regularPlay = true;
+        desktopPlay = flatMode;
         AutosportConfigureDeviceClaim(image, cmd, practiceSession);
         return true;
     }
@@ -159,13 +168,14 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID) {
         wchar_t mode[16]{}, seconds[8]{};
         if (!supportedHost() || !commandSession(mode, seconds)) return TRUE;
         headset = !wcscmp(mode, L"openxr");
-        if (!headset && wcscmp(mode, L"capture")) return TRUE;
+        if (!headset && !desktopPlay && wcscmp(mode, L"capture")) return TRUE;
         if (*seconds) {
             wchar_t* end;
             const unsigned long n = wcstoul(seconds, &end, 10);
             if (*seconds && !*end && n <= 240) captureTime = n;
         }
-        adapterReady = AutosportInstallNativeOvr();
+        adapterReady = AutosportInstallNativeOvr(desktopPlay);
+        AutosportLog("Native install %s", adapterReady ? "complete" : "refused: this executable does not match its build");
         if (!adapterReady) return FALSE;
         AutosportConfigureForceFeedback(image, GetCommandLineW());
     }
@@ -489,7 +499,7 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     hookTestPad();
     const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
     if (SUCCEEDED(hr) && device && *device && headset) { AutosportConfigureTextureFiltering(*device); AutosportConfigureShadowBias(*device); AutosportConfigureShadowConstants(*device); AutosportConfigureDepthPrecision(*device); }
-    if (SUCCEEDED(hr) && device && *device && regularPlay) {
+    if (SUCCEEDED(hr) && device && *device && regularPlay && headset) {
         wchar_t game[MAX_PATH]{};
         const DWORD length = GetModuleFileNameW(nullptr, game, MAX_PATH);
         if (wchar_t* slash = length && length < MAX_PATH ? wcsrchr(game, L'\\') : nullptr) {
@@ -497,8 +507,8 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
             AutosportConfigureCockpitTextures(*device, directory, game);
         }
     }
-    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f diagnostics=%d performanceDisplay=%d classicColor=%d",
-                 hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession,
+    AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d desktop=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f diagnostics=%d performanceDisplay=%d classicColor=%d",
+                 hr, adapterReady, SUCCEEDED(hr) && device ? (void*)*device : nullptr, captureTime, practiceSession, desktopPlay,
                  hudPartsForced, hudParts, hudDistance, screenDistance, diagnosticLogging, performanceDisplay, classicColor);
     return hr;
 }
