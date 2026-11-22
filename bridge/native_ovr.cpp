@@ -211,27 +211,37 @@ void __fastcall updateUiCamera(void* camera, const void* drawCaller, const BYTE*
         }
     }
     // The in-race pause menu, shown on the seated screen, hangs from the bottom of its FE camera's
-    // orthographic frame (clip y about -0.8 to -2.2 here), below the eye image. Scale this draw's
-    // clip x and y about the centre of the (centred) field of view and lift it, so the whole menu
-    // fits under the paused scene. Only in the stereo pass, where the native draw restores this
-    // field after the batch (0x720BB9 / 0x720D34), so the change never accumulates.
+    // orthographic frame (clip y about -0.8 to -2.2 with an 800x600 game window), below the eye
+    // image. Scale this draw's clip x and y about the centre of the (centred) field of view and
+    // lift it, so the whole menu fits under the paused scene. Only in the stereo pass, where the
+    // native draw restores this field after the batch (0x720BB9 / 0x720D34), so the change never
+    // accumulates. The camera's scale follows the game window (x 800/width, y 400/height) while
+    // the menu keeps its layout units, so at 3840x2160 the menu was a fifth of its size and the
+    // loading screen's lower panel filled the screen below it: first bring the scale back to the
+    // 800x600 window's (1, 2/3), for which the fit and lift were chosen.
     if (drawCaller != osdLayoutReturn && AutosportPauseMenuShown()) {
         auto* bytes = static_cast<BYTE*>(camera);
         const bool stereo = *reinterpret_cast<const DWORD*>(renderer + 0x52e8) && renderer[0x52f1];
         if (stereo) {
             constexpr float fit = .55f, lift = .3f; // clip y' = fit*y + lift*w
+            constexpr float referenceX = 1.f, referenceY = 2.f / 3.f; // the 800x600 window's camera scale
             auto& m = *reinterpret_cast<Matrix*>(bytes + 0x110);
+            const float toReferenceX = m.m[0][0] > 0 ? referenceX / m.m[0][0] : 1.f;
+            const float toReferenceY = m.m[1][1] > 0 ? referenceY / m.m[1][1] : 1.f;
             static const void* logged[8]{};
             static unsigned count;
             bool seen = false;
             for (unsigned i = 0; i < count; ++i) if (logged[i] == drawCaller) seen = true;
             if (!seen && count < 8) {
                 logged[count++] = drawCaller;
-                AutosportLog("Pause menu FE draw callerRVA=%X perspective=%u xy=(%.4g,%.4g) w=(%.4g,%.4g) scaled by %.2f",
+                AutosportLog("Pause menu FE draw callerRVA=%X perspective=%u xy=(%.4g,%.4g) w=(%.4g,%.4g) to 800x600 scale x%.3g y%.3g, then scaled by %.2f",
                              unsigned(static_cast<const BYTE*>(drawCaller)-gameImage-5), unsigned(bytes[0xe0]),
-                             m.m[0][0], m.m[1][1], m.m[2][3], m.m[3][3], fit);
+                             m.m[0][0], m.m[1][1], m.m[2][3], m.m[3][3], toReferenceX, toReferenceY, fit);
             }
-            for (int r = 0; r < 4; ++r) { m.m[r][0] *= fit; m.m[r][1] = m.m[r][1]*fit + lift*m.m[r][3]; }
+            for (int r = 0; r < 4; ++r) {
+                m.m[r][0] *= toReferenceX * fit;
+                m.m[r][1] = m.m[r][1]*toReferenceY*fit + lift*m.m[r][3];
+            }
         }
     } else if (drawCaller != osdLayoutReturn && AutosportFlatScreen() && descriptors) {
         // Menus, loading screens and the intro shots' broadcast layout on the seated screen. The
