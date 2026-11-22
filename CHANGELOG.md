@@ -7,6 +7,7 @@
 - **No more launcher error as VR starts.** The launcher could show an error ("Cannot access a disposed object. Object name: 'Icon'") just as VR started, when the game changed the display mode while the launch progress window was closing. VR itself kept running.
 - **No grey bar at the bottom of the view.** With the game set to a widescreen resolution (most monitors), a dark band with a grey bar, left over from the loading screen, covered the bottom of the view while driving in VR. It is gone.
 - **The pause menu is readable at any game resolution.** With a widescreen game resolution, the in-race pause menu was shrunk into a thin strip above a large dark panel. It now fills the screen as intended.
+- **Continue from the pause menu.** In Practice and Race the pause menu had no Continue, so you could only restart or quit. It now has **Continue** (and **Options**), as in the rest of the game. Choose Continue to return to the race; Esc or Back still does not close the menu.
 
 ## 0.2.2
 

@@ -963,14 +963,27 @@ bool AutosportInstallNativeOvr(bool desktop) noexcept {
                 slot != reinterpret_cast<UINT>(base + build->exitProcessSlot)) return false;
         }
     }
+    // Launcher Practice / Race (desktop or headset) run on -benchmarkAttract, so the game sets its
+    // frontend data benchmark_mode_enabled, and its pause menu (states.bin ScreenPauseMainMenu)
+    // then hides Continue and Options and ignores Back / Esc: the player could not return to the
+    // race. Those sessions store 0 there instead. The benchmark worker reads its own state
+    // (RVA F399B8 +0x84), not this value, so session results and Quit are unchanged.
+    const bool resumable = AutosportPracticeSession();
+    if (resumable)
+        for (UINT at : build->benchmarkModeOn)
+            if (base[at] != 0xC6 || base[at + 1] != 0x45 || base[at + 3] != 1) return false;
+    UINT patched[SiteCount + 2];
+    size_t patchedCount = 0;
+    for (unsigned site = 0; site < SiteCount; ++site)
+        if (used[site]) patched[patchedCount++] = sites[site].call;
+    if (resumable)
+        for (UINT at : build->benchmarkModeOn) patched[patchedCount++] = at;
     struct Page { BYTE* address; DWORD original; };
-    Page pages[sizeof(sites)/sizeof(sites[0])]{};
+    Page pages[SiteCount + 2]{};
     size_t count = 0;
-    for (unsigned site = 0; site < SiteCount; ++site) {
-        if (!used[site]) continue;
-        const Site& s = sites[site];
-        // Each verified five-byte instruction lies wholly inside a single 4 KiB page.
-        auto* page = base + (s.call & ~UINT(0xfff));
+    for (size_t index = 0; index < patchedCount; ++index) {
+        // Each verified instruction lies wholly inside a single 4 KiB page.
+        auto* page = base + (patched[index] & ~UINT(0xfff));
         bool seen = false;
         for (size_t i = 0; i < count; ++i) seen = seen || pages[i].address == page;
         if (seen) continue;
@@ -1008,6 +1021,10 @@ bool AutosportInstallNativeOvr(bool desktop) noexcept {
             std::memcpy(tail + 1, &jump, sizeof(jump));
             std::memset(tail + 5, 0x90, 3);
         }
+    }
+    if (resumable) {
+        for (UINT at : build->benchmarkModeOn) base[at + 3] = 0;
+        AutosportLog("Practice / Race: benchmark_mode_enabled kept off, so the pause menu offers Continue");
     }
     bool ok = true;
     for (size_t i = 0; i < count; ++i) {

@@ -29,7 +29,7 @@ The portable ZIP works the same way: extract it into your GRID Autosport folder 
 - **Graphics → Cockpit textures** swaps in sharper, AI-redrawn cockpit artwork (2048 x 2048, 79 of the 83 cars) while you play in VR. It is an optional download from the GitHub releases, made the first time you launch VR with it on; **Install from file…** takes a copy of the pack ZIP instead. Game files are not changed; untick it for the originals.
 - Startup videos, loading screens, menus, the pause menu and the pre-race intro shots appear on a screen in front of you; races are in stereo.
 - Practice and Race start in the driver's seat (**Launcher → Session → Camera**); the game's change-camera button still switches views. Normal races keep the camera you last used.
-- In Practice and Race the start lights go green straight away: you start on pole, and the race is yours to drive. Pause with the game's pause button (**Esc**, or **Start** on a controller) to restart or quit. **Quit** closes the game, and the launcher restores the original files; **End session** in the launcher (beside Launch VR) does the same at any time.
+- In Practice and Race the start lights go green straight away: you start on pole, and the race is yours to drive. Pause with the game's pause button (**Esc**, or **Start** on a controller); choose **Continue** to carry on, or restart or quit. **Quit** closes the game, and the launcher restores the original files; **End session** in the launcher (beside Launch VR) does the same at any time.
 
 ## Updates and help
 

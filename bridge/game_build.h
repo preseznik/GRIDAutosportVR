@@ -33,6 +33,9 @@ struct GameBuild {
     UINT osdCaller, osdLayoutReturn;
     // Frontend state vtables (Discipline and Championship) and the slots the bridge wraps.
     UINT disciplineTable, disciplineEnter, championshipTable, championshipEnter, videoLeave;
+    // Code: the two "mov byte ptr [ebp+x],1" whose value the game stores in its frontend data
+    // benchmark_mode_enabled when a benchmark (or -benchmarkAttract) race starts.
+    UINT benchmarkModeOn[2];
 };
 
 // The running game's build, or nullptr when it is not a supported one.
