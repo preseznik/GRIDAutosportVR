@@ -22,6 +22,8 @@ internal static partial class VrPlaySession
         public string? Id { get; set; }
         public string? GameFolder { get; set; }
         public string? BridgeHash { get; set; }
+        // The bridge's file name in the game folder: gasxr.dll (null in older leases) or d3d11.dll (2014 build).
+        public string? BridgeFile { get; set; }
         // The game build staged (GameBuilds); null in leases from before the 2014 build: Steam.
         public string? Build { get; set; }
         // Practice / Race: the session file in the game folder and the swapped system/flow.bin.
@@ -275,7 +277,7 @@ internal static partial class VrPlaySession
             WriteCarNames();
             try
             {
-                Stage(folder, bridgePath, id, session, inputs, graphics, build);
+                Stage(folder, Installation.RendererFor(build, bridgePath), id, session, inputs, graphics, build);
                 if (desktop) Record(id, "Desktop session: the game renders on the desktop; no headset.");
                 else
                 {
@@ -339,8 +341,8 @@ internal static partial class VrPlaySession
         inputs ??= [];
         build ??= GameBuilds.Steam;
         var executable = Path.Combine(folder, build.Executable);
-        var dll = Path.Combine(folder, BridgeName);
-        if (File.Exists(dll) || File.Exists(Path.Combine(folder, Installation.PlayLease)))
+        var dll = Path.Combine(folder, build.BridgeFile);
+        if (File.Exists(dll) || File.Exists(Path.Combine(folder, BridgeName)) || File.Exists(Path.Combine(folder, Installation.PlayLease)))
             throw new IOException("A VR bridge or play session already exists in the game folder. Existing files were preserved.");
         var stockFlow = session is null ? null : File.ReadAllBytes(FlowFile(folder));
         var guardedFlow = stockFlow is null ? null : PracticeFlow.Guarded(stockFlow);
@@ -357,7 +359,7 @@ internal static partial class VrPlaySession
             var target = Path.Combine(folder, change.RelativePath);
             return File.Exists(target) ? File.ReadAllBytes(target) : null;
         }).ToList();
-        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), Build = build == GameBuilds.Steam ? null : build.Id, SessionHash = session is null ? null : Hash(session), Flow = session is not null,
+        var info = new Lease { Id = id, GameFolder = folder, BridgeHash = Hash(payload), BridgeFile = build.ProxyBridge ? build.BridgeFile : null, Build = build == GameBuilds.Steam ? null : build.Id, SessionHash = session is null ? null : Hash(session), Flow = session is not null,
             Inputs = inputs.Count == 0 ? null : inputs.Select((change, i) => new InputFile { Path = change.RelativePath,
                 OriginalHash = inputOriginals[i] is { } original ? Hash(original) : null, StagedHash = Hash(change.Content) }).ToList(),
             Graphics = graphics is null ? null : new InputFile { Path = graphics.Path, OriginalHash = Hash(graphics.Original), StagedHash = Hash(graphics.Staged) } };
@@ -433,6 +435,13 @@ internal static partial class VrPlaySession
             if (FileHash(graphics.Path) != info.Graphics.StagedHash) throw new IOException("The installed graphics settings verification failed.");
             Record(id, "Graphics for this session: " + graphics.Description + " (" + graphics.Path + "; the player's own file is restored afterwards).");
         }
+        if (build.ProxyBridge)
+        {
+            EnsureIdle(folder);
+            if (FileHash(executable) != build.StockSha256) throw new IOException("The game files changed during staging.");
+            Record(id, "Staged verified bridge " + info.BridgeHash + " as " + build.BridgeFile + " beside the unchanged " + build.Executable + " (" + build.Label + ").");
+            return;
+        }
         WriteNew(prefix + ".exe.tmp", candidate);
         EnsureIdle(folder);
         if (FileHash(executable) != build.StockSha256 || FileHash(prefix + ".exe.tmp") != build.VrSha256) throw new IOException("The game files changed during staging.");
@@ -490,7 +499,7 @@ internal static partial class VrPlaySession
         EnsureIdle(folder);
         var info = JsonSerializer.Deserialize<Lease>(File.ReadAllBytes(leaseFile));
         if (info is null || !SessionId().IsMatch(info.Id ?? "") || !Sha256Text().IsMatch(info.BridgeHash ?? "") ||
-            (info.SessionHash is not null && !Sha256Text().IsMatch(info.SessionHash)) ||
+            (info.SessionHash is not null && !Sha256Text().IsMatch(info.SessionHash)) || info.BridgeFile is not (null or "d3d11.dll") ||
             !string.Equals(info.GameFolder, folder, StringComparison.OrdinalIgnoreCase)) throw new IOException("Invalid VR play lease. The game files were preserved.");
         var id = info.Id!;
         var saved = SessionFolder(id);
@@ -515,7 +524,7 @@ internal static partial class VrPlaySession
         if (info.Flow) RestoreFlow(folder, saved, prefix, id);
         if (info.Inputs is not null) RestoreInputs(folder, saved, prefix, id, info.Inputs);
         if (info.Graphics is not null) RestoreGraphics(saved, id, info.Graphics);
-        RemoveMatching(Path.Combine(folder, BridgeName), info.BridgeHash!, id);
+        RemoveMatching(Path.Combine(folder, info.BridgeFile ?? BridgeName), info.BridgeHash!, id);
         if (info.SessionHash is not null)
         {
             RemoveMatching(Path.Combine(folder, SessionFile(id)), info.SessionHash, id);

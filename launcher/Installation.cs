@@ -100,6 +100,9 @@ internal static class Installation
         return File.Exists(dll) ? dll : null;
     }
 
+    // The renderer a build stages, beside renderer\gasxr.dll (GameBuild.RendererFile).
+    public static string RendererFor(GameBuild build, string renderer) => Path.Combine(Path.GetDirectoryName(renderer)!, build.RendererFile);
+
     public static bool SessionPending(string? folder) => GameExists(folder) &&
         (File.Exists(Path.Combine(folder!, PlayLease)) || File.Exists(Path.Combine(folder!, BenchmarkLease)));
 
@@ -118,6 +121,12 @@ internal static class Installation
             return File.Exists(Path.Combine(folder!, GameBuilds.Steam.Executable))
                 ? "This version of GRID Autosport is unsupported. Verify the game files in Steam."
                 : "The Steam installation is missing GRIDAutosport_avx.exe. Update GRID Autosport in Steam, or verify its files.";
+        if (build.ProxyBridge)
+        {
+            if (!File.Exists(RendererFor(build, renderer!))) return @"The launcher package is missing renderer\" + build.RendererFile + ".";
+            if (File.Exists(Path.Combine(folder!, build.BridgeFile)))
+                return "A d3d11.dll is already in the game folder, perhaps from another mod such as ReShade. GRID Autosport VR puts its own there for each session: move that file elsewhere before launching.";
+        }
         try
         {
             VrPlaySession.EnsureIdle(folder);

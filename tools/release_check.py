@@ -4,7 +4,8 @@
 
 LAUNCHER_FOLDER holds GRIDAutosportVR.exe with probe\\AutosportXRProbe.exe and renderer\\gasxr.dll
 (a package's GRIDAutosportVR folder, or a build with both copied in). Steam must already be running.
-Reserve the test PC first: the game window opens through Steam.
+Reserve the test PC first: the game window opens through Steam. --game picks another folder, such
+as a 2014 GRIDAutosport.exe one, which the supervisor starts directly instead of through Steam.
 
 The supervisor (GRIDAutosportVR.exe --play-vr, what Launch VR runs) gets GASVR_TEST_VDXR_MANIFEST:
 a copy of xr-sim's manifest named as Virtual Desktop's, so with the VR runtime set to VDXR the game
@@ -54,12 +55,14 @@ def main():
     parser.add_argument("launcher")
     parser.add_argument("--only", default="preset,interrupted,normal,diagnostics")
     parser.add_argument("--drive", type=int, default=45, help="Seconds in VR before ending the session")
+    parser.add_argument("--game", default=str(GAME), help="Game folder (default: the Steam install; a 2014 GRIDAutosport.exe folder starts directly)")
     args = parser.parse_args()
+    game = Path(args.game)
     exe = Path(args.launcher) / "GRIDAutosportVR.exe"
     assert exe.exists() and XRSIM_DLL.exists(), "launcher or xr-sim build missing"
     assert running("steam.exe"), "Start Steam first"
     assert not running("GRIDAutosport_avx.exe") and not running("GRIDAutosport.exe"), "Close GRID Autosport first"
-    assert not (GAME / "gasvr-play-session.json").exists(), "A VR play lease exists: restore it first"
+    assert not (game / "gasvr-play-session.json").exists(), "A VR play lease exists: restore it first"
 
     work = REPO / "artifacts" / "release-check" / time.strftime("%Y%m%d-%H%M%S")
     work.mkdir(parents=True)
@@ -80,7 +83,7 @@ def main():
     def session(name, kill=False, drive=args.drive):
         (DATA / "vr-launch.json").unlink(missing_ok=True)
         started = time.time()
-        supervisor = subprocess.Popen([str(exe), "--play-vr", "--game-dir", str(GAME)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        supervisor = subprocess.Popen([str(exe), "--play-vr", "--game-dir", str(game)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         steps, during, session_id, focused_at = [], None, None, None
         while supervisor.poll() is None and time.time() - started < 240:
             try: status = json.loads((DATA / "vr-launch.json").read_text(encoding="utf-8"))
@@ -102,19 +105,19 @@ def main():
             for image in ("GRIDAutosport_avx.exe", "GRIDAutosport.exe"):
                 subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True)
             time.sleep(3)
-            row["leaseAfterKill"] = (GAME / "gasvr-play-session.json").exists()
+            row["leaseAfterKill"] = (game / "gasvr-play-session.json").exists()
             row["configAfterKill"] = sha(CONFIG)
-            restore = subprocess.run([str(exe), "--restore-play", "--game-dir", str(GAME)], capture_output=True, text=True, timeout=120)
+            restore = subprocess.run([str(exe), "--restore-play", "--game-dir", str(game)], capture_output=True, text=True, timeout=120)
             row["restoreExit"] = restore.returncode
             row["restoreError"] = restore.stderr.strip()[:300]
         else:
-            end = subprocess.run([str(exe), "--end-session", "--game-dir", str(GAME)], capture_output=True, text=True, timeout=120)
+            end = subprocess.run([str(exe), "--end-session", "--game-dir", str(game)], capture_output=True, text=True, timeout=120)
             row["endSession"] = end.returncode
             try: supervisor.wait(120)
             except subprocess.TimeoutExpired: supervisor.kill()
             row["supervisorExit"] = supervisor.returncode
             row["supervisorError"] = supervisor.stderr.read().strip()[:300]
-        row["leaseAfter"] = (GAME / "gasvr-play-session.json").exists()
+        row["leaseAfter"] = (game / "gasvr-play-session.json").exists()
         row["configRestored"] = sha(CONFIG) == player_sha
         folder = DATA / "sessions" / (session_id or "-")
         log = (folder / "supervisor.log").read_text(errors="replace") if (folder / "supervisor.log").exists() else ""

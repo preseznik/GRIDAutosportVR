@@ -2,6 +2,14 @@
 #include <d3d11.h>
 #include <cstdint>
 
+// The game's D3D11CreateDevice (gasxr.dll's export; d3d11_proxy.cpp forwards the game's calls to it in
+// the 2014 build's d3d11.dll), and the system's.
+extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVER_TYPE type, HMODULE software,
+        UINT flags, const D3D_FEATURE_LEVEL* levels, UINT count, UINT sdk, ID3D11Device** device,
+        D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context);
+HRESULT AutosportSystemCreateDevice(IDXGIAdapter* adapter, D3D_DRIVER_TYPE type, HMODULE software, UINT flags, const D3D_FEATURE_LEVEL* levels,
+        UINT count, UINT sdk, ID3D11Device** device, D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context);
+
 bool AutosportUseHeadset();
 bool AutosportRegularPlay();
 bool AutosportStartInCockpit();

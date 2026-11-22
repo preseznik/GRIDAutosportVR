@@ -12,8 +12,19 @@ set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
 set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
 add_subdirectory("${OPENXR_SDK}" openxr-sdk EXCLUDE_FROM_ALL)
-add_library(gasxr SHARED game_build.cpp game_device.cpp native_ovr.cpp loading_overlay.cpp device_claim.cpp force_feedback.cpp cockpit_textures.cpp opponent_lod.cpp seat.cpp seat_panel.cpp xr_bridge.cpp eye_dump.cpp performance_display.cpp texture_filtering.cpp shadow_bias.cpp shadow_probe.cpp shadow_constants.cpp depth_precision.cpp gasxr.def)
+set(GASXR_SOURCES game_build.cpp game_device.cpp native_ovr.cpp loading_overlay.cpp device_claim.cpp force_feedback.cpp cockpit_textures.cpp opponent_lod.cpp seat.cpp seat_panel.cpp xr_bridge.cpp eye_dump.cpp performance_display.cpp texture_filtering.cpp shadow_bias.cpp shadow_probe.cpp shadow_constants.cpp depth_precision.cpp)
+# The Steam build's renderer: gasxr.dll, which the staged VR executable imports instead of d3d11.dll.
+add_library(gasxr SHARED ${GASXR_SOURCES} gasxr.def)
 target_compile_features(gasxr PRIVATE cxx_std_17)
 target_compile_definitions(gasxr PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX XR_USE_PLATFORM_WIN32 XR_USE_GRAPHICS_API_D3D11)
 target_compile_options(gasxr PRIVATE /W4 /EHsc)
 target_link_libraries(gasxr PRIVATE openxr_loader d3d11 dxgi d3dcompiler dxguid pdh)
+# The 2014 build's renderer: the same code as d3d11.dll beside the unmodified executable
+# (d3d11_proxy.cpp). It must not import d3d11.dll itself.
+add_library(gasxr_classic SHARED ${GASXR_SOURCES} d3d11_proxy.cpp d3d11_proxy.def)
+set_target_properties(gasxr_classic PROPERTIES OUTPUT_NAME d3d11
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/classic" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/classic")
+target_compile_features(gasxr_classic PRIVATE cxx_std_17)
+target_compile_definitions(gasxr_classic PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX XR_USE_PLATFORM_WIN32 XR_USE_GRAPHICS_API_D3D11 GASVR_PROXY)
+target_compile_options(gasxr_classic PRIVATE /W4 /EHsc)
+target_link_libraries(gasxr_classic PRIVATE openxr_loader dxgi d3dcompiler dxguid pdh)

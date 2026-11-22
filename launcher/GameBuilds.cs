@@ -6,12 +6,18 @@ namespace GRIDAutosportVR;
 // Steam: the 2019 update, which runs GRIDAutosport_avx.exe through Steam. Classic 2014:
 // GRIDAutosport.exe 1.0.103.1840 linked 2014-11-03 (17,478,656 bytes), the same game version
 // built earlier; it starts directly, in any folder, with -noavx (otherwise, on an AVX processor, it
-// hands over to a GRIDAutosport_avx.exe beside it). A VR session stages the build's executable
-// with its d3d11.dll import renamed to gasxr.dll, and restores it afterwards.
+// hands over to a GRIDAutosport_avx.exe beside it).
+// A Steam session stages the executable with its d3d11.dll import renamed to gasxr.dll, plus
+// renderer\gasxr.dll, and restores it afterwards. A 2014 session leaves GRIDAutosport.exe as it is
+// and stages renderer\2014\d3d11.dll as the game folder's d3d11.dll (bridge/d3d11_proxy.cpp), which
+// Windows loads before the system's: some copies of the 2014 build refuse to start a changed
+// executable. VrSha256 is the renamed-import executable (Steam sessions; older 2014 sessions).
 internal sealed record GameBuild(string Id, string Label, string Executable, string StockSha256, string VrSha256, int ImportNameOffset,
-    bool ThroughSteam, string BackupName, string[] Arguments)
+    bool ThroughSteam, string BackupName, string[] Arguments, string BridgeFile = "gasxr.dll", string RendererFile = "gasxr.dll")
 {
     public string ProcessName => Path.GetFileNameWithoutExtension(Executable);
+    // The bridge loads as the game folder's d3d11.dll; the executable is never changed.
+    public bool ProxyBridge => BridgeFile == "d3d11.dll";
 }
 
 internal static class GameBuilds
@@ -21,7 +27,7 @@ internal static class GameBuilds
         0xE0C23C, true, "original-avx.exe", []);
     public static readonly GameBuild Classic2014 = new("2014", "2014 version (GRIDAutosport.exe)", "GRIDAutosport.exe",
         "23d863f970a454ba52d66f7c22a296428bd0047781ecede1baa9f0d9211616f9", "e4e3983a33b2fa1ed277d48dc61f2672f6e2460600612aced1672a0161afce9e",
-        0xF3CE1A, false, "original-game.exe", ["-noavx"]);
+        0xF3CE1A, false, "original-game.exe", ["-noavx"], "d3d11.dll", @"2014\d3d11.dll");
     public static readonly GameBuild[] All = [Steam, Classic2014];
 
     // Leases written before builds were recorded are Steam sessions.

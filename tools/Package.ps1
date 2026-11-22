@@ -68,7 +68,11 @@ foreach ($native in @(@{ Folder = 'bridge'; Target = 'gasxr' }, @{ Folder = 'pro
     Invoke-Checked "Configure $($native.Folder)" { cmake -S (Join-Path $root $native.Folder) -B $binary -G 'Visual Studio 17 2022' -A Win32 "-DOPENXR_SDK=$OpenXrSdk" }
     Invoke-Checked "Build $($native.Folder)" { cmake --build $binary --config Release --target $native.Target -- /m /v:minimal }
 }
+# The 2014 build's renderer: the same bridge as d3d11.dll, staged beside the unchanged GRIDAutosport.exe.
+Invoke-Checked 'Build bridge (2014 d3d11.dll)' { cmake --build (Join-Path $build 'bridge') --config Release --target gasxr_classic -- /m /v:minimal }
 Copy-Item -LiteralPath (Join-Path $build 'bridge\Release\gasxr.dll') -Destination "$stage\renderer"
+New-Item -ItemType Directory -Path "$stage\renderer\2014" -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $build 'bridge\classic\Release\d3d11.dll') -Destination "$stage\renderer\2014"
 Copy-Item -LiteralPath (Join-Path $build 'probe\Release\AutosportXRProbe.exe') -Destination "$stage\probe"
 # The launcher's controller / wheel reader (DirectInput + XInput, from GRID2VR), x64 like the launcher.
 $drivingInput = Join-Path $build 'driving-input'

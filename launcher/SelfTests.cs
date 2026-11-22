@@ -385,22 +385,37 @@ internal static class SelfTests
         var target = Path.Combine(game, "GRIDAutosport.exe");
         File.Copy(exe, target);
         Check(GameBuilds.Detect(game) == GameBuilds.Classic2014 && Installation.GameExists(game));
-        var bridge = Path.Combine(LauncherSettings.DataDirectory, "bridge-test.dll");
+        // A package's renderer folder: gasxr.dll (Steam) and 2014\d3d11.dll (this build).
+        var package = Path.Combine(LauncherSettings.DataDirectory, "renderer-test");
+        if (Directory.Exists(package)) Directory.Delete(package, true);
+        Directory.CreateDirectory(Path.Combine(package, "2014"));
+        var bridge = Path.Combine(package, "gasxr.dll");
         File.WriteAllBytes(bridge, [1, 2, 3]);
+        Check(Installation.VrLaunchProblem(game, bridge, bridge)!.Contains(@"renderer\2014\d3d11.dll"));
+        var proxy = Installation.RendererFor(GameBuilds.Classic2014, bridge);
+        Check(proxy == Path.Combine(package, "2014", "d3d11.dll") && Installation.RendererFor(GameBuilds.Steam, bridge) == bridge);
+        File.WriteAllBytes(proxy, [4, 5, 6]);
         Check(Installation.VrLaunchProblem(game, bridge, bridge) is null, Installation.VrLaunchProblem(game, bridge, bridge) ?? "");
+        // Another mod's d3d11.dll in the folder (ReShade, for one) is never replaced.
+        File.WriteAllBytes(Path.Combine(game, "d3d11.dll"), [7]);
+        Check(Installation.VrLaunchProblem(game, bridge, bridge)!.Contains("A d3d11.dll is already in the game folder"));
+        File.Delete(Path.Combine(game, "d3d11.dll"));
         var desktop = Installation.DesktopStartInfo(game);
         Check(desktop.FileName == target && desktop.WorkingDirectory == game && desktop.ArgumentList.SequenceEqual(["-noavx"]));
         const string id = "0123456789abcdeffedcba9876543210";
-        VrPlaySession.Stage(game, bridge, id, build: GameBuilds.Classic2014);
-        Check(GameBuilds.CachedHash(target) == GameBuilds.Classic2014.VrSha256 && GameBuilds.Detect(game) == GameBuilds.Classic2014);
-        Check(File.ReadAllText(Path.Combine(game, Installation.PlayLease)).Contains("\"Build\":\"2014\""));
+        // The executable stays unchanged; the bridge is the game folder's d3d11.dll.
+        VrPlaySession.Stage(game, proxy, id, build: GameBuilds.Classic2014);
+        Check(GameBuilds.CachedHash(target) == GameBuilds.Classic2014.StockSha256 && GameBuilds.Detect(game) == GameBuilds.Classic2014);
+        Check(File.ReadAllBytes(Path.Combine(game, "d3d11.dll")).SequenceEqual(new byte[] { 4, 5, 6 }) && !File.Exists(Path.Combine(game, "gasxr.dll")));
+        var lease = File.ReadAllText(Path.Combine(game, Installation.PlayLease));
+        Check(lease.Contains("\"Build\":\"2014\"") && lease.Contains("\"BridgeFile\":\"d3d11.dll\""));
         Check(Installation.VrLaunchProblem(game, bridge, bridge)!.Contains("Restore original files"));
         Check(VrPlaySession.Recover(game));
         Check(GameBuilds.CachedHash(target) == GameBuilds.Classic2014.StockSha256);
         Check(Directory.EnumerateFiles(game).Select(Path.GetFileName).SequenceEqual(["GRIDAutosport.exe"]), string.Join(",", Directory.EnumerateFiles(game)));
         Directory.Delete(game, true);
-        File.Delete(bridge);
-        Console.WriteLine("2014 build: detected, staged and restored.");
+        Directory.Delete(package, true);
+        Console.WriteLine("2014 build: detected, staged as d3d11.dll beside the unchanged exe, and restored.");
     }
 
     // With GASVR_TEST_GAME set to a real installation (read only): the real catalog and flow patch,

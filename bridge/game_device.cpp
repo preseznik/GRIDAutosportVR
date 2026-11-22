@@ -13,6 +13,7 @@
 
 namespace {
 const BYTE* image;
+HMODULE bridgeModule;
 wchar_t directory[MAX_PATH]{};
 bool headset;
 bool regularPlay;
@@ -66,16 +67,26 @@ SRWLOCK logLock = SRWLOCK_INIT;
 enum class Phase { Startup, Loading, Scene };
 std::atomic<Phase> phase{Phase::Startup};
 
-// A supported game build (game_build.h) running under its own file name, with the VR import.
+// A supported game build (game_build.h) running under its own file name, with the VR import:
+// gasxr.dll, or for the d3d11.dll build (GASVR_PROXY) the stock d3d11.dll import and this module
+// as the game folder's d3d11.dll.
 bool supportedHost() {
     const GameBuild* build = AutosportGameBuild();
     if (!build) return false;
     wchar_t filename[MAX_PATH]{};
     const DWORD count = GetModuleFileNameW(nullptr, filename, MAX_PATH);
     if (!count || count >= MAX_PATH) return false;
-    const wchar_t* name = wcsrchr(filename, L'\\');
+    wchar_t* name = wcsrchr(filename, L'\\');
     if (!name || _wcsicmp(name + 1, build->executable)) return false;
+#ifdef GASVR_PROXY
+    wchar_t own[MAX_PATH]{};
+    const DWORD ownCount = GetModuleFileNameW(bridgeModule, own, MAX_PATH);
+    if (!ownCount || ownCount >= MAX_PATH) return false;
+    wcscpy_s(name + 1, MAX_PATH - (name + 1 - filename), L"d3d11.dll");
+    return !_wcsicmp(own, filename) && !memcmp(image + build->importName, "d3d11.dll", 10);
+#else
     return !memcmp(image + build->importName, "gasxr.dll", 10);
+#endif
 }
 
 // The decimal value of " -NAME=DIGITS" ending at a space, tab or the end; false if absent or malformed.
@@ -164,6 +175,7 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(self);
+        bridgeModule = self;
         image = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
         wchar_t mode[16]{}, seconds[8]{};
         if (!supportedHost() || !commandSession(mode, seconds)) return TRUE;
@@ -497,7 +509,7 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     static bool seat;
     if (!seat && regularPlay && headset && adapterReady && directory[0]) { seat = true; AutosportSeatConfigure(directory); }
     hookTestPad();
-    const HRESULT hr = D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
+    const HRESULT hr = AutosportSystemCreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
     if (SUCCEEDED(hr) && device && *device && headset) { AutosportConfigureTextureFiltering(*device); AutosportConfigureShadowBias(*device); AutosportConfigureShadowConstants(*device); AutosportConfigureDepthPrecision(*device); }
     if (SUCCEEDED(hr) && device && *device && regularPlay && headset) {
         wchar_t game[MAX_PATH]{};
@@ -512,6 +524,13 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
                  hudPartsForced, hudParts, hudDistance, screenDistance, diagnosticLogging, performanceDisplay, classicColor);
     return hr;
 }
+
+#ifndef GASVR_PROXY
+HRESULT AutosportSystemCreateDevice(IDXGIAdapter* adapter, D3D_DRIVER_TYPE type, HMODULE software, UINT flags, const D3D_FEATURE_LEVEL* levels,
+        UINT count, UINT sdk, ID3D11Device** device, D3D_FEATURE_LEVEL* achieved, ID3D11DeviceContext** context) {
+    return D3D11CreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
+}
+#endif
 
 bool AutosportUseHeadset() { return headset; }
 bool AutosportRegularPlay() { return regularPlay; }
