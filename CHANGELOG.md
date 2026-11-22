@@ -4,6 +4,7 @@
 
 - **Practice and Race on the desktop.** **Launch** now starts the chosen Practice or Race on the desktop too, with your car, track, laps and opponents, and your controller or wheel already in charge. The launcher adds its session files for the run and restores the original files when the game exits, as for VR. With **Normal**, Launch still starts the unmodified game.
 - **The 2014 GRIDAutosport.exe is no longer changed.** For the 2014 version the launcher now leaves GRIDAutosport.exe exactly as it is and puts the VR renderer beside it as d3d11.dll for the session, removing it afterwards. Some copies of the 2014 version refused to start once the executable was changed (Windows reported error 0xc0000142). If the game folder already has a d3d11.dll from another mod, such as ReShade, the launcher asks you to move it first. The Steam version is unchanged.
+- **No more launcher error as VR starts.** The launcher could show an error ("Cannot access a disposed object. Object name: 'Icon'") just as VR started, when the game changed the display mode while the launch progress window was closing. VR itself kept running.
 
 ## 0.2.2
 

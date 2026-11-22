@@ -7,7 +7,13 @@ internal static class Branding
     public const string Title = "GRID Autosport VR";
     public const string Repository = "https://github.com/preseznik/GRIDAutosportVR";
 
-    public static Icon LoadIcon()
+    // One icon for every launcher window, kept for the life of the process: a window can still be
+    // sent WM_DPICHANGED while it closes (the game changing display mode as VR starts), and WinForms
+    // then redraws its icon, so a window must never dispose the icon it shows.
+    public static Icon Icon => icon.Value;
+    private static readonly Lazy<Icon> icon = new(LoadIcon);
+
+    private static Icon LoadIcon()
     {
         using var stream = typeof(Branding).Assembly.GetManifestResourceStream("GRIDAutosportVR.logo.ico") ?? throw new IOException("Launcher icon is missing.");
         using var icon = new Icon(stream);

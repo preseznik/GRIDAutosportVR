@@ -79,7 +79,7 @@ internal static class LauncherAppearance
 internal class LauncherForm : Form
 {
     private readonly SettingsWheelGuard wheelGuard;
-    public LauncherForm() { Icon = Branding.LoadIcon(); wheelGuard = new SettingsWheelGuard(this); }
+    public LauncherForm() { Icon = Branding.Icon; wheelGuard = new SettingsWheelGuard(this); }
     // Self-test previews show the window off-screen without taking focus from the desktop.
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal bool ShowInactive { get; set; }
@@ -98,7 +98,7 @@ internal class LauncherForm : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { wheelGuard.Dispose(); SystemEvents.UserPreferenceChanged -= PreferencesChanged; Icon?.Dispose(); }
+        if (disposing) { wheelGuard.Dispose(); SystemEvents.UserPreferenceChanged -= PreferencesChanged; }
         base.Dispose(disposing);
     }
 }

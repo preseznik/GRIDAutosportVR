@@ -62,8 +62,12 @@ internal static class LaunchProgressTests
         using (var form = new LaunchProgressForm { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) })
         {
             form.Show();
+            var shown = form.Icon!;
             form.DisplayProgress(new("VR is running.", Finished: true));
-            Check(!form.Visible);
+            Check(!form.Visible && form.IsDisposed);
+            // The window closes as VR starts, when the game's display change can still send it
+            // WM_DPICHANGED: the icon it showed must stay usable.
+            Check(shown.Handle != IntPtr.Zero && ReferenceEquals(shown, Branding.Icon));
         }
     }
 }
