@@ -20,6 +20,8 @@ void AutosportSetPauseState(const void* state);
 bool AutosportPreRaceIntro3D();
 bool AutosportPauseMenuShown();
 bool AutosportRaceScene();
+// Headset play with the car camera live in a race: not the menus, an intro shot or the pause menu.
+bool AutosportCarCameraLive();
 // The game executable's loaded base.
 const BYTE* AutosportGameImage();
 // Replaces one import of the game executable; the original stays callable through *original.

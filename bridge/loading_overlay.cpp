@@ -65,7 +65,9 @@ void __cdecl AutosportDrawFrontendOverlay(void* renderer, void* root, void* came
     // one it covers the bottom fifth of the view (3840x2160: eye rows 80-100% on xr-sim, 22 Nov),
     // and skipping this pass removed only that. So it is skipped there; the HUD (0x1B7AEB) and the
     // other passes still draw, and the seated screen (loading, intro shots, pause) keeps it.
-    if (_ReturnAddress() == frontendPass1 && AutosportRaceScene() && !AutosportFlatScreen()) {
+    // Only with the car camera live: Normal play's main menus are a scene too (they follow a
+    // StateLoading), and this pass draws them; 0.2.3 skipped it there and the menus vanished.
+    if (_ReturnAddress() == frontendPass1 && AutosportCarCameraLive() && !AutosportFlatScreen()) {
         static LONG logged;
         if (InterlockedCompareExchange(&logged, 1, 0) == 0) AutosportLog("Stereo race: loading panel FE pass skipped");
         return;

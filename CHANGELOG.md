@@ -3,6 +3,7 @@
 ## 0.2.4
 
 - **Controllers checked before launch.** Launch VR, and Launch with Practice or Race, now check that the wheels and other controllers in Driving controls are connected. If Windows has given a wheel a new identity (after a driver or G HUB update, another USB port or a reinstall), its bindings and controller recenter button follow it, and the launcher says so. If a bound controller is missing, or now reports as another model (as after switching a wheel's compatibility mode), the launcher names it and asks before starting a session in which its bindings would do nothing.
+- **Menus are back in Normal launches.** 0.2.3's fix for the grey bar while racing also hid the game's menus in a Normal VR launch, so the main menu and every screen before the race were blank in the headset. The bar is now removed only while you drive, and the menus show again.
 
 ## 0.2.3
 

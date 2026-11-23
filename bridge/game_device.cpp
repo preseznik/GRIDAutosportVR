@@ -691,6 +691,12 @@ bool AutosportCockpitView() {
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
+// Normal play reaches the main menus through StateLoading too, so a scene alone is not a race:
+// the vehicle view manager is set only when a race scene starts (raceStartView) and cleared at
+// the next StateLoading.
+bool AutosportCarCameraLive() {
+    return regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !introShot && !pauseMenu;
+}
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
     if (introVideo.load() || sceneVideo.load()) return true;
