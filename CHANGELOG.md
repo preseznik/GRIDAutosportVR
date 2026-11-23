@@ -3,6 +3,8 @@
 ## 0.2.4
 
 - **Controllers checked before launch.** Launch VR, and Launch with Practice or Race, now check that the wheels and other controllers in Driving controls are connected. If Windows has given a wheel a new identity (after a driver or G HUB update, another USB port or a reinstall), its bindings and controller recenter button follow it, and the launcher says so. If a bound controller is missing, or now reports as another model (as after switching a wheel's compatibility mode), the launcher names it and asks before starting a session in which its bindings would do nothing.
+- **Sharp image for the whole session.** With the game set to fullscreen, anything that took focus from the game during a session (another window, the VR streamer, Alt+Tab) made Windows drop it out of fullscreen. The game then switched to a small 800x600 window, and the headset image dropped to a fraction of its resolution for the rest of the session, often a few seconds into a race. VR launches now run the game in a window of the same size, which keeps full resolution whatever has focus. Your own display settings are restored afterwards.
+- **The VR screen is closer by default.** The screen for videos, loading and menus now starts at 1.5 m (Graphics → VR screen → Distance), the nearest setting. A distance you saved earlier is kept.
 - **Menus are back in Normal launches.** 0.2.3's fix for the grey bar while racing also hid the game's menus in a Normal VR launch, so the main menu and every screen before the race were blank in the headset. The bar is now removed only while you drive, and the menus show again.
 
 ## 0.2.3

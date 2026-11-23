@@ -48,16 +48,24 @@ internal static partial class VrPlaySession
     // own settings are used (Game settings, or a preset that matches them already).
     internal sealed record GraphicsPlan(string Path, byte[] Original, byte[] Staged, string Description);
 
+    // A VR session's graphics: the chosen quality and anti-aliasing, and always a window instead of
+    // exclusive fullscreen (GraphicsCatalog.Apply), so a focus change cannot drop the eye resolution.
     internal static GraphicsPlan? PlanGraphics(Choices choices, string? path = null)
     {
-        if (choices.GraphicsQuality.Length == 0 && choices.VrMsaa == GraphicsCatalog.GameSettings) return null;
+        var gameQuality = choices.GraphicsQuality.Length == 0 && choices.VrMsaa == GraphicsCatalog.GameSettings;
         path ??= GraphicsCatalog.ConfigPath;
         if (!File.Exists(path))
+        {
+            if (gameQuality) return null; // The game makes the file on its first start, as it chooses.
             throw new IOException("GRID Autosport has not saved its graphics settings yet. Start it once with Launch, or set Graphics → Graphics preset to Game settings.");
+        }
         var original = File.ReadAllBytes(path);
-        var staged = GraphicsCatalog.Apply(original, choices.GraphicsQuality, choices.VrMsaa);
-        return staged.AsSpan().SequenceEqual(original) ? null
-            : new GraphicsPlan(path, original, staged, GraphicsCatalog.Describe(choices.GraphicsQuality, choices.VrMsaa));
+        var quality = GraphicsCatalog.Apply(original, choices.GraphicsQuality, choices.VrMsaa);
+        var staged = GraphicsCatalog.Apply(original, choices.GraphicsQuality, choices.VrMsaa, windowed: true);
+        if (staged.AsSpan().SequenceEqual(original)) return null;
+        var description = GraphicsCatalog.Describe(choices.GraphicsQuality, choices.VrMsaa) +
+            (staged.AsSpan().SequenceEqual(quality) ? "" : "; the game runs in a window of its chosen size instead of fullscreen");
+        return new GraphicsPlan(path, original, staged, description);
     }
     private static string FlowFile(string folder) => Path.Combine(folder, "system", "flow.bin");
 

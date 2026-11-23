@@ -140,6 +140,18 @@ internal static class GraphicsPresetTests
         Check(plan is not null && plan.Original.SequenceEqual(original) && GraphicsCatalog.Read(plan.Staged, out var planMsaa)["Shadows"] == "ultra" && planMsaa == "off" &&
             plan.Description == "the game's own quality settings, VR anti-aliasing Off");
         Check(Throws<IOException>(() => VrPlaySession.PlanGraphics(new Choices(VrMsaa: "off"), GraphicsCatalog.ConfigPath + ".missing")));
+        Check(VrPlaySession.PlanGraphics(new Choices(), GraphicsCatalog.ConfigPath + ".missing") is null);
+        // Exclusive fullscreen becomes a window of the same size for the session, with Game settings too.
+        var fullscreenPath = GraphicsCatalog.ConfigPath + ".fullscreen.xml";
+        File.WriteAllText(fullscreenPath, originalText.Replace("<resolution width=\"800\" height=\"600\" aspect=\"auto\" fullscreen=\"false\"",
+            "<resolution width=\"3840\" height=\"2160\" aspect=\"auto\" fullscreen=\"true\""));
+        var windowed = VrPlaySession.PlanGraphics(new Choices(), fullscreenPath);
+        Check(windowed is not null && Encoding.UTF8.GetString(windowed.Staged) == File.ReadAllText(fullscreenPath).Replace("fullscreen=\"true\"", "fullscreen=\"false\"") &&
+              windowed.Description == "the game's own quality settings; the game runs in a window of its chosen size instead of fullscreen", windowed?.Description ?? "no plan");
+        var windowedLow = VrPlaySession.PlanGraphics(new Choices(GraphicsQuality: GraphicsCatalog.ApplyPreset(GraphicsCatalog.Potato, "off", 100).Quality, VrMsaa: "off"), fullscreenPath);
+        Check(windowedLow is not null && Encoding.UTF8.GetString(windowedLow.Staged).Contains("width=\"3840\" height=\"2160\" aspect=\"auto\" fullscreen=\"false\" vsync=\"0\" multisampling=\"off\"") &&
+              GraphicsCatalog.Read(windowedLow.Staged, out _)["Shadows"] == GraphicsCatalog.Preset("ultralow").Values["Shadows"]);
+        File.Delete(fullscreenPath);
         Check(GraphicsCatalog.Describe(GraphicsCatalog.ApplyPreset(GraphicsCatalog.Balanced, "off", 100).Quality, "off") == "VR Balanced quality, VR anti-aliasing Off");
         Check(GraphicsCatalog.Describe(GraphicsCatalog.ApplyPreset("ultra", "game", 100).Quality, "game") == "Ultra quality");
     }

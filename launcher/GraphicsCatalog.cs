@@ -23,6 +23,7 @@ internal static class GraphicsCatalog
     internal static readonly (string Id, string Label)[] VrMsaa =
         [(GameSettings, "Game setting"), ("off", "Off"), ("2xmsaa", "2× MSAA"), ("4xmsaa", "4× MSAA"), ("8xmsaa", "8× MSAA")];
     private const string MultisamplingTarget = "graphics_card/resolution@multisampling";
+    private const string FullscreenTarget = "graphics_card/resolution@fullscreen";
 
     private sealed record Catalog(int Schema, string SourceOptionsSha256, GraphicsCategory[] Categories, GraphicsPreset[] Presets, MultisamplingChoice[] Multisampling);
     private static readonly Catalog catalog = Load();
@@ -156,10 +157,16 @@ internal static class GraphicsCatalog
     }
 
     // The player's file with the chosen quality and VR MSAA; everything else is kept as it is.
-    internal static byte[] Apply(byte[] config, string quality, string msaa)
+    // windowed: a VR session runs the game in a window of its chosen size (FullscreenTarget). In
+    // exclusive fullscreen any focus change mid-race (another window, the VR streamer, Alt+Tab)
+    // makes Windows drop the game out of fullscreen, and the game then falls back to its 800x600
+    // window: the bridge's eye image follows the game's back buffer, so the headset view went to
+    // about a fifth of its resolution for the rest of the session (23 Nov, 3840x2160 fullscreen).
+    // A window of the same size keeps it, focus or not; the headset never shows the monitor.
+    internal static byte[] Apply(byte[] config, string quality, string msaa, bool windowed = false)
     {
         var values = Decode(quality);
-        if (values is null && msaa == GameSettings) return config;
+        if (values is null && msaa == GameSettings && !windowed) return config;
         if (!ValidMsaa(msaa)) throw new ArgumentException("Unsupported VR anti-aliasing.");
         var root = Root(config);
         void Set(string target, string value)
@@ -178,6 +185,9 @@ internal static class GraphicsCatalog
                     Attribute(root, other)?.Remove();
             }
         if (msaa != GameSettings) Set(MultisamplingTarget, msaa);
+        if (windowed && Attribute(root, FullscreenTarget) is { } fullscreen && !fullscreen.Value.Equals("false", StringComparison.OrdinalIgnoreCase))
+            fullscreen.Value = "false";
+        else if (values is null && msaa == GameSettings) return config;
         var text = Encoding.UTF8.GetString(config);
         var declaration = text.StartsWith("<?xml", StringComparison.Ordinal) ? text[..(text.IndexOf("?>", StringComparison.Ordinal) + 2)] : "";
         var body = root.ToString(SaveOptions.DisableFormatting);
