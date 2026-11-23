@@ -21,7 +21,7 @@ internal sealed partial class MainForm : LauncherForm
         hudCounters = HudPart("HudCounters", "Counters"), hudPositions = HudPart("HudPositions", "Position info");
     private readonly FlowLayoutPanel hudParts = new() { Name = "HudParts", AccessibleName = "HUD parts", AutoSize = true, WrapContents = true, Margin = Padding.Empty };
     private readonly DistanceSlider hudDistance = new("HudDistance", "HUD distance", DistanceSlider.HudMinimum, DistanceSlider.HudMaximum, 1m),
-        screenDistance = new("ScreenDistance", "Screen distance", DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, 3m);
+        screenDistance = new("ScreenDistance", "Screen distance", DistanceSlider.ScreenMinimum, DistanceSlider.ScreenMaximum, 1.5m);
     private readonly AppearanceSwitch modernInterface = new();
     private readonly RenderScaleSlider renderScale = new() { Name = "VrRenderScale", AccessibleName = "VR render scale" };
     private readonly Button refreshHeadset = Button("Refresh headset", "RefreshHeadset");
@@ -1094,7 +1094,7 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(performanceDisplay, "On: the next VR launch shows FPS (frames sent to the headset each second, against its refresh rate) and GPU usage (the graphics card's busiest engine, other applications included) in a small panel below your view. N/A means unavailable.");
         tips.SetToolTip(skipIntro, "On: the game's two startup logo videos are skipped when it starts in VR. Applies to the next VR launch.");
         tips.SetToolTip(intro3d, "On: the camera shots before a race starts are shown in 3D around you, without the game's 2D info panel and wipes. Off: they play on the screen ahead of you. Finish cameras and results always use the screen. Applies to the next VR launch.");
-        tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 3 m. Applies to the next VR launch.");
+        tips.SetToolTip(screenDistance, "How far ahead of your seat the screen for videos, loading and menus appears, 1.5–6 m in 0.5 m steps. Default: 1.5 m. Applies to the next VR launch.");
         tips.SetToolTip(hudDistance, "How far ahead of your seat the HUD appears, 1–20 m in 0.5 m steps. Its apparent size stays the same. Default: 1 m. Applies to the next VR launch.");
     }
     private static CheckBox HudPart(string name, string text) => new() { Name = name, AccessibleName = text, Text = text, Checked = true, AutoSize = true, Margin = new Padding(0, 0, 16, 4) };

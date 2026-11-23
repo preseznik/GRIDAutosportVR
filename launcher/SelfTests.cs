@@ -147,7 +147,7 @@ internal static class SelfTests
         LauncherSettings.Save(race, file);
         Check(LauncherSettings.Load(file) == race);
         // VR HUD: everything shown at 1 m by default; parts and distance round-trip and are validated.
-        Check(new Choices() is { HudShow: true, HudDial: true, HudMinimap: true, HudCounters: true, HudPositions: true, HudDistance: 1m, ScreenDistance: 3m } && new Choices().HudParts == 31);
+        Check(new Choices() is { HudShow: true, HudDial: true, HudMinimap: true, HudCounters: true, HudPositions: true, HudDistance: 1m, ScreenDistance: 1.5m } && new Choices().HudParts == 31);
         var hudChoices = new Choices(HudShow: true, HudDial: false, HudMinimap: true, HudCounters: false, HudPositions: true, HudDistance: 7.5m, ScreenDistance: 5.5m, Intro3D: true);
         Check(hudChoices.HudParts == 1 + 4 + 16 && (new Choices(HudShow: false)).HudParts == 30);
         LauncherSettings.Save(hudChoices, file);
@@ -243,7 +243,7 @@ internal static class SelfTests
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
              "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1",
-             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=300", "-gasvrtexturefilter=1", "-gasvrseatkeys=9,38,40,37,39"]));
+             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=150", "-gasvrtexturefilter=1", "-gasvrseatkeys=9,38,40,37,39"]));
         var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
         Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
