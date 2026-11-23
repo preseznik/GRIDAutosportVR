@@ -148,6 +148,33 @@ internal sealed class DrivingControls
         Bindings.Add(binding);
     }
     public void ApplyXboxPreset() { foreach (var binding in XboxPreset()) Assign(binding); }
+    // Before a launch (GRID2VR 9f1715a): the game's session presets follow a DirectInput device's
+    // product, so a wheel Windows re-registered (a driver or G HUB update, another USB port, a
+    // reinstall) still drives, but the launcher's copy of its instance would be stale. A bound
+    // device that is not connected moves to the one connected, not otherwise bound device of the
+    // same product. Anything else is reported: an unplugged wheel, two of the same product, or a
+    // wheel switched to another compatibility mode (another product to the game, so its bindings
+    // would do nothing). Keyboard and Xbox (slot) bindings are left alone.
+    internal (List<string> Retargeted, List<string> Missing) ResolveDevices(IReadOnlyList<(string Id, string Product, string Name)> connected)
+    {
+        List<string> retargeted = [], missing = [];
+        var direct = Bindings.Where(b => !b.Keyboard && b.DeviceType != "xinput_pad" && b.DeviceId.Length != 0).ToList();
+        var stored = direct.Select(b => b.DeviceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool Present(DrivingBinding b) => connected.Any(d => StringComparer.OrdinalIgnoreCase.Equals(d.Id, b.DeviceId) && StringComparer.OrdinalIgnoreCase.Equals(d.Product, b.DeviceType));
+        foreach (var product in direct.Where(b => !Present(b)).GroupBy(b => b.DeviceType, StringComparer.OrdinalIgnoreCase))
+        {
+            var lost = product.Select(b => b.DeviceId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var free = connected.Where(d => StringComparer.OrdinalIgnoreCase.Equals(d.Product, product.Key) && !stored.Contains(d.Id)).ToList();
+            if (lost.Count == 1 && free.Count == 1)
+            {
+                var target = free[0];
+                Bindings = Bindings.Select(b => StringComparer.OrdinalIgnoreCase.Equals(b.DeviceId, lost[0]) ? b with { DeviceId = target.Id, Device = target.Name } : b).ToList();
+                retargeted.Add(target.Name);
+            }
+            else missing.AddRange(product.GroupBy(b => b.DeviceId, StringComparer.OrdinalIgnoreCase).Select(g => g.First().Device.Length != 0 ? g.First().Device : g.Key));
+        }
+        return (retargeted, missing);
+    }
     // GRID Autosport's own input/xinput_pad_0.xml, one input per action (the D-pad for menus).
     public static List<DrivingBinding> XboxPreset()
     {

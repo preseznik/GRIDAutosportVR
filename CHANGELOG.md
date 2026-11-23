@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.4
+
+- **Controllers checked before launch.** Launch VR, and Launch with Practice or Race, now check that the wheels and other controllers in Driving controls are connected. If Windows has given a wheel a new identity (after a driver or G HUB update, another USB port or a reinstall), its bindings and controller recenter button follow it, and the launcher says so. If a bound controller is missing, or now reports as another model (as after switching a wheel's compatibility mode), the launcher names it and asks before starting a session in which its bindings would do nothing.
+
 ## 0.2.3
 
 - **Practice and Race on the desktop.** **Launch** now starts the chosen Practice or Race on the desktop too, with your car, track, laps and opponents, and your controller or wheel already in charge. The launcher adds its session files for the run and restores the original files when the game exits, as for VR. With **Normal**, Launch still starts the unmodified game.

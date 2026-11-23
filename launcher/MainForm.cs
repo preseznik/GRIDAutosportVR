@@ -672,10 +672,49 @@ internal sealed partial class MainForm : LauncherForm
         RefreshInstallation();
     }
 
+    // Bound wheels must be the connected ones (DrivingControls.ResolveDevices): a wheel Windows
+    // re-registered keeps its bindings and its recenter button; a missing one, or one that now
+    // reports another product, is named before the game starts without it.
+    private bool CheckDrivingDevices()
+    {
+        DrivingControls controls;
+        try { controls = DrivingControls.Load(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return true; } // The session reports it.
+        static bool Direct(DrivingBinding b) => !b.Keyboard && b.DeviceType != "xinput_pad";
+        var bound = controls.Enabled && controls.Bindings.Any(Direct);
+        if (!bound && !(recenterDevice is { } saved && Direct(saved))) return true;
+        List<(string Id, string Product, string Name)> connected;
+        try { using var input = new DrivingInput(Handle); connected = input.Devices.Where(d => !d.Xbox).Select(d => (d.Id, d.Product, d.Name)).ToList(); }
+        catch (Exception error) when (error is IOException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException) { return true; }
+        List<string> moved = [], missing = [];
+        if (bound)
+        {
+            (moved, missing) = controls.ResolveDevices(connected);
+            if (moved.Count != 0)
+                try { controls.Save(); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { notice.Text = "Driving controls: " + error.Message; return false; }
+        }
+        if (recenterDevice is { } recenterButton && Direct(recenterButton))
+        {
+            var single = new DrivingControls { Bindings = [recenterButton] };
+            if (single.ResolveDevices(connected).Retargeted.Count != 0) { recenterDevice = single.Bindings[0]; UpdateDeviceRecenter(); moved.Add(recenterDevice.Device + " (recenter button)"); }
+        }
+        if (moved.Count != 0)
+            notice.Text = "Driving controls now use " + string.Join(", ", moved.Distinct()) + ": Windows re-registered it since your bindings were made.";
+        if (missing.Count == 0) return true;
+        var answer = MessageBox.Show(this, "These controllers from Driving controls are not connected: " + string.Join(", ", missing.Distinct()) + "." + Environment.NewLine + Environment.NewLine +
+            "Their bindings will not work in this session. A wheel switched to another compatibility mode counts as another controller: switch it back, or bind it again in Driving controls." +
+            Environment.NewLine + Environment.NewLine + "Connect them and launch again, or launch anyway?", "Driving controls",
+            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer == DialogResult.Yes) return true;
+        notice.Text = "Launch cancelled. Connect the controller, then launch again.";
+        return false;
+    }
+
     // desktop: Launch with Practice / Race, the same session on the desktop without the headset.
     private async Task RunVrAsync(bool desktop = false)
     {
-        if (supervising || testing || gameFolder is null || !SaveChoices(false)) return;
+        if (supervising || testing || gameFolder is null || !CheckDrivingDevices() || !SaveChoices(false)) return;
         if (!desktop && Current.NewCockpitTextures && CockpitTexturePack.Current is not null && !await EnsureCockpitTexturesAsync()) return;
         supervising = true;
         desktopSession = desktop;

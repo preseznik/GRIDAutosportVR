@@ -45,6 +45,36 @@ internal static class DrivingControlsTests
         check(bad.Problems().Count == 1 && Throws(() => bad.SaveFile(file)), "same steering direction refused");
         check(new DrivingControls().Bindings.Count == 0 && !new DrivingControls().Enabled, "off and empty by default");
         File.Delete(file);
+        Resolve(check);
+    }
+
+    // A wheel Windows re-registered keeps its bindings; a missing or ambiguous one is reported (GRID2VR 9f1715a).
+    private static void Resolve(Action<bool, string> check)
+    {
+        const string pedals = "{B6771DD2-0000-0000-0000-504944564944}", pad = "{0E8F0003-0000-0000-0000-504944564944}";
+        const string oldWheel = "{267D2D20-E1EA-11F0-8005-444553540000}", newWheel = "{9A0C1E40-F1B2-11F0-8001-444553540000}";
+        const string pedalId = "{11111111-0000-11F0-8000-444553540000}", twin = "{22222222-0000-11F0-8000-444553540000}";
+        static DrivingControls Bound() => new() { Enabled = true, Bindings = [
+            new() { Action = "Steer Left", DeviceId = oldWheel, Device = "G29", DeviceType = Wheel, Input = "di_x_axis", Calibration = "biDirLower" },
+            new() { Action = "Steer Right", DeviceId = oldWheel, Device = "G29", DeviceType = Wheel, Input = "di_x_axis", Calibration = "biDirUpper" },
+            new() { Action = "Brake", DeviceId = pedalId, Device = "Pedals", DeviceType = pedals, Input = "di_y_axis" },
+            new() { Action = "Pause", DeviceId = "keyboard", Device = "Keyboard", DeviceType = "keyboard", Input = "vk_code_0x1B" },
+            Pad("Accelerate", "xinput_right_trigger")] };
+        var moved = Bound(); var (retargeted, missing) = moved.ResolveDevices([(newWheel, Wheel, "G29 Racing Wheel"), (pedalId, pedals, "Pedals")]);
+        check(retargeted.SequenceEqual(["G29 Racing Wheel"]) && missing.Count == 0 &&
+              moved.Bindings.Where(b => b.DeviceType == Wheel).All(b => b.DeviceId == newWheel && b.Device == "G29 Racing Wheel") &&
+              moved.Bindings.Single(b => b.Action == "Brake").DeviceId == pedalId && moved.Bindings.Single(b => b.Action == "Accelerate").DeviceId == "xinput:0",
+            "a re-registered wheel keeps its bindings; pedals, keyboard and pad untouched");
+        moved.Validate();
+        var same = Bound(); (retargeted, missing) = same.ResolveDevices([(oldWheel.ToLowerInvariant(), Wheel, "G29"), (pedalId, pedals, "Pedals")]);
+        check(retargeted.Count == 0 && missing.Count == 0 && same.Bindings.SequenceEqual(Bound().Bindings), "connected devices leave the bindings as they are");
+        var absent = Bound(); (retargeted, missing) = absent.ResolveDevices([(pedalId, pedals, "Pedals")]);
+        check(retargeted.Count == 0 && missing.SequenceEqual(["G29"]) && absent.Bindings.SequenceEqual(Bound().Bindings), "an unplugged wheel is reported");
+        var twins = Bound(); (retargeted, missing) = twins.ResolveDevices([(newWheel, Wheel, "G29"), (twin, Wheel, "G29"), (pedalId, pedals, "Pedals")]);
+        check(retargeted.Count == 0 && missing.SequenceEqual(["G29"]) && twins.Bindings.SequenceEqual(Bound().Bindings), "two wheels of one product: reported, nothing moves");
+        // A compatibility-mode switch: the same instance now reports another product.
+        var other = Bound(); (retargeted, missing) = other.ResolveDevices([(oldWheel, pad, "Gamepad"), (pedalId, pedals, "Pedals")]);
+        check(retargeted.Count == 0 && missing.SequenceEqual(["G29"]) && other.Bindings.SequenceEqual(Bound().Bindings), "another product never takes over a wheel's bindings");
     }
 
     private static void Presets(string data, Action<bool, string> check)
