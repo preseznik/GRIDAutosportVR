@@ -354,7 +354,17 @@ internal static class SelfTests
         Check(VrPlaySession.DeviceClaim(steering).SequenceEqual(["{C262046D-0000-0000-0000-504944564944}", "xinput_pad"]));
         Check(VrPlaySession.DeviceClaim(new DrivingControls()).SequenceEqual(["xinput_pad"]));
         Check(VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true, ["xinput_pad"]).Contains("-gasvrdevice=xinput_pad"));
-        Check(!VrPlaySession.SteamArguments(id, new Choices(), null, false, ["xinput_pad"]).Any(a => a.StartsWith("-gasvrdevice")));
+        Check(VrPlaySession.SteamArguments(id, new Choices(), null, false, ["xinput_pad"]).Contains("-gasvrdevice=xinput_pad") &&
+              !VrPlaySession.SteamArguments(id, new Choices(), null, false, []).Any(a => a.StartsWith("-gasvrdevice")));
+        {
+            var normal = new DrivingControls { Enabled = true, Bindings = [
+                new() { Action = "Gear Up", Device = "Xbox controller", DeviceId = "xinput:0", DeviceType = "xinput_pad", Input = "xinput_button_right_shoulder" },
+                new() { Action = "Steer Left", Device = "Wheel", DeviceId = "{11111111-0000-0000-0000-000000000001}", DeviceType = "{C24F046D-0000-0000-0000-504944564944}", Input = "di_x_axis", Calibration = "biDirLower" },
+                new() { Action = "Pause", Device = "Keyboard", DeviceId = "keyboard", DeviceType = "keyboard", Input = "vk_code_0x50" }] };
+            Check(VrPlaySession.NormalClaim(normal).SequenceEqual(["{C24F046D-0000-0000-0000-504944564944}", "xinput_pad"]) &&
+                  VrPlaySession.NormalClaim(new DrivingControls { Enabled = true, Bindings = [normal.Bindings[2]] }).Count == 0 &&
+                  VrPlaySession.NormalClaim(new DrivingControls { Enabled = false, Bindings = normal.Bindings }).Count == 0);
+        }
         // Desktop Launch with Practice / Race: the session and the claim, none of the headset's choices.
         var desktopArgs = VrPlaySession.DesktopArguments(id, new Choices(LaunchMode: "Practice", ForceFeedbackOverride: true, ForceFeedbackStrength: 80), ["xinput_pad"]);
         Check(desktopArgs.SequenceEqual(["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=desktop", "-gasvrffb=80,100,100",

@@ -165,6 +165,9 @@ internal static partial class VrPlaySession
     // Steam arguments for the game process. eyeSize is the per-eye render size reported to the game.
     // A Practice / Race session adds -benchmarkAttract with its session file, and the devices the
     // bridge may make the player's controller (-gasvrdevice, DeviceClaim) in place of Press Start.
+    // A Normal launch with driving bindings passes its bound devices (NormalClaim) too: the save
+    // profile's controls replace the session preset after Press Start, so the bridge binds it again
+    // after each loading screen and keeps the profile's own controls in its saves.
     internal static string[] SteamArguments(string id, Choices choices, (int Width, int Height)? eyeSize, bool session = false,
         IReadOnlyList<string>? claim = null, string? cockpitPack = null) =>
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=openxr", "-gasvrhudfollow=" + (choices.HudFollowView ? "1" : "0"),
@@ -183,7 +186,7 @@ internal static partial class VrPlaySession
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          "-gasvrseatkeys=" + choices.SeatKeys,
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
-         .. session && claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
+         .. claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
     // Desktop Launch with Practice / Race: the session file and the controller claim, while the game
     // renders on the desktop as it always does (-gasvrmode=desktop). The force feedback override
@@ -210,6 +213,21 @@ internal static partial class VrPlaySession
                     !families.Contains(family, StringComparer.OrdinalIgnoreCase)) families.Add(family);
             }
         if (!families.Contains("xinput_pad")) families.Add("xinput_pad");
+        return families.Take(8).ToList();
+    }
+
+    // Normal play: every controller the launcher binds (steering devices first). The player chose
+    // their controller at Press Start, so no controller is guessed, and a keyboard is never claimed.
+    internal static List<string> NormalClaim(DrivingControls controls)
+    {
+        var families = new List<string>();
+        if (!controls.Enabled) return families;
+        foreach (var binding in controls.Bindings.Where(b => !b.Keyboard).OrderBy(b => b.Action is "Steer Left" or "Steer Right" ? 0 : 1))
+        {
+            var family = SessionInputMaps.Family(binding);
+            if (System.Text.RegularExpressions.Regex.IsMatch(family, @"\A(xinput_pad|\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\})\z") &&
+                !families.Contains(family, StringComparer.OrdinalIgnoreCase)) families.Add(family);
+        }
         return families.Take(8).ToList();
     }
 
@@ -278,7 +296,7 @@ internal static partial class VrPlaySession
             if (desktop && session is null) throw new IOException("Launch on the desktop through the launcher needs Practice or Race.");
             var controls = DrivingControls.Load();
             var inputs = SessionInputMaps.Plan(folder, controls);
-            var claim = session is null ? null : DeviceClaim(controls);
+            var claim = session is not null ? DeviceClaim(controls) : inputs.Count > 0 ? NormalClaim(controls) : null;
             string? cockpitNote = null;
             var cockpitPack = desktop ? null : CockpitPack(choices, out cockpitNote);
             var graphics = desktop ? null : PlanGraphics(choices);

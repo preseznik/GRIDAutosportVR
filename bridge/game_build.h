@@ -36,6 +36,10 @@ struct GameBuild {
     // Code: the two "mov byte ptr [ebp+x],1" whose value the game stores in its frontend data
     // benchmark_mode_enabled when a benchmark (or -benchmarkAttract) race starts.
     UINT benchmarkModeOn[2];
+    // The input service's saved-data vtable: +4 writes its control maps to a save stream (one
+    // argument, the stream, whose vtable +4 is Write(data, size) returning 0), +8 reads them
+    // (stream, version); +0xC / +0x10 wrap both with a version byte, +0x14 returns it (4).
+    UINT controlsSaveTable;
 };
 
 // The running game's build, or nullptr when it is not a supported one.
