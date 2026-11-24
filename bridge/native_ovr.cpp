@@ -862,6 +862,7 @@ ForcedSetting forcedOff{forcedSettingTable, 0}, forcedOn{forcedSettingTable, 1};
 // hudNames): dial, minimap, counters, positions_OSD.
 constexpr unsigned hudPartBits[] = {2, 4, 8, 16};
 int __fastcall hudEnabled(void* settings, void*) {
+    AutosportRaceHudSetUp();
     unsigned mask;
     if (!AutosportHudParts(mask)) return stockHudEnabled(settings);
     static LONG logged;

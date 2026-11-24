@@ -29,6 +29,7 @@ bool AutosportHookGameImport(const char* dll, const char* function, void* replac
 // Seat adjustment (seat.cpp): the head-cam view of this race, the cockpit check, offsets and panel.
 void AutosportSetHeadCam(int index);
 void AutosportSetDrivingViews(unsigned mask);
+void AutosportRaceHudSetUp();
 bool AutosportCockpitView();
 void AutosportSeatConfigure(const wchar_t* sessionFolder);
 void AutosportSeatCar(const char* id);

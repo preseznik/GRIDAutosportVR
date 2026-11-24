@@ -634,7 +634,21 @@ void AutosportSetVehicleViews(const void* manager) { vehicleViews = static_cast<
 std::atomic<unsigned> drivingViews{0};
 bool drivingView = true;
 bool driven, raceOver; // AutosportSampleVehicleCamera: the player has driven this race; it has ended
-void AutosportSetDrivingViews(unsigned mask) { drivingViews.store(mask); driven = raceOver = false; }
+// A race start also sets up the race HUD (native_ovr hudEnabled) in the same native frame. The
+// frontend's 3D car scenes (Normal play's menus after a race) request a start view too, without
+// a HUD, and are not races.
+uint64_t raceStartFrame, hudSetUpFrame;
+void AutosportSetDrivingViews(unsigned mask) {
+    drivingViews.store(mask);
+    driven = raceOver = false;
+    raceStartFrame = AutosportNativeFrame();
+}
+void AutosportRaceHudSetUp() { hudSetUpFrame = AutosportNativeFrame(); }
+bool raceWithHud() {
+    if (!raceStartFrame || !hudSetUpFrame) return false;
+    const uint64_t gap = raceStartFrame > hudSetUpFrame ? raceStartFrame - hudSetUpFrame : hudSetUpFrame - raceStartFrame;
+    return gap <= 2;
+}
 // Once per native frame. Headset play shows intro shots on the seated screen: the game draws
 // them as a 2D broadcast layout (a dark info panel down the left side, black wipes), which
 // does not work as a stereo world. Capture benchmarks keep their stereo shots.
@@ -649,6 +663,13 @@ void AutosportSampleVehicleCamera() {
     const unsigned driving = drivingViews.load();
     if (viewIndex >= 0) drivingView = !driving || (viewIndex < 32 && (driving >> viewIndex & 1));
     else if (viewIndex != -1) drivingView = false;
+    static uint64_t checkedStart;
+    if (raceStartFrame && raceStartFrame != checkedStart && AutosportNativeFrame() >= raceStartFrame + 5) {
+        checkedStart = raceStartFrame;
+        static unsigned logged;
+        if (++logged <= 50) AutosportLog("Race start view at frame=%llu: %s", raceStartFrame,
+            raceWithHud() ? "a race (its HUD was set up)" : "no race HUD, a frontend scene: menus are kept");
+    }
     static int lastViewIndex = -3;
     if (viewIndex != lastViewIndex && viewIndex != -1) {
         static unsigned logged;
@@ -736,8 +757,10 @@ bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 // the next StateLoading. Leaving a race (Return to paddock area, the finish) stays in the same
 // scene: the results and the paddock menu are drawn over the game's own shots of the car, so
 // the current view must also be one of the player's driving cameras, and the race not over.
+// Back in the menus after a race, the frontend's 3D car scene requests a start view as well;
+// only a start with a race HUD is a race.
 bool AutosportCarCameraLive() {
-    return regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !introShot && !pauseMenu && drivingView && !raceOver;
+    return regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !introShot && !pauseMenu && drivingView && !raceOver && raceWithHud();
 }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
@@ -761,6 +784,7 @@ void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* eve
     drivingViews.store(0);
     drivingView = true;
     driven = raceOver = false;
+    raceStartFrame = 0;
     introShot = false;
     carCameraSeen = false;
     pauseState = nullptr;
