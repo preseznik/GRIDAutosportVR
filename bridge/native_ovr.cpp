@@ -808,6 +808,27 @@ int __fastcall raceStartView(void* manager, void*, const char* requested) {
         } __except (EXCEPTION_EXECUTE_HANDLER) { car[0] = 0; }
     }
     AutosportSeatCar(car);
+    // The player's own cameras: the six the camera button cycles through (chase_close 0, chase_far
+    // 1, bumper 2, bonnet 4, head-cam 6, dash-cam 10 in the cars checked, the Focus and the Cruze; names matched
+    // to the views' djb2 hashes at +0xD0) and their Look Back / Left / Right views. Only these
+    // count as driving (game_device AutosportCarCameraLive): after a race the game cuts to its
+    // own shots of the car under the race results and the paddock menu, and its replay cameras
+    // (gp_roof, gp_side_L, gp_wheel_R...) are not intro shots.
+    unsigned driving = 0;
+    for (const char* name : {"chase_close", "chase_far", "bumper", "bonnet", "dash-cam", "head-cam", "chase_close_reverse", "chase_far_reverse",
+                             "bumper_reverse", "bonnet_reverse", "dash-cam_reverse", "head-cam_reverse", "head-cam-left", "head-cam-right"}) {
+        const int index = strcmp(name, "head-cam") == 0 ? cockpit : stockViewLookup(manager, name);
+        if (index >= 0 && index < 32) driving |= 1u << index;
+    }
+    AutosportSetDrivingViews(driving);
+    {
+        char label[48]{};
+        __try { strncpy_s(label, requested ? requested : "(none)", _TRUNCATE); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { strcpy_s(label, "(unreadable)"); }
+        static LONG logged;
+        if (InterlockedIncrement(&logged) <= 50)
+            AutosportLog("Race start view: %s requested, head-cam %d, driving views 0x%X, car %s, frame=%llu", label, cockpit, driving, car[0] ? car : "?", frame);
+    }
     if (AutosportStartInCockpit() && AutosportUseHeadset() && AutosportPracticeSession()) {
         if (cockpit >= 0) {
             char label[48]{};

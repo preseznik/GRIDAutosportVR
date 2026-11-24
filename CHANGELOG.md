@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.5
+
+- **Menus stay after a race.** In a Normal VR launch the race results, the paddock area and the menus after them were blank again once you left a race (Return to paddock area, or the finish). 0.2.4 removed the grey bar whenever the game showed the car, and after a race the game shows its own replay shots of the car under those menus. The bar is now removed only while you drive, on your own cameras (chase, bumper, bonnet, dashboard and the driver's view, and looking back or to the side from them).
+- **No more team-mate radio on every shift.** With launcher driving controls on a wheel the game has no preset for (Logitech G29 and G920, Fanatec DD and others), the shift paddles also kept the game's gamepad defaults, Radio TeamMate Drop / Push and Clutch, so every shift had the race engineer say "I've asked your teammate...". Actions you have not bound now lose any input you bound for driving, as the game's own control settings do; menu and replay controls still share them.
+
 ## 0.2.4
 
 - **Controllers checked before launch.** Launch VR, and Launch with Practice or Race, now check that the wheels and other controllers in Driving controls are connected. If Windows has given a wheel a new identity (after a driver or G HUB update, another USB port or a reinstall), its bindings and controller recenter button follow it, and the launcher says so. If a bound controller is missing, or now reports as another model (as after switching a wheel's compatibility mode), the launcher names it and asks before starting a session in which its bindings would do nothing.

@@ -629,14 +629,31 @@ bool AutosportStartupFromBackBuffer() {
 bool AutosportSceneVideo() { return sceneVideo.load() != nullptr; }
 bool AutosportIntroVideo() { return introVideo.load() != 0; }
 void AutosportSetVehicleViews(const void* manager) { vehicleViews = static_cast<const BYTE*>(manager); }
+// The player's camera-button views for this race (native_ovr raceStartView), one bit per view
+// index; 0 when none was found, and then every car view counts as driving.
+std::atomic<unsigned> drivingViews{0};
+bool drivingView = true;
+bool driven, raceOver; // AutosportSampleVehicleCamera: the player has driven this race; it has ended
+void AutosportSetDrivingViews(unsigned mask) { drivingViews.store(mask); driven = raceOver = false; }
 // Once per native frame. Headset play shows intro shots on the seated screen: the game draws
 // them as a 2D broadcast layout (a dark info panel down the left side, black wipes), which
 // does not work as a stereo world. Capture benchmarks keep their stereo shots.
 void AutosportSampleVehicleCamera() {
     bool intro = false;
+    int viewIndex = -2;
     if (regularPlay && headset && phase.load() == Phase::Scene && vehicleViews) {
-        __try { intro = vehicleViews[0x834] == 0; }
+        __try { intro = vehicleViews[0x834] == 0; viewIndex = *reinterpret_cast<const int*>(vehicleViews + 0x81C); }
         __except (EXCEPTION_EXECUTE_HANDLER) { vehicleViews = nullptr; }
+    }
+    // A view change passes through index -1 (no view) for a moment; it keeps the last answer.
+    const unsigned driving = drivingViews.load();
+    if (viewIndex >= 0) drivingView = !driving || (viewIndex < 32 && (driving >> viewIndex & 1));
+    else if (viewIndex != -1) drivingView = false;
+    static int lastViewIndex = -3;
+    if (viewIndex != lastViewIndex && viewIndex != -1) {
+        static unsigned logged;
+        if (++logged <= 200 && viewIndex >= 0) AutosportLog("Race scene view %d%s", viewIndex, drivingView ? "" : ": not a driving camera");
+        lastViewIndex = viewIndex;
     }
     // The pre-race intro ends once the car camera has been live for five seconds in a row: the
     // game cuts to it briefly at scene start and between intro shots (Practice / Race).
@@ -650,6 +667,29 @@ void AutosportSampleVehicleCamera() {
         }
     } else {
         carLiveSince = 0;
+    }
+    // The race is over once, after five seconds of driving on the player's own cameras, the game
+    // cuts to an intro-style shot or to one of its replay cameras: Return to paddock area and the
+    // finish show the results and the paddock menu over a cycle of such shots, which also uses
+    // driving cameras (the bonnet, view 4). The cycle's shots last seconds; twenty seconds in a
+    // row on a driving camera is driving again (after an instant replay, say). A new race start
+    // or StateLoading clears it.
+    static ULONGLONG drivingSince;
+    const bool onDrivingCamera = vehicleViews && !intro && viewIndex >= 0 && drivingView;
+    if (onDrivingCamera || (vehicleViews && viewIndex == -1 && !intro && drivingView)) {
+        const ULONGLONG now = GetTickCount64();
+        if (!drivingSince) drivingSince = now;
+        if (!driven && now - drivingSince >= 5000) driven = true;
+        if (raceOver && now - drivingSince >= 20000) {
+            raceOver = false;
+            AutosportLog("Race scene: driving again");
+        }
+    } else {
+        drivingSince = 0;
+        if (driven && vehicleViews && (intro || viewIndex >= 0) && !raceOver) {
+            raceOver = true;
+            AutosportLog("Race scene: the race is over (view %d%s); menus over the car are kept", viewIndex, intro ? ", intro shot" : "");
+        }
     }
     if (intro != introShot) {
         introShot = intro;
@@ -693,9 +733,11 @@ bool AutosportCockpitView() {
 bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 // Normal play reaches the main menus through StateLoading too, so a scene alone is not a race:
 // the vehicle view manager is set only when a race scene starts (raceStartView) and cleared at
-// the next StateLoading.
+// the next StateLoading. Leaving a race (Return to paddock area, the finish) stays in the same
+// scene: the results and the paddock menu are drawn over the game's own shots of the car, so
+// the current view must also be one of the player's driving cameras, and the race not over.
 bool AutosportCarCameraLive() {
-    return regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !introShot && !pauseMenu;
+    return regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !introShot && !pauseMenu && drivingView && !raceOver;
 }
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
@@ -716,6 +758,9 @@ void __fastcall AutosportLoadingEntered(void* dispatcher, void*, const void* eve
     if (introVideo.exchange(0)) AutosportLog("Intro video state forgotten at StateLoading");
     if (sceneVideo.exchange(nullptr)) AutosportLog("Video over the race scene forgotten at StateLoading");
     vehicleViews = nullptr;
+    drivingViews.store(0);
+    drivingView = true;
+    driven = raceOver = false;
     introShot = false;
     carCameraSeen = false;
     pauseState = nullptr;
