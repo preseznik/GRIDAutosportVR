@@ -95,7 +95,10 @@ internal static class DrivingControlsTests
         File.WriteAllText(Path.Combine(input, "xinput_pad_0.xml"), Map("<ActionMap name=\"xinput_pad\" device_type=\"xinput_pad\" priority=\"5\">", "Accelerate", "Pause"));
         File.WriteAllText(Path.Combine(input, "dinput_default.xml"), With(Map("<ActionMap name=\"di_default\" device_type=\"di_default\" priority=\"16\">", "Accelerate", "Steer Left"),
             Action("Look Up", rz) + Action("Look Left", "<Axis id=\"di_z_axis\" type=\"biDirLower\" deadzone=\"0.3\" saturation=\"0.8\" />") +
-            Action("Look Back", "<Axis id=\"di_button_11\" />") + Action("Look Down", "<Axis id=\"di_button_5\" />") + Action("Fe Menu Up", rz)));
+            Action("Look Back", "<Axis id=\"di_button_11\" />") + Action("Look Down", "<Axis id=\"di_button_5\" />") + Action("Fe Menu Up", rz) +
+            Action("Radio TeamMate Push", "<Axis id=\"di_button_5\" />") + Action("Radio TeamMate Drop", "<Axis id=\"di_button_4\" />") +
+            Action("Clutch", "<Axis id=\"di_button_4\" />") + Action("Menu Left Shoulder", "<Axis id=\"di_button_4\" />") +
+            Action("Replay UI On Off", "<Axis id=\"di_button_4\" />")));
         const string pedals = "{B660044F-0000-0000-0000-504944564944}";
         File.WriteAllText(Path.Combine(input, "tm_t300rs.xml"), With(Map($"<ActionMap name=\"tm_t300_rs\" device_type_0=\"{Known}\" device_type_1=\"{pedals}\" priority=\"0\" shouldbindalldevicetypes=\"true\">"),
             Action("Accelerate", $"<Axis id=\"di_y_axis\" type=\"uniDirNeg\" deadzone=\"0.0\" saturation=\"1.0\" restricted_device=\"{Known}\" />",
@@ -113,7 +116,7 @@ internal static class DrivingControlsTests
         controls.Bindings = [Pad("Accelerate", "xinput_right_trigger"), Pad("Pause", "xinput_button_y"),
             new() { Action = "Pause", Device = "Keyboard", DeviceId = "keyboard", DeviceType = "keyboard", Input = "vk_code_0x50" },
             Direct("Steer Left", Wheel, "di_x_axis", "biDirLower", .05m, .9m), Direct("Gear 1", Wheel, "di_button_12"),
-            Direct("Brake", Wheel, "di_z_axis_rotation", "uniDirNeg"), Direct("Gear Up", Wheel, "di_button_11"),
+            Direct("Brake", Wheel, "di_z_axis_rotation", "uniDirNeg"), Direct("Gear Up", Wheel, "di_button_11"), Direct("Gear Down", Wheel, "di_button_4"),
             Direct("Accelerate", Known, "di_y_axis", "uniDirNeg")];
         var changes = SessionInputMaps.Plan(game, controls);
         check(changes.Select(c => c.RelativePath).Order(StringComparer.Ordinal).SequenceEqual(
@@ -145,6 +148,13 @@ internal static class DrivingControlsTests
         check(Axes(added, "Look Up") is [var lookUp] && (string?)lookUp.Attribute("id") == "" && Axes(added, "Look Left") is [var lookLeft] && (string?)lookLeft.Attribute("id") == "" &&
               Axes(added, "Look Back") is [var lookBack] && (string?)lookBack.Attribute("id") == "" &&
               Axes(added, "Look Down") is [var lookDown] && (string?)lookDown.Attribute("id") == "di_button_5", "wheel: look axes and the look button bound to Gear Up cleared, other look buttons kept");
+        // The reported team-mate radio on every shift: Gear Down on a paddle the game's gamepad
+        // defaults give Radio TeamMate Drop and Clutch.
+        check(Axes(added, "Radio TeamMate Drop") is [var drop] && (string?)drop.Attribute("id") == "" && Axes(added, "Clutch") is [var clutch] && (string?)clutch.Attribute("id") == "" &&
+              Axes(added, "Radio TeamMate Push") is [var push] && (string?)push.Attribute("id") == "di_button_5",
+              "wheel: in-race actions on the Gear Down paddle cleared, the other paddle's radio kept");
+        check(Axes(added, "Menu Left Shoulder") is [var shoulder] && (string?)shoulder.Attribute("id") == "di_button_4" &&
+              Axes(added, "Replay UI On Off") is [var replay] && (string?)replay.Attribute("id") == "di_button_4", "menu and replay actions keep a shared paddle");
         check(Axes(added, "Fe Menu Up") is [var menu] && (string?)menu.Attribute("id") == "di_z_axis_rotation", "menu actions keep their shared inputs");
         check(!added.Elements("Action").Where(a => SessionInputMaps.LookAction((string)a.Attribute("id")!)).SelectMany(a => a.Elements("Axis"))
                   .Any(a => (string?)a.Attribute("id") == "di_z_axis_rotation"), "no look action left on the brake axis");

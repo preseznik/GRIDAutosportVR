@@ -96,15 +96,19 @@ internal static class SessionInputMaps
     // devices (a wheel base and its pedals: device_type_0 / device_type_1) the bindings are
     // restricted to this family's device, and the other device's inputs for the action are kept.
     //
-    // The look actions the launcher does not bind are then cleared of clashing inputs, as the
-    // game's own remap screen does when an input moves to another action. The game's defaults put
+    // The in-race actions the launcher does not bind are then cleared of clashing inputs, as the
+    // game's own remap screen does when an input moves to another action. A preset copied from
+    // dinput_default.xml keeps the gamepad's Radio TeamMate Drop / Push and Clutch on DirectInput
+    // buttons 4 and 5, a G29's or G920's shift paddles, so with Gear Up / Down bound there every
+    // shift also radioed the team-mate ("I've asked your teammate...") or pressed the clutch.
+    // Look actions go further. The game's defaults put
     // Look Left/Right and Up/Down on the Z and Rz axes (a gamepad's right stick; dinput_default.xml
     // and the presets copied from it), and some wheel presets on their pedal axes, so with Brake on
     // Rz the view skewed at rest and swung while braking. Look actions lose any input this family
     // binds; on a DirectInput device (a wheel, pedals) they also lose every axis, since its Z and Rz
     // are pedals more often than a stick, and head tracking does the looking in VR. Buttons stay
-    // (Look Back on a wheel button). Menu actions share inputs with driving by design and are left
-    // alone.
+    // (Look Back on a wheel button). Menu, replay, spectator and frontend actions share inputs with
+    // driving by design and are left alone.
     private static void Apply(XDocument document, IGrouping<string, DrivingBinding> family)
     {
         var root = document.Root!;
@@ -125,10 +129,11 @@ internal static class SessionInputMaps
         }
         var actions = family.Select(b => b.Action).ToHashSet(StringComparer.Ordinal);
         var inputs = family.Select(b => b.Input).Where(input => input.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var element in root.Elements("Action").Where(e => (string?)e.Attribute("id") is { } id && LookAction(id) && !actions.Contains(id)).ToList())
+        foreach (var element in root.Elements("Action").Where(e => (string?)e.Attribute("id") is { } id && RaceAction(id) && !actions.Contains(id)).ToList())
         {
+            var look = LookAction((string)element.Attribute("id")!);
             var stale = element.Elements("Axis").Where(entry => Ours(entry) && (string?)entry.Attribute("id") is { Length: > 0 } input &&
-                (inputs.Contains(input) || directInput && entry.Attribute("type") is not null)).ToList();
+                (inputs.Contains(input) || look && directInput && entry.Attribute("type") is not null)).ToList();
             if (stale.Count == 0) continue;
             stale.Remove();
             if (!element.Elements("Axis").Any()) element.Add(new XElement("Axis", new XAttribute("id", "")));
@@ -138,6 +143,14 @@ internal static class SessionInputMaps
     // The in-race look actions and the frontend's car view tweak (the same axes in the game's maps).
     internal static bool LookAction(string id) =>
         id.StartsWith("Look ", StringComparison.Ordinal) || id.StartsWith("Fe View Tweak ", StringComparison.Ordinal);
+
+    // Actions that act while driving: everything but the menus, replays, spectating and YouTube
+    // uploads, whose inputs the game's own maps share with driving. The frontend's car view tweak
+    // counts with the look actions.
+    internal static bool RaceAction(string id) =>
+        LookAction(id) || !(id.StartsWith("Menu ", StringComparison.Ordinal) || id.StartsWith("Fe ", StringComparison.Ordinal) ||
+                            id.StartsWith("Replay ", StringComparison.Ordinal) || id.StartsWith("Spectator ", StringComparison.Ordinal) ||
+                            id.StartsWith("Youtube ", StringComparison.Ordinal));
 
     private static string Number(decimal value) => value.ToString("0.0###", CultureInfo.InvariantCulture);
     private static string Sanitize(string text) => new(text.Where(c => c >= ' ' && c < 127 && c != '-').ToArray());
