@@ -46,6 +46,35 @@ internal static class DrivingControlsTests
         check(new DrivingControls().Bindings.Count == 0 && !new DrivingControls().Enabled, "off and empty by default");
         File.Delete(file);
         Resolve(check);
+        Clashes(check);
+    }
+
+    // One input, one in-race action per device (the reported team-mate radio on Gear Up / Down).
+    private static void Clashes(Action<bool, string> check)
+    {
+        var pad = new DrivingControls { Enabled = true };
+        pad.ApplyXboxPreset();
+        string? On(string action) => pad.Bindings.SingleOrDefault(b => b.Action == action)?.Input;
+        check(On("Clutch") == "xinput_button_left_shoulder" && On("Radio TeamMate Drop") is null && On("Radio TeamMate Push") == "xinput_button_right_shoulder",
+            "Xbox preset: the clutch keeps LB, which the game's map also gives Radio TeamMate Drop");
+        pad.Assign(Pad("Gear Up", "xinput_button_right_shoulder"));
+        pad.Assign(Pad("Gear Down", "xinput_button_left_shoulder"));
+        check(On("Gear Up") == "xinput_button_right_shoulder" && On("Radio TeamMate Push") is null && On("Clutch") is null && On("Gear Down") == "xinput_button_left_shoulder",
+            "a button assigned to Gear Up / Down leaves the radio and clutch actions that had it");
+        check(On("Replay UI On Off") == "xinput_button_left_shoulder" && On("Menu Start Button") == "xinput_button_start" && On("Pause") == "xinput_button_start",
+            "replay and menu actions keep sharing inputs with driving");
+        check(On("Steer Left") == "xinput_left_stick_x" && On("Steer Right") == "xinput_left_stick_x" && On("Look Left") == "xinput_right_stick_x" && On("Look Right") == "xinput_right_stick_x",
+            "the two halves of an axis stay bound");
+        var wheel = new DrivingControls { Enabled = true };
+        wheel.Assign(Pad("Gear Up", "xinput_button_a"));
+        wheel.Assign(Direct("Gear Up", Wheel, "di_button_4"));
+        check(wheel.Bindings.Count == 2, "the same action on two devices stays bound on both");
+        // Settings saved before: Gear Up and Radio TeamMate Push both on RB.
+        var saved = new List<DrivingBinding> { Pad("Gear Up", "xinput_button_right_shoulder"), Pad("Radio TeamMate Push", "xinput_button_right_shoulder"),
+            Pad("Radio Car Health", "xinput_dpad_left"), Direct("Radio TeamMate Push", Wheel, "xinput_button_right_shoulder") };
+        var effective = SessionInputMaps.Effective(saved);
+        check(effective.Count == 3 && !effective.Any(b => b.Action == "Radio TeamMate Push" && b.DeviceType == "xinput_pad"),
+            "staging: a radio action sharing a button with a driving action on that device is left out");
     }
 
     // A wheel Windows re-registered keeps its bindings; a missing or ambiguous one is reported (GRID2VR 9f1715a).

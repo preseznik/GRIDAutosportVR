@@ -31,7 +31,7 @@ internal static class SessionInputMaps
         var maps = PresetFiles(pathsText).Select(file => (File: file, Document: TryLoad(Path.Combine(gameFolder, file))))
             .Where(map => map.Document is not null).Select(map => (map.File, Document: map.Document!)).ToList();
         var added = new List<string>();
-        foreach (var family in controls.Bindings.GroupBy(Family, StringComparer.OrdinalIgnoreCase))
+        foreach (var family in Effective(controls.Bindings).GroupBy(Family, StringComparer.OrdinalIgnoreCase))
         {
             var targets = maps.Where(map => DeviceTypes(map.Document.Root!).Contains(family.Key, StringComparer.OrdinalIgnoreCase)).ToList();
             if (targets.Count == 0)
@@ -109,6 +109,16 @@ internal static class SessionInputMaps
     // are pedals more often than a stick, and head tracking does the looking in VR. Buttons stay
     // (Look Back on a wheel button). Menu, replay, spectator and frontend actions share inputs with
     // driving by design and are left alone.
+    // Settings saved before 0.2.5 can bind one input to a driving action and to a team radio or
+    // Instant Replay action (the Xbox preset's radio on RB / LB, then Gear Up / Down moved there):
+    // the session preset keeps the driving action only.
+    internal static List<DrivingBinding> Effective(IEnumerable<DrivingBinding> bindings)
+    {
+        var all = bindings.ToList();
+        return all.Where(b => !DrivingControls.Secondary(b.Action) || !all.Any(other => !DrivingControls.Secondary(other.Action) &&
+            StringComparer.OrdinalIgnoreCase.Equals(other.DeviceId, b.DeviceId) && DrivingControls.Clash(other, b))).ToList();
+    }
+
     private static void Apply(XDocument document, IGrouping<string, DrivingBinding> family)
     {
         var root = document.Root!;

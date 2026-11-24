@@ -142,12 +142,23 @@ internal sealed class DrivingControls
                 errors.Add(b.Action + ": Xbox triggers must increase when pressed.");
         return errors;
     }
+    // An input bound to an in-race action leaves any other in-race action on that device, as the
+    // game's own control settings do (Gear Up on RB took RB from Radio TeamMate Push, which then
+    // radioed the team-mate on every shift). The two halves of an axis (Steer Left / Right) share
+    // it; menu and replay actions share inputs with driving by design.
     public void Assign(DrivingBinding binding)
     {
-        Bindings.RemoveAll(b => b.Action == binding.Action && StringComparer.OrdinalIgnoreCase.Equals(b.DeviceId, binding.DeviceId));
+        Bindings.RemoveAll(b => StringComparer.OrdinalIgnoreCase.Equals(b.DeviceId, binding.DeviceId) &&
+            (b.Action == binding.Action || Clash(b, binding)));
         Bindings.Add(binding);
     }
-    public void ApplyXboxPreset() { foreach (var binding in XboxPreset()) Assign(binding); }
+    internal static bool Clash(DrivingBinding a, DrivingBinding b) =>
+        a.Action != b.Action && SessionInputMaps.RaceAction(a.Action) && SessionInputMaps.RaceAction(b.Action) &&
+        a.Input.Length != 0 && StringComparer.OrdinalIgnoreCase.Equals(a.Input, b.Input) && (!a.Axis || a.Calibration == b.Calibration);
+    // Team radio and Instant Replay: on an input a driving action also uses, the driving action keeps it.
+    internal static bool Secondary(string action) => action.StartsWith("Radio ", StringComparison.Ordinal) || action == "Instant Replay";
+    // The game's pad preset has Clutch and Radio TeamMate Drop both on LB; the clutch keeps it.
+    public void ApplyXboxPreset() { foreach (var binding in XboxPreset().OrderBy(b => Secondary(b.Action) ? 0 : 1)) Assign(binding); }
     // Before a launch (GRID2VR 9f1715a): the game's session presets follow a DirectInput device's
     // product, so a wheel Windows re-registered (a driver or G HUB update, another USB port, a
     // reinstall) still drives, but the launcher's copy of its instance would be stale. A bound

@@ -8,8 +8,12 @@ internal static class DrivingWizardTests
     {
         static void Check(bool condition, string message) { if (!condition) throw new Exception("Driving wizard: " + message); }
         static void Throws(Action action, string message) { try { action(); } catch (InvalidOperationException) { return; } throw new Exception("Driving wizard: " + message); }
-        static DrivingBinding Pad(string action, string input = "xinput_button_a") =>
-            new() { Action = action, Device = "Xbox controller", DeviceId = "xinput:0", DeviceType = "xinput_pad", Input = input };
+        // Without an input: a key of its own per action, as an input bound to one in-race action
+        // leaves any other (DrivingControls.Assign).
+        static DrivingBinding Pad(string action, string? input = null) => input is null
+            ? new() { Action = action, Device = "Keyboard", DeviceId = "keyboard", DeviceType = "keyboard",
+                      Input = "vk_code_0x" + (0x41 + Array.IndexOf(DrivingControls.Actions, action)).ToString("X2", System.Globalization.CultureInfo.InvariantCulture) }
+            : new() { Action = action, Device = "Xbox controller", DeviceId = "xinput:0", DeviceType = "xinput_pad", Input = input };
         var batches = DrivingControls.WizardBatches;
         Check(batches.Select(b => b.Name).SequenceEqual(["Essentials", "H-pattern shifter", "Team radio", "Replay controls", "Menu controls", "Look and boost"]), "batch order");
         var all = batches.SelectMany(b => b.Actions).ToArray();
