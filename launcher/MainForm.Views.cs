@@ -36,7 +36,7 @@ internal sealed partial class MainForm
 
         QuickSection(play, "Play");
         Row(play, runtime); Row(play, launchMode);
-        foreach (var editor in new Control[] { car, track, laps, vrCockpit }) simpleEventRows.Add(Row(play, editor));
+        foreach (var editor in new Control[] { car, track, timeOfDay, laps, vrCockpit }) simpleEventRows.Add(Row(play, editor));
         foreach (var editor in new Control[] { opponents, opponentCars }) simpleRaceRows.Add(Row(play, editor));
         simpleEventRows.Add(Move(play, sessionSummary));
         Note(play, "Normal opens the game's own menus. Practice starts the chosen car and track on your own; Race adds computer-controlled opponents. Connect your headset to its 32-bit OpenXR runtime, then Launch VR.");

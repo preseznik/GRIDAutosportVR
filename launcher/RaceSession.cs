@@ -14,7 +14,8 @@ internal sealed record CarItem(string Id, string Label, string Class, IReadOnlyL
     public override string ToString() => Label + " · " + Class;
 }
 
-internal sealed record TrackItem(string Id, string Country, string Location, string Route, string Label)
+// Night: the game ships a night version of this route (lighting_night.xml and the route's night maps).
+internal sealed record TrackItem(string Id, string Country, string Location, string Route, string Label, bool Night = false)
 {
     public override string ToString() => Label;
 }
@@ -30,6 +31,9 @@ internal static partial class RaceSession
     public const int MaxLaps = 20, MaxOpponents = 11;
     public static readonly string[] Modes = ["Normal", "Practice", "Race"];
     public static readonly string[] OpponentChoices = ["same", "class", "mixed"];
+    // Time of day: the game's lighting="day" or "night"; night only where the route has it (TrackItem.Night).
+    public static readonly string[] Times = ["day", "night"];
+    private static readonly string[] NightRouteFiles = ["sky_night.pssg", "terrain_lm_night.pssg", "buildings_lm_night.pssg", "ambient_sh_night.bin"];
 
     [GeneratedRegex(@"\A[a-z0-9_]+\z")] private static partial Regex Token();
     [GeneratedRegex(@"\Aroute_\d+\z")] private static partial Regex RouteFolder();
@@ -111,8 +115,9 @@ internal static partial class RaceSession
                 foreach (var route in Folders(location.FullName).Where(d => RouteFolder().IsMatch(d.Name)).OrderBy(d => int.Parse(d.Name[6..], CultureInfo.InvariantCulture)))
                 {
                     if (!new[] { "track.jpk", "route_objects.pssg", "progress_track.xml" }.All(f => File.Exists(Path.Combine(route.FullName, f)))) continue;
+                    var night = File.Exists(Path.Combine(location.FullName, "lighting_night.xml")) && NightRouteFiles.All(f => File.Exists(Path.Combine(route.FullName, f)));
                     tracks.Add(new($"{country}/{location.Name}/{route.Name}", country, location.Name, route.Name,
-                        $"{Title(location.Name)} — route {route.Name[6..]}{(country == "cities" ? " (street)" : "")}"));
+                        $"{Title(location.Name)} — route {route.Name[6..]}{(country == "cities" ? " (street)" : "")}", night));
                 }
         return new(cars.OrderBy(c => c.Label, StringComparer.CurrentCultureIgnoreCase).ToArray(), tracks);
     }
@@ -127,6 +132,7 @@ internal static partial class RaceSession
         if (choices.Laps is < 1 or > MaxLaps) throw new ArgumentException($"Laps must be 1 to {MaxLaps}.");
         if (choices.Opponents is < 1 or > MaxOpponents) throw new ArgumentException($"Opponents must be 1 to {MaxOpponents}.");
         if (!OpponentChoices.Contains(choices.OpponentCars)) throw new ArgumentException("Unknown opponent car choice.");
+        if (!Times.Contains(choices.TimeOfDay)) throw new ArgumentException("Unknown time of day.");
         var opponents = choices.LaunchMode == "Race" ? choices.Opponents : 0;
         var grid = new List<(string Car, string Livery)> { (car.Id, "user") };
         var random = new Random(seed);
@@ -157,7 +163,7 @@ internal static partial class RaceSession
             xml.WriteAttributeString("country", track.Country);
             xml.WriteAttributeString("name", track.Location);
             xml.WriteAttributeString("route", track.Route);
-            xml.WriteAttributeString("lighting", "day");
+            xml.WriteAttributeString("lighting", AtNight(choices, track) ? "night" : "day");
             xml.WriteAttributeString("weather", "dry");
             xml.WriteAttributeString("laps", choices.Laps.ToString(CultureInfo.InvariantCulture));
             xml.WriteAttributeString("number_cars", grid.Count.ToString(CultureInfo.InvariantCulture));
@@ -177,15 +183,20 @@ internal static partial class RaceSession
         return buffer.ToArray();
     }
 
+    // Night is kept as the choice on a route without one, which then runs by day.
+    private static bool AtNight(Choices choices, TrackItem track) => choices.TimeOfDay == "night" && track.Night;
+
     public static string Summary(Choices choices, ContentCatalog catalog)
     {
         if (choices.LaunchMode == "Normal") return "Normal: choose your car and event in the game's menus.";
         var car = catalog.Cars.FirstOrDefault(c => c.Id == choices.Car)?.Label ?? choices.Car;
-        var track = catalog.Tracks.FirstOrDefault(t => t.Id == choices.Track)?.Label ?? choices.Track;
+        var route = catalog.Tracks.FirstOrDefault(t => t.Id == choices.Track);
+        var track = (route?.Label ?? choices.Track) + (route is not null && AtNight(choices, route) ? " at night" : "");
         var laps = choices.Laps == 1 ? "1 lap" : $"{choices.Laps} laps";
-        if (choices.LaunchMode == "Practice") return $"Practice: {car} at {track}, {laps}, solo.";
+        var day = choices.TimeOfDay == "night" && route is { Night: false } ? " This route has no night version, so it runs by day." : "";
+        if (choices.LaunchMode == "Practice") return $"Practice: {car} at {track}, {laps}, solo.{day}";
         var rivals = choices.OpponentCars switch { "mixed" => "mixed cars", "class" => "same discipline", _ => "same car" };
-        return $"Race: {car} at {track}, {laps}, {choices.Opponents} AI {(choices.Opponents == 1 ? "opponent" : "opponents")} ({rivals}).";
+        return $"Race: {car} at {track}, {laps}, {choices.Opponents} AI {(choices.Opponents == 1 ? "opponent" : "opponents")} ({rivals}).{day}";
     }
 }
 

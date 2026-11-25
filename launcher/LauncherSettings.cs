@@ -17,7 +17,7 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
     int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
     bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false,
-    string TextureFiltering = TextureFilters.Sharp, bool NightCockpitLight = true)
+    string TextureFiltering = TextureFilters.Sharp, bool NightCockpitLight = true, string TimeOfDay = "day")
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -190,7 +190,8 @@ internal static class LauncherSettings
             ReadFlag(document, "diagnosticLogging", false, fileName), ReadFlag(document, "performanceDisplay", false, fileName),
             ReadFlag(document, "classicColor", false, fileName),
             ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName),
-            ReadFlag(document, "nightCockpitLight", true, fileName));
+            ReadFlag(document, "nightCockpitLight", true, fileName),
+            ReadText(document, "timeOfDay", "day", RaceSession.Times.Contains, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -205,13 +206,14 @@ internal static class LauncherSettings
         document["keepHorizonLevel"] = choices.KeepHorizonLevel;
         if (!RaceSession.Modes.Contains(choices.LaunchMode) || !ValidCar(choices.Car) || !ValidTrack(choices.Track) ||
             choices.Laps is < 1 or > RaceSession.MaxLaps || choices.Opponents is < 1 or > RaceSession.MaxOpponents ||
-            !RaceSession.OpponentChoices.Contains(choices.OpponentCars)) throw new ArgumentException("Unsupported session choice.");
+            !RaceSession.OpponentChoices.Contains(choices.OpponentCars) || !RaceSession.Times.Contains(choices.TimeOfDay)) throw new ArgumentException("Unsupported session choice.");
         document["launchMode"] = choices.LaunchMode;
         document["car"] = choices.Car;
         document["track"] = choices.Track;
         document["laps"] = choices.Laps;
         document["opponents"] = choices.Opponents;
         document["opponentCars"] = choices.OpponentCars;
+        document["timeOfDay"] = choices.TimeOfDay;
         document["vrCockpit"] = choices.VrCockpit;
         if (!DistanceSlider.ValidHud(choices.HudDistance)) throw new ArgumentException("Unsupported HUD distance.");
         document["hudShow"] = choices.HudShow;

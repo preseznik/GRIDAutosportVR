@@ -142,8 +142,8 @@ internal static class SelfTests
         Check(Throws<JsonException>(() => LauncherSettings.Load(file)));
         Check(!Directory.EnumerateFiles(data, "*.tmp").Any());
         // Practice / Race choices: Normal by default, validated on load and save.
-        Check(new Choices() is { LaunchMode: "Normal", Car: "sls", Track: "cities/san_francisco/route_0", Laps: 3, Opponents: 7, OpponentCars: "same" });
-        var race = new Choices(LaunchMode: "Race", Car: "pag", Track: "circuits/bathurst/route_1", Laps: 20, Opponents: 11, OpponentCars: "class");
+        Check(new Choices() is { LaunchMode: "Normal", Car: "sls", Track: "cities/san_francisco/route_0", Laps: 3, Opponents: 7, OpponentCars: "same", TimeOfDay: "day" });
+        var race = new Choices(LaunchMode: "Race", Car: "pag", Track: "circuits/bathurst/route_1", Laps: 20, Opponents: 11, OpponentCars: "class", TimeOfDay: "night");
         LauncherSettings.Save(race, file);
         Check(LauncherSettings.Load(file) == race);
         // VR HUD: everything shown at 1 m by default; parts and distance round-trip and are validated.
@@ -163,12 +163,13 @@ internal static class SelfTests
         LauncherSettings.Save(race with { VrCockpit = false }, file);
         Check(!LauncherSettings.Load(file).VrCockpit);
         foreach (var bad in new[] { "{\"vrCockpit\": 1}", "{\"launchMode\": \"Online\"}", "{\"car\": \"../x\"}", "{\"track\": \"p2p/okutama/route_0\"}", "{\"laps\": 0}",
-                                    "{\"opponents\": 12}", "{\"opponentCars\": \"any\"}", "{\"track\": \"cities/chicago/route_0 -benchmark x\"}" })
+                                    "{\"opponents\": 12}", "{\"opponentCars\": \"any\"}", "{\"timeOfDay\": \"dusk\"}", "{\"timeOfDay\": true}", "{\"track\": \"cities/chicago/route_0 -benchmark x\"}" })
         {
             File.WriteAllText(file, bad);
             Check(Throws<JsonException>(() => LauncherSettings.Load(file)), bad);
         }
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Car: "a b"), file)));
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(TimeOfDay: "Night"), file)));
         File.Delete(file);
     }
 
@@ -300,6 +301,11 @@ internal static class SelfTests
             Directory.CreateDirectory(folder);
             foreach (var file in new[] { "track.jpk", "route_objects.pssg", "progress_track.xml" }) File.WriteAllBytes(Path.Combine(folder, file), [0]);
         }
+        // Night: the location's lighting_night.xml and the route's night maps (Spa route 10); Bathurst route 1 has the maps but no night lighting.
+        File.WriteAllBytes(Path.Combine(game, "tracks", "locations", "circuits", "spa_francorchamps", "lighting_night.xml"), [0]);
+        foreach (var route in new[] { "circuits/spa_francorchamps/route_10", "circuits/bathurst/route_1" })
+            foreach (var file in new[] { "sky_night.pssg", "terrain_lm_night.pssg", "buildings_lm_night.pssg", "ambient_sh_night.bin" })
+                File.WriteAllBytes(Path.Combine(game, "tracks", "locations", route, file), [0]);
         Directory.CreateDirectory(Path.Combine(game, "tracks", "locations", "cities", "chicago", "route_0")); // Incomplete route.
         Directory.CreateDirectory(Path.Combine(game, "tracks", "locations", "frontend", "frontend_garage", "route_0"));
         return game;
@@ -343,6 +349,15 @@ internal static class SelfTests
         Check(RaceSession.Summary(new Choices(), catalog).StartsWith("Normal"));
         Check(RaceSession.Summary(new Choices(LaunchMode: "Practice", Laps: 1), catalog) == "Practice: Mercedes-Benz SLS AMG GT3 at San Francisco — route 0 (street), 1 lap, solo.");
         Check(RaceSession.Summary(new Choices(LaunchMode: "Race", Opponents: 1, OpponentCars: "class"), catalog).EndsWith("1 AI opponent (same discipline)."));
+        // Time of day: night only on a route with a night version; elsewhere Night runs by day and the summary says so.
+        Check(catalog.Tracks.Where(t => t.Night).Select(t => t.Id).SequenceEqual(["circuits/spa_francorchamps/route_10"]));
+        string Lighting(Choices c) => ((XmlElement)Parse(RaceSession.SessionXml(c, catalog, 1)).SelectSingleNode("track")!).GetAttribute("lighting");
+        const string spa = "circuits/spa_francorchamps/route_10";
+        Check(Lighting(new Choices(LaunchMode: "Practice", Track: spa)) == "day" && Lighting(new Choices(LaunchMode: "Race", Track: spa, TimeOfDay: "night")) == "night");
+        Check(Lighting(new Choices(LaunchMode: "Practice", TimeOfDay: "night")) == "day" && Lighting(new Choices(LaunchMode: "Practice", Track: "circuits/bathurst/route_1", TimeOfDay: "night")) == "day");
+        Check(Throws<ArgumentException>(() => RaceSession.SessionXml(new Choices(LaunchMode: "Practice", TimeOfDay: "dusk"), catalog, 1)));
+        Check(RaceSession.Summary(new Choices(LaunchMode: "Practice", Track: spa, Laps: 2, TimeOfDay: "night"), catalog) == "Practice: Mercedes-Benz SLS AMG GT3 at Spa-Francorchamps — route 10 at night, 2 laps, solo.");
+        Check(RaceSession.Summary(new Choices(LaunchMode: "Practice", Laps: 1, TimeOfDay: "night"), catalog) == "Practice: Mercedes-Benz SLS AMG GT3 at San Francisco — route 0 (street), 1 lap, solo. This route has no night version, so it runs by day.");
 
         const string id = "0123456789abcdef0123456789abcdef";
         var args = VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true);
@@ -520,7 +535,8 @@ internal static class SelfTests
         Check(Find<ValueSlider>(form, "ForceFeedbackWeight").Enabled && Find<ValueSlider>(form, "ForceFeedbackVibration").Enabled);
         Find<CheckBox>(form, "ForceFeedbackOverride").Checked = false;
         form.UseCatalog(new([new("sls", "Mercedes-Benz SLS AMG GT3", "Endurance", ["user", "03"]), new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])],
-            [new("cities/san_francisco/route_0", "cities", "san_francisco", "route_0", "San Francisco — route 0 (street)"), new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
+            [new("cities/san_francisco/route_0", "cities", "san_francisco", "route_0", "San Francisco — route 0 (street)"), new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0"),
+             new("circuits/brands_hatch/route_0", "circuits", "brands_hatch", "route_0", "Brands Hatch — route 0", true)]));
         Check(Find<ComboBox>(form, "SessionCar").Text.StartsWith("Mercedes") && Find<ComboBox>(form, "SessionTrack").Text.StartsWith("San Francisco"));
         form.Show();
         Application.DoEvents();
@@ -571,7 +587,21 @@ internal static class SelfTests
             Check(Find<NumericUpDown>(form, "Opponents").Enabled && Find<Label>(form, "SessionSummary").Text.Contains("Mount Panorama") &&
                   Find<Label>(form, "SessionSummary").Text.Contains("4 AI opponents (same discipline). Discipline: Endurance."));
             Find<Button>(form, "SaveSettings").PerformClick();
-            Check(LauncherSettings.Load() is { LaunchMode: "Race", Car: "sls", Track: "circuits/bathurst/route_0", Opponents: 4, OpponentCars: "class" });
+            Check(LauncherSettings.Load() is { LaunchMode: "Race", Car: "sls", Track: "circuits/bathurst/route_0", Opponents: 4, OpponentCars: "class", TimeOfDay: "day" });
+            // Time of day: enabled on a route with a night version; Night is kept, showing Day, on a route without one.
+            var time = Find<ComboBox>(form, "TimeOfDay");
+            Check(!time.Enabled && time.Text == "Day");
+            Find<ComboBox>(form, "SessionTrack").SelectedIndex = 2;
+            Check(time.Enabled);
+            time.SelectedIndex = 1;
+            Check(Find<Label>(form, "SessionSummary").Text.Contains("Brands Hatch — route 0 at night,") && Find<Button>(form, "SaveSettings").Enabled);
+            Find<ComboBox>(form, "SessionTrack").SelectedIndex = 1;
+            Check(!time.Enabled && time.Text == "Day" && Find<Label>(form, "SessionSummary").Text.Contains("This route has no night version"));
+            Find<ComboBox>(form, "SessionTrack").SelectedIndex = 2;
+            Check(time.Enabled && time.Text == "Night");
+            Find<ComboBox>(form, "SessionTrack").SelectedIndex = 1;
+            Find<Button>(form, "SaveSettings").PerformClick();
+            Check(LauncherSettings.Load() is { Track: "circuits/bathurst/route_0", TimeOfDay: "night" });
             // A saved car that is no longer installed stays chosen and is named in the summary.
             form.UseCatalog(new([new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])], [new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
             Check(Find<ComboBox>(form, "SessionCar").SelectedItem is null && !Find<Button>(form, "SaveSettings").Enabled);

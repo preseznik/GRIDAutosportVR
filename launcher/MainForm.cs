@@ -88,13 +88,15 @@ internal sealed partial class MainForm : LauncherForm
     private bool desktopSession; // The running session is desktop Launch with Practice / Race.
     // Launcher Practice / Race (RaceSession): the event the next Launch VR starts.
     private sealed record Option(string Id, string Label) { public override string ToString() => Label; }
-    private readonly ComboBox launchMode = Choice("LaunchMode"), car = Choice("SessionCar"), track = Choice("SessionTrack"), opponentCars = Choice("OpponentCars");
+    private readonly ComboBox launchMode = Choice("LaunchMode"), car = Choice("SessionCar"), track = Choice("SessionTrack"), opponentCars = Choice("OpponentCars"),
+        timeOfDay = Choice("TimeOfDay");
     private readonly NumericUpDown laps = Count("Laps", RaceSession.MaxLaps), opponents = Count("Opponents", RaceSession.MaxOpponents);
     private readonly Label sessionSummary = TextLabel("");
     private readonly CheckBox vrCockpit = new() { Name = "VrCockpit", AccessibleName = "Start in the cockpit view", Text = "Start in the cockpit view", Checked = true, AutoSize = true };
     private ContentCatalog catalog = ContentCatalog.Empty;
     private string? catalogFolder;
-    private string chosenCar = RaceSession.DefaultCar, chosenTrack = RaceSession.DefaultTrack;
+    // chosenTime keeps Night while a route without a night version shows Day.
+    private string chosenCar = RaceSession.DefaultCar, chosenTrack = RaceSession.DefaultTrack, chosenTime = "day";
     private bool applying;
     private readonly ToolTip tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 15000, ShowAlways = true };
     private readonly List<SectionHeader> sectionHeaders = [];
@@ -138,9 +140,11 @@ internal sealed partial class MainForm : LauncherForm
         Section(launcher, "Session");
         launchMode.Items.AddRange([new Option("Normal", "Normal"), new Option("Practice", "Practice"), new Option("Race", "Race")]);
         opponentCars.Items.AddRange([new Option("same", "Same car"), new Option("class", "Same discipline"), new Option("mixed", "Mixed")]);
+        timeOfDay.Items.AddRange([new Option("day", "Day"), new Option("night", "Night")]); timeOfDay.SelectedIndex = 0;
         Field(launcher, "Launch mode", launchMode);
         Field(launcher, "Car", car);
         Field(launcher, "Track", track);
+        Field(launcher, "Time of day", timeOfDay);
         Field(launcher, "Laps", laps);
         Field(launcher, "Opponents", opponents);
         Field(launcher, "Opponent cars", opponentCars);
@@ -385,6 +389,12 @@ internal sealed partial class MainForm : LauncherForm
         clearRecenterDevice.Click += (_, _) => { recenterDevice = null; UpdateDeviceRecenter(); ChoiceEdited(); };
         foreach (var combo in new[] { launchMode, car, track, opponentCars })
             combo.SelectedIndexChanged += (_, _) => SessionEdited();
+        timeOfDay.SelectedIndexChanged += (_, _) =>
+        {
+            if (applying) return;
+            if (NightOnTrack && timeOfDay.SelectedItem is Option o) chosenTime = o.Id;
+            ChoiceEdited();
+        };
         laps.ValueChanged += (_, _) => SessionEdited();
         vrCockpit.CheckedChanged += (_, _) => ChoiceEdited();
         opponents.ValueChanged += (_, _) => SessionEdited();
@@ -411,7 +421,7 @@ internal sealed partial class MainForm : LauncherForm
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
         diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked,
-        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked);
+        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked, chosenTime);
 
     private void RefreshForceFeedback()
     {
@@ -424,7 +434,18 @@ internal sealed partial class MainForm : LauncherForm
         if (applying) return;
         if (car.SelectedItem is CarItem c) chosenCar = c.Id;
         if (track.SelectedItem is TrackItem t) chosenTrack = t.Id;
+        ShowTimeOfDay();
         ChoiceEdited();
+    }
+
+    private bool NightOnTrack => track.SelectedItem is TrackItem { Night: true };
+
+    // Time of day shows the chosen time where the route has a night version, and Day where it has not.
+    private void ShowTimeOfDay()
+    {
+        var was = applying; applying = true;
+        try { timeOfDay.SelectedIndex = chosenTime == "night" && NightOnTrack ? 1 : 0; }
+        finally { applying = was; }
     }
 
     internal void UseCatalog(ContentCatalog value)
@@ -447,6 +468,7 @@ internal sealed partial class MainForm : LauncherForm
     {
         car.SelectedItem = catalog.Cars.FirstOrDefault(c => c.Id == chosenCar);
         track.SelectedItem = catalog.Tracks.FirstOrDefault(t => t.Id == chosenTrack);
+        ShowTimeOfDay();
     }
 
     private void LoadCatalog()
@@ -512,7 +534,7 @@ internal sealed partial class MainForm : LauncherForm
             launchMode.SelectedItem = launchMode.Items.Cast<Option>().First(o => o.Id == choices.LaunchMode);
             opponentCars.SelectedItem = opponentCars.Items.Cast<Option>().First(o => o.Id == choices.OpponentCars);
             laps.Value = choices.Laps; opponents.Value = choices.Opponents; vrCockpit.Checked = choices.VrCockpit;
-            chosenCar = choices.Car; chosenTrack = choices.Track;
+            chosenCar = choices.Car; chosenTrack = choices.Track; chosenTime = choices.TimeOfDay;
             SelectSession();
         }
         finally { applying = false; }
@@ -616,6 +638,7 @@ internal sealed partial class MainForm : LauncherForm
         var mode = (launchMode.SelectedItem as Option)?.Id ?? "Normal";
         launchMode.Enabled = idle;
         car.Enabled = track.Enabled = laps.Enabled = idle && mode != "Normal" && catalog.Cars.Count > 0;
+        timeOfDay.Enabled = track.Enabled && NightOnTrack;
         vrCockpit.Enabled = idle && mode != "Normal";
         hudParts.Enabled = hudShow.Checked;
         drivingBindings.Enabled = !supervising && !recovering;
@@ -1083,6 +1106,7 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(launchMode, "Normal opens the game's menus. Practice starts the selected car and track on your own. Race adds computer-controlled opponents. Practice and Race apply to Launch VR and Launch.");
         tips.SetToolTip(car, "Your car for Practice or Race. The discipline after the name groups Same discipline opponents.");
         tips.SetToolTip(track, "The circuit or street route for Practice or Race.");
+        tips.SetToolTip(timeOfDay, "Practice and Race by day or at night. The game has night versions of most routes at Algarve, Austin, Brands Hatch, Hockenheim, Mont-Tremblant, Okutama, Sepang, Spa-Francorchamps and Yas Marina; other routes run by day.");
         tips.SetToolTip(laps, $"Laps for Practice or Race, 1–{RaceSession.MaxLaps}.");
         tips.SetToolTip(opponents, $"Race only: 1–{RaceSession.MaxOpponents} computer-controlled opponents. You start on pole.");
         tips.SetToolTip(vrCockpit, "Practice and Race in VR start in the driver's seat (the game's head camera) instead of the chase camera. The game's change-camera button still switches views. Normal races keep the camera you last used.");
