@@ -9,8 +9,9 @@
 // The launcher's Practice / Race boot (-benchmarkAttract) never shows that screen, so the map
 // stays keyboard-only and wheel and pad bindings do nothing. -gasvrdevice=FAMILY[,FAMILY...]
 // (xinput_pad or a DirectInput product GUID, in order of preference) asks the bridge to make
-// that same native bind once, when the race's StateLoading exits, for the first family the
-// game's own device enumerator lists. The enumerator (RVA 97DAB0 on Input2+0x84, a vector of
+// that same native bind when the race's first StateLoading starts (for the loading screen's
+// continue prompt) and again when it exits, for the first family the game's own device
+// enumerator lists. The enumerator (RVA 97DAB0 on Input2+0x84, a vector of
 // 12-byte {backend, family, index} records released by RVA 8E1C0) and the string interning
 // (RVA 98AE00) are byte for byte GRID 2's (GRID2VR 1a0be0 / 39e3a0 / 643fa0).
 //
@@ -48,6 +49,7 @@ char families[8][40];
 unsigned familyCount;
 bool requested, done, everyLoad; // everyLoad: Normal play, after each StateLoading (the save profile's map replaces the preset)
 void* exitingState; // StateLoading's `this` (ESI at the exit call site), captured by the thunk.
+void* enteringState; // The same at the enter call site.
 
 // The profile's controls as the game would save them, and whether the launcher's preset is bound.
 using SaveBodyFn = unsigned (__thiscall*)(void*, void*);
@@ -142,7 +144,6 @@ bool enumerate(BYTE* input, Device (&out)[32], unsigned& count) {
 }
 
 void claim(const BYTE* state) {
-    done = true;
     const BYTE* context = *reinterpret_cast<BYTE* const*>(state + 0xC);
     BYTE* const* services = *reinterpret_cast<BYTE* const* const*>(context + 4);
     BYTE* input = services[*reinterpret_cast<const unsigned*>(image + AutosportGameBuild()->inputService)];
@@ -198,8 +199,19 @@ void claim(const BYTE* state) {
 void __fastcall loadingExited(void* dispatcher, void*, const void* event) {
     AutosportLoadingExited(dispatcher, nullptr, event);
     if (!requested || (done && !everyLoad) || !exitingState) return;
+    done = true;
     __try { claim(static_cast<const BYTE*>(exitingState)); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { done = true; AutosportLog("Device claim failed with an exception"); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { AutosportLog("Device claim failed with an exception"); }
+}
+
+// Practice / Race: the loading screen ends with a prompt to continue, which the player's map
+// answers; bound only at the exit, that map still had the keyboard alone, so the prompt showed
+// Enter and only Enter took it. The first loading screen binds the device when it starts too.
+void __fastcall loadingEntered(void* dispatcher, void*, const void* event) {
+    AutosportLoadingEntered(dispatcher, nullptr, event);
+    if (!requested || everyLoad || done || !enteringState) return;
+    __try { claim(static_cast<const BYTE*>(enteringState)); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { AutosportLog("Device claim at the loading screen failed with an exception"); }
 }
 } // namespace
 
@@ -209,6 +221,13 @@ extern "C" __declspec(naked) void AutosportLoadingExitedThunk() {
     __asm {
         mov exitingState, esi
         jmp loadingExited
+    }
+}
+// The enter call (RVA 243F26) has the state in ESI as well.
+extern "C" __declspec(naked) void AutosportLoadingEnteredThunk() {
+    __asm {
+        mov enteringState, esi
+        jmp loadingEntered
     }
 }
 

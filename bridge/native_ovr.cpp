@@ -928,7 +928,7 @@ bool AutosportInstallNativeOvr(bool desktop) noexcept {
         reinterpret_cast<void (__cdecl*)()>(AutosportDrawFrontendOverlay),
         reinterpret_cast<void (__cdecl*)()>(AutosportSlateVisibility),
         reinterpret_cast<void (__cdecl*)()>(AutosportSlateVisibility),
-        reinterpret_cast<void (__cdecl*)()>(AutosportLoadingEntered),
+        reinterpret_cast<void (__cdecl*)()>(AutosportLoadingEnteredThunk),
         reinterpret_cast<void (__cdecl*)()>(AutosportLoadingExitedThunk),
         reinterpret_cast<void (__cdecl*)()>(endFrame),
         reinterpret_cast<void (__cdecl*)()>(beginFrame),

@@ -93,6 +93,7 @@ void AutosportConfigureCockpitLight(ID3D11Device* device);
 void AutosportConfigureForceFeedback(const BYTE* image, const wchar_t* commandLine);
 void AutosportConfigureDeviceClaim(const BYTE* image, const wchar_t* commandLine, bool practice);
 extern "C" void AutosportLoadingExitedThunk();
+extern "C" void AutosportLoadingEnteredThunk();
 bool AutosportCaptureRequested();
 void AutosportCaptureCompleted();
 const wchar_t* AutosportRunDirectory();
