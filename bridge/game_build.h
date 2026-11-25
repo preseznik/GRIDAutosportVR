@@ -40,10 +40,11 @@ struct GameBuild {
     // argument, the stream, whose vtable +4 is Write(data, size) returning 0), +8 reads them
     // (stream, version); +0xC / +0x10 wrap both with a version byte, +0x14 returns it (4).
     UINT controlsSaveTable;
-    // Difficulty (difficulty.cpp). The profile option getters, __thiscall(accessor) returning an int,
-    // each starting with 9 bytes of position-independent code: ABS, traction control, stability
-    // control, cornering assist, steering assist (auto steer), damage, AI difficulty.
-    UINT difficultyGetters[7];
+    // Difficulty (difficulty.cpp). The setting names (assist_abs, assist_traction_control,
+    // assist_stability_control, assist_cornering, assist_auto_steer, realistic_damage, ai_difficulty,
+    // transmission_type, career_flashbacks), the settings lookup's two categories (assists and damage;
+    // the rest) and the settings service's index variable.
+    UINT settingNames[9], settingCategories[2], settingsService;
     UINT flashbackCount;       // __cdecl(context): the race's flashbacks, starting with push ebp; mov ebp,esp; mov ecx,[abs32].
     UINT transmissionReads[2]; // The gearbox setup's E8 calls to the profile store's find (transmission_type, _drag).
     UINT keyboardAssists;      // The "je" that skips turning the assists on for a keyboard or tilt device.

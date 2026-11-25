@@ -30,7 +30,7 @@ internal sealed partial class MainForm
         Field(page, "Flashbacks", flashbacks);
         foreach (var assist in new[] { abs, tractionControl, stabilityControl, corneringAssist, steeringAssist }) assists.Controls.Add(assist);
         Field(page, "Assists", assists);
-        page.Controls.Add(TextLabel("Practice and Race start without your save profile, so they use the game's default difficulty: Medium AI, automatic transmission, ABS and traction control on, full damage and 5 flashbacks. Turn this on to start them with your own choices instead. The game's Difficulty screen in the pause menu still works during the session: a setting you change there applies from then on. Normal launches keep the difficulty from your save profile."));
+        page.Controls.Add(TextLabel("Practice and Race start without your save profile, so they use the game's default difficulty: Medium AI, automatic transmission, ABS and traction control on, full damage and 5 flashbacks. Turn this on to start them with your own choices instead. The game's Difficulty screen in the pause menu shows these choices during the session, and a change made there applies when the game restarts the event for it. Normal launches keep the difficulty from your save profile."));
         page.Controls.Add(TextLabel("A manual H-pattern transmission needs a shifter bound to Gear 1–7 and Reverse in Controls → Driving; a transmission with clutch needs Clutch bound."));
         launcherDifficulty.CheckedChanged += (_, _) => { EnableDifficulty(); ChoiceEdited(); };
         foreach (var combo in new[] { transmission, aiDifficulty, damage, flashbacks }) combo.SelectedIndexChanged += (_, _) => ChoiceEdited();
