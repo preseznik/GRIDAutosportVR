@@ -58,6 +58,8 @@ internal sealed partial class MainForm : LauncherForm
     // Graphics -> VR rendering -> Classic colors: the lighter look of 0.2.0 and earlier (-gasvrclassiccolor).
     private readonly ComboBox textureFiltering = new() { Name = "TextureFiltering", AccessibleName = "Texture filtering", DropDownStyle = ComboBoxStyle.DropDownList, Width = 260 };
     private readonly CheckBox classicColor = new() { Name = "ClassicColor", AccessibleName = "Classic colors", Text = "On", AutoSize = true };
+    // Graphics -> VR rendering -> Cockpit light at night: the game's night cockpit cut lifted (-gasvrnightcockpit).
+    private readonly CheckBox nightCockpitLight = new() { Name = "NightCockpitLight", AccessibleName = "Cockpit light at night", Text = "On", AutoSize = true, Checked = true };
     private readonly CheckBox performanceDisplay = new() { Name = "PerformanceDisplay", AccessibleName = "Performance display", Text = "FPS + GPU usage (VR)", AutoSize = true };
     // GRID2VR's Controls -> Driving -> Force feedback (bridge/force_feedback.cpp).
     private readonly CheckBox ffbOverride = new() { Name = "ForceFeedbackOverride", AccessibleName = "Use launcher force feedback", Text = "Use launcher force feedback", AutoSize = true };
@@ -166,6 +168,8 @@ internal sealed partial class MainForm : LauncherForm
         graphics.Controls.Add(TextLabel("The game filters most surfaces at only 4x anisotropic, which blurs building walls, barriers and the road at steep angles. 16x anisotropic keeps them sharp. Steadier distance also softens distant textures slightly, so fine detail flickers less. Applies to the next VR launch."));
         Field(graphics, "Classic colors", classicColor);
         graphics.Controls.Add(TextLabel("The headset shows the game's colors as a monitor does. Classic colors keeps the lighter, lower-contrast look of version 0.2.0 and earlier. Applies to the next VR launch."));
+        Field(graphics, "Cockpit light at night", nightCockpitLight);
+        graphics.Controls.Add(TextLabel("In night races the game draws everything inside the car that is not lit from outside pure black. On (default) keeps the dashboard, steering wheel, your arms and the seats faintly visible, lit by the night around you and a little more. Daytime races are unchanged. Applies to the next VR launch."));
         if (CockpitTexturePack.Current is { } pack)
         {
             Section(graphics, "Cockpit textures");
@@ -312,6 +316,7 @@ internal sealed partial class MainForm : LauncherForm
         diagnosticLogging.CheckedChanged += (_, _) => ChoiceEdited();
         performanceDisplay.CheckedChanged += (_, _) => ChoiceEdited();
         classicColor.CheckedChanged += (_, _) => ChoiceEdited();
+        nightCockpitLight.CheckedChanged += (_, _) => ChoiceEdited();
         textureFiltering.SelectedIndexChanged += (_, _) => ChoiceEdited();
         ffbOverride.CheckedChanged += (_, _) => { RefreshForceFeedback(); ChoiceEdited(); };
         foreach (var slider in new[] { ffbWeight, ffbStrength, ffbVibration }) slider.ValueChanged += (_, _) => ChoiceEdited();
@@ -406,7 +411,7 @@ internal sealed partial class MainForm : LauncherForm
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
         diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked,
-        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp);
+        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked);
 
     private void RefreshForceFeedback()
     {
@@ -486,6 +491,7 @@ internal sealed partial class MainForm : LauncherForm
         screenDistance.Value = choices.ScreenDistance; intro3d.Checked = choices.Intro3D; skipIntro.Checked = choices.SkipIntro;
         diagnosticLogging.Checked = choices.DiagnosticLogging; performanceDisplay.Checked = choices.PerformanceDisplay;
         classicColor.Checked = choices.ClassicColor;
+        nightCockpitLight.Checked = choices.NightCockpitLight;
         textureFiltering.SelectedIndex = Math.Max(0, Array.IndexOf(TextureFilters.Ids, choices.TextureFiltering));
         if (choices.ValidForceFeedback)
         {
@@ -1089,6 +1095,7 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(hudPositions, "Your race position and the gaps to the cars around you.");
         tips.SetToolTip(ffbOverride, ForceFeedbackHelp);
         tips.SetToolTip(textureFiltering, "How sharply the game's textures are filtered in VR. 16x anisotropic (default) keeps walls and the road sharp at steep angles; Steadier distance trades a little distant sharpness for less flicker in fine detail; Game keeps the game's own, mostly 4x.");
+        tips.SetToolTip(nightCockpitLight, "On (default): in night races the inside of the car keeps a faint light instead of turning pure black where no outside light reaches it. Off: the game's own night cockpit.");
         tips.SetToolTip(classicColor, "On: the lighter, lower-contrast colors of version 0.2.0 and earlier. Off (default): the headset matches the game on a monitor.");
         tips.SetToolTip(diagnosticLogging, "On: the next VR launch saves extra troubleshooting detail in its session logs (a line a second while driving). Leave off for normal play.");
         tips.SetToolTip(performanceDisplay, "On: the next VR launch shows FPS (frames sent to the headset each second, against its refresh rate) and GPU usage (the graphics card's busiest engine, other applications included) in a small panel below your view. N/A means unavailable.");

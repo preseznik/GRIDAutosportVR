@@ -243,7 +243,7 @@ internal static class SelfTests
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudFollowView: true), (3072, 3264)).SequenceEqual(
             ["-applaunch", "255220", "-gasvrplay=0123456789abcdef0123456789abcdef", "-gasvrmode=openxr", "-gasvrhudfollow=1",
              "-gasvrrecenterkey=121", "-gasvrrecentermods=0", "-gasvrkeephorizon=1", "-gasvreyesize=3072x3264", "-gasvrcockpit=1",
-             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=150", "-gasvrtexturefilter=1", "-gasvrseatkeys=9,38,40,37,39"]));
+             "-gasvrhudparts=31", "-gasvrhuddistance=100", "-gasvrscreendistance=150", "-gasvrnightcockpit=1", "-gasvrtexturefilter=1", "-gasvrseatkeys=9,38,40,37,39"]));
         var hudArguments = VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(HudShow: false, HudMinimap: false, HudDistance: 12.5m), null);
         Check(hudArguments.Contains("-gasvrhudparts=26") && hudArguments.Contains("-gasvrhuddistance=1250"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ScreenDistance: 4.5m), null).Contains("-gasvrscreendistance=450"));
@@ -256,6 +256,8 @@ internal static class SelfTests
         Check(!new Choices().DiagnosticLogging && !new Choices().PerformanceDisplay && !new Choices().ClassicColor);
         Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrclassiccolor=1"));
         Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(ClassicColor: true), null).Contains("-gasvrclassiccolor=1"));
+        Check(VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(), null).Contains("-gasvrnightcockpit=1"));
+        Check(!VrPlaySession.SteamArguments("0123456789abcdef0123456789abcdef", new Choices(NightCockpitLight: false), null).Contains("-gasvrnightcockpit=1"));
         // Texture filtering: 16x by default; Game passes nothing.
         Check(new Choices().TextureFiltering == TextureFilters.Sharp && quietFilter("-gasvrtexturefilter=1", new Choices()) &&
               quietFilter("-gasvrtexturefilter=2", new Choices(TextureFiltering: TextureFilters.Steady)) &&

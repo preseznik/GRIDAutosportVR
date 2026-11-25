@@ -510,13 +510,14 @@ extern "C" HRESULT WINAPI AutosportCreateDevice(IDXGIAdapter* adapter, D3D_DRIVE
     if (!seat && regularPlay && headset && adapterReady && directory[0]) { seat = true; AutosportSeatConfigure(directory); }
     hookTestPad();
     const HRESULT hr = AutosportSystemCreateDevice(adapter, type, software, flags, levels, count, sdk, device, achieved, context);
-    if (SUCCEEDED(hr) && device && *device && headset) { AutosportConfigureTextureFiltering(*device); AutosportConfigureShadowBias(*device); AutosportConfigureShadowConstants(*device); AutosportConfigureDepthPrecision(*device); }
+    if (SUCCEEDED(hr) && device && *device && headset) { AutosportConfigureTextureFiltering(*device); AutosportConfigureShadowBias(*device); AutosportConfigureShadowConstants(*device); AutosportConfigureDepthPrecision(*device); AutosportConfigureCockpitLight(*device); }
     if (SUCCEEDED(hr) && device && *device && regularPlay && headset) {
         wchar_t game[MAX_PATH]{};
         const DWORD length = GetModuleFileNameW(nullptr, game, MAX_PATH);
         if (wchar_t* slash = length && length < MAX_PATH ? wcsrchr(game, L'\\') : nullptr) {
             *slash = 0;
             AutosportConfigureCockpitTextures(*device, directory, game);
+            AutosportConfigureCockpitLightProbe(*device, directory);
         }
     }
     AutosportLog("D3D11 creation hr=%08lx nativeAdapter=%d device=%p captureRaceSecond=%u practiceSession=%d desktop=%d hudParts=%d:%u hudDistance=%.2f screenDistance=%.2f diagnostics=%d performanceDisplay=%d classicColor=%d",
