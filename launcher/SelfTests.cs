@@ -170,6 +170,23 @@ internal static class SelfTests
         }
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Car: "a b"), file)));
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(TimeOfDay: "Night"), file)));
+        // Launcher -> Difficulty: off by default with the game's own defaults; every choice round-trips and is validated.
+        Check(new Choices() is { LauncherDifficulty: false, Transmission: "automatic", Abs: true, TractionControl: true, StabilityControl: false,
+                                 CorneringAssist: false, SteeringAssist: false, FullDamage: true, AiDifficulty: 2, Flashbacks: 5 });
+        var hard = new Choices(LauncherDifficulty: true, Transmission: "clutch-h", Abs: false, TractionControl: false, StabilityControl: true,
+                               CorneringAssist: true, SteeringAssist: true, FullDamage: false, AiDifficulty: 4, Flashbacks: 6);
+        LauncherSettings.Save(hard, file);
+        Check(LauncherSettings.Load(file) == hard);
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(AiDifficulty: 5), file)));
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(Transmission: "cvt"), file)));
+        foreach (var bad in new[] { "{\"transmission\": \"cvt\"}", "{\"aiDifficulty\": 5}", "{\"aiDifficulty\": -1}", "{\"flashbacks\": 7}", "{\"abs\": 1}", "{\"launcherDifficulty\": \"yes\"}" })
+        {
+            File.WriteAllText(file, bad);
+            Check(Throws<JsonException>(() => LauncherSettings.Load(file)), bad);
+        }
+        Check(Difficulty.Argument(new Choices()) is null && Difficulty.Argument(hard) == "-gasvrdifficulty=0,0,1,1,1,0,4,3,6");
+        Check(Difficulty.Argument(new Choices(LauncherDifficulty: true)) == "-gasvrdifficulty=1,1,0,0,0,1,2,0,5");
+        Check(Difficulty.Summary(hard) == "manual with clutch, h-pattern shifter, AI very hard" && Difficulty.Summary(new Choices()) == "the game's difficulty");
         File.Delete(file);
     }
 
@@ -363,6 +380,12 @@ internal static class SelfTests
         var args = VrPlaySession.SteamArguments(id, new Choices(LaunchMode: "Practice"), null, true);
         Check(args[^2..].SequenceEqual(["-benchmarkAttract", "GASVR_" + id + ".xml"]) && args.Contains("-gasvrplay=" + id));
         Check(!VrPlaySession.SteamArguments(id, new Choices(), null).Contains("-benchmarkAttract"));
+        // Difficulty reaches Practice / Race only, in VR and on the desktop.
+        var difficult = new Choices(LaunchMode: "Race", LauncherDifficulty: true, Transmission: "manual", AiDifficulty: 3);
+        Check(VrPlaySession.SteamArguments(id, difficult, null, true).Contains("-gasvrdifficulty=1,1,0,0,0,1,3,1,5"));
+        Check(!VrPlaySession.SteamArguments(id, difficult with { LaunchMode = "Normal" }, null).Any(a => a.StartsWith("-gasvrdifficulty", StringComparison.Ordinal)));
+        Check(VrPlaySession.DesktopArguments(id, difficult).Contains("-gasvrdifficulty=1,1,0,0,0,1,3,1,5"));
+        Check(!VrPlaySession.DesktopArguments(id, difficult with { LauncherDifficulty = false }).Any(a => a.StartsWith("-gasvrdifficulty", StringComparison.Ordinal)));
         // Practice / Race controller claim: steering devices in order, then an Xbox controller; Normal never.
         var steering = new DrivingControls { Enabled = true, Bindings = [
             new DrivingBinding { Action = "Steer Left", Device = "Wheel", DeviceId = "{6F1D2B60-D5A0-11CF-BFC7-444553540000}", DeviceType = "{c262046d-0000-0000-0000-504944564944}", Input = "di_x_axis", Calibration = "biDirLower" },
@@ -520,7 +543,7 @@ internal static class SelfTests
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Diagnostics", "Headset check", "VR compatibility", "Launcher preferences", "Play", "Performance", "Controls & comfort"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "Practice and Race", "Graphics preset", "VR rendering", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Diagnostics", "Headset check", "VR compatibility", "Launcher preferences", "Play", "Performance", "Controls & comfort"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }
@@ -602,6 +625,21 @@ internal static class SelfTests
             Find<ComboBox>(form, "SessionTrack").SelectedIndex = 1;
             Find<Button>(form, "SaveSettings").PerformClick();
             Check(LauncherSettings.Load() is { Track: "circuits/bathurst/route_0", TimeOfDay: "night" });
+            // Launcher -> Difficulty: its editors follow the switch, and choices are saved.
+            var sessionTabs = Find<TabControl>(form, "SessionTabs");
+            Check(sessionTabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Main", "Difficulty"]));
+            Check(!Find<CheckBox>(form, "LauncherDifficulty").Checked && !Find<ComboBox>(form, "Transmission").Enabled && !Find<FlowLayoutPanel>(form, "Assists").Enabled);
+            Check(Find<ComboBox>(form, "Transmission").Text == "Automatic" && Find<ComboBox>(form, "AiDifficulty").Text == "Medium" && Find<ComboBox>(form, "Flashbacks").Text == "5");
+            Find<CheckBox>(form, "LauncherDifficulty").Checked = true;
+            Check(Find<ComboBox>(form, "Transmission").Enabled && Find<FlowLayoutPanel>(form, "Assists").Enabled && Find<Button>(form, "SaveSettings").Enabled);
+            Find<ComboBox>(form, "Transmission").SelectedIndex = 4;
+            Find<ComboBox>(form, "AiDifficulty").SelectedIndex = 3;
+            Find<ComboBox>(form, "Damage").SelectedIndex = 1;
+            Find<ComboBox>(form, "Flashbacks").SelectedIndex = 6;
+            Find<CheckBox>(form, "Abs").Checked = false;
+            Find<CheckBox>(form, "SteeringAssist").Checked = true;
+            Find<Button>(form, "SaveSettings").PerformClick();
+            Check(LauncherSettings.Load() is { LauncherDifficulty: true, Transmission: "clutch", AiDifficulty: 3, FullDamage: false, Flashbacks: 6, Abs: false, SteeringAssist: true, TractionControl: true });
             // A saved car that is no longer installed stays chosen and is named in the summary.
             form.UseCatalog(new([new("r8l", "Audi R8 LMS Ultra", "Endurance", ["user"])], [new("circuits/bathurst/route_0", "circuits", "bathurst", "route_0", "Mount Panorama — route 0")]));
             Check(Find<ComboBox>(form, "SessionCar").SelectedItem is null && !Find<Button>(form, "SaveSettings").Enabled);
@@ -658,6 +696,18 @@ internal static class SelfTests
                 form.DrawToBitmap(driving, new Rectangle(Point.Empty, form.Size));
                 driving.Save(Path.Combine(output, "launcher-controls-driving-modern-900.png"));
             }
+            // Launcher → Difficulty.
+            form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Launcher");
+            var difficultyTabs = Find<TabControl>(form, "SessionTabs");
+            difficultyTabs.SelectedTab = difficultyTabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Difficulty");
+            form.PerformLayout(); Application.DoEvents();
+            using (var difficulty = new Bitmap(form.Width, form.Height))
+            {
+                form.DrawToBitmap(difficulty, new Rectangle(Point.Empty, form.Size));
+                difficulty.Save(Path.Combine(output, "launcher-difficulty-modern-900.png"));
+            }
+            difficultyTabs.SelectedIndex = 0;
+            form.Tabs.SelectedTab = form.Tabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Controls");
             controlTabs.SelectedTab = controlTabs.TabPages.Cast<TabPage>().Single(p => p.Text == "Seat");
             form.PerformLayout(); Application.DoEvents();
             if (Find<ComboBox>(form, "SeatCar").Items.Count > 0)

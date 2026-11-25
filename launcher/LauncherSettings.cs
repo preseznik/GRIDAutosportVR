@@ -17,7 +17,10 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     bool SkipIntro = false, bool ForceFeedbackOverride = false, int ForceFeedbackStrength = 100, int ForceFeedbackWeight = 100,
     int ForceFeedbackVibration = 100, string GraphicsQuality = "", string VrMsaa = GraphicsCatalog.GameSettings,
     bool DiagnosticLogging = false, bool PerformanceDisplay = false, bool ClassicColor = false,
-    string TextureFiltering = TextureFilters.Sharp, bool NightCockpitLight = true, string TimeOfDay = "day")
+    string TextureFiltering = TextureFilters.Sharp, bool NightCockpitLight = true, string TimeOfDay = "day",
+    bool LauncherDifficulty = false, string Transmission = "automatic", bool Abs = true, bool TractionControl = true,
+    bool StabilityControl = false, bool CorneringAssist = false, bool SteeringAssist = false, bool FullDamage = true,
+    int AiDifficulty = 2, int Flashbacks = 5)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -117,6 +120,13 @@ internal static class LauncherSettings
         throw new JsonException($"{key} must be a whole number from 1 to {maximum} in {fileName}");
     }
 
+    private static int ReadNumber(JsonObject document, string key, int fallback, int maximum, string fileName)
+    {
+        if (!document.TryGetPropertyValue(key, out var node)) return fallback;
+        if (node is JsonValue value && value.TryGetValue(out int number) && number >= 0 && number <= maximum) return number;
+        throw new JsonException($"{key} must be a whole number from 0 to {maximum} in {fileName}");
+    }
+
     private static int ReadPercent(JsonObject document, string key, int minimum, string fileName)
     {
         if (!document.TryGetPropertyValue(key, out var node)) return 100;
@@ -191,7 +201,14 @@ internal static class LauncherSettings
             ReadFlag(document, "classicColor", false, fileName),
             ReadText(document, "textureFiltering", TextureFilters.Sharp, TextureFilters.Ids.Contains, fileName),
             ReadFlag(document, "nightCockpitLight", true, fileName),
-            ReadText(document, "timeOfDay", "day", RaceSession.Times.Contains, fileName));
+            ReadText(document, "timeOfDay", "day", RaceSession.Times.Contains, fileName),
+            ReadFlag(document, "launcherDifficulty", false, fileName),
+            ReadText(document, "transmission", "automatic", Difficulty.ValidTransmission, fileName),
+            ReadFlag(document, "abs", true, fileName), ReadFlag(document, "tractionControl", true, fileName),
+            ReadFlag(document, "stabilityControl", false, fileName), ReadFlag(document, "corneringAssist", false, fileName),
+            ReadFlag(document, "steeringAssist", false, fileName), ReadFlag(document, "fullDamage", true, fileName),
+            ReadNumber(document, "aiDifficulty", 2, Difficulty.MaxAi, fileName),
+            ReadNumber(document, "flashbacks", 5, Difficulty.MaxFlashbacks, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -214,6 +231,17 @@ internal static class LauncherSettings
         document["opponents"] = choices.Opponents;
         document["opponentCars"] = choices.OpponentCars;
         document["timeOfDay"] = choices.TimeOfDay;
+        if (!Difficulty.Valid(choices)) throw new ArgumentException("Unsupported difficulty choice.");
+        document["launcherDifficulty"] = choices.LauncherDifficulty;
+        document["transmission"] = choices.Transmission;
+        document["abs"] = choices.Abs;
+        document["tractionControl"] = choices.TractionControl;
+        document["stabilityControl"] = choices.StabilityControl;
+        document["corneringAssist"] = choices.CorneringAssist;
+        document["steeringAssist"] = choices.SteeringAssist;
+        document["fullDamage"] = choices.FullDamage;
+        document["aiDifficulty"] = choices.AiDifficulty;
+        document["flashbacks"] = choices.Flashbacks;
         document["vrCockpit"] = choices.VrCockpit;
         if (!DistanceSlider.ValidHud(choices.HudDistance)) throw new ArgumentException("Unsupported HUD distance.");
         document["hudShow"] = choices.HudShow;

@@ -136,7 +136,11 @@ internal sealed partial class MainForm : LauncherForm
         Tabs = new ModernTabs { Name = "LauncherTabs", Dock = DockStyle.Fill };
         layout.Controls.Add(Tabs);
 
-        var launcherColumns = Columns(Page(Tabs, "Launcher")); var launcher = launcherColumns.First;
+        // Launcher: Main (the session) and Difficulty (Practice and Race), as the Controls tab's pages.
+        var launcherPage = new TabPage("Launcher") { Name = "LauncherPage", Padding = new Padding(8) };
+        var sessionTabs = new ModernTabs { Name = "SessionTabs", Dock = DockStyle.Fill };
+        launcherPage.Controls.Add(sessionTabs); Tabs.TabPages.Add(launcherPage);
+        var launcherColumns = Columns(Page(sessionTabs, "Main")); var launcher = launcherColumns.First;
         Section(launcher, "Session");
         launchMode.Items.AddRange([new Option("Normal", "Normal"), new Option("Practice", "Practice"), new Option("Race", "Race")]);
         opponentCars.Items.AddRange([new Option("same", "Same car"), new Option("class", "Same discipline"), new Option("mixed", "Mixed")]);
@@ -157,6 +161,8 @@ internal sealed partial class MainForm : LauncherForm
         Section(launcher, "Before you launch");
         launcher.Controls.Add(TextLabel("Connect your headset to its 32-bit OpenXR runtime, for example Virtual Desktop, before Launch VR. The launcher checks the runtime first and stops if no headset answers."));
         launcher.Controls.Add(TextLabel("Launch starts the game on the desktop. With Normal it is the unmodified game; with Practice or Race the launcher adds the session's files, as for VR, and restores the original files when the game exits."));
+
+        InitializeDifficulty(Page(sessionTabs, "Difficulty"));
 
         var graphicsColumns = Columns(Page(Tabs, "Graphics")); var graphics = graphicsColumns.First;
         InitializeGraphicsPreset(graphics);
@@ -414,14 +420,14 @@ internal sealed partial class MainForm : LauncherForm
         Shown += async (_, _) => { if (!SelfTesting) await CheckUpdatesAtStartup(); };
     }
 
-    private Choices Current => new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
+    private Choices Current => WithDifficulty(new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
         diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked,
-        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked, chosenTime);
+        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked, chosenTime));
 
     private void RefreshForceFeedback()
     {
@@ -514,6 +520,7 @@ internal sealed partial class MainForm : LauncherForm
         diagnosticLogging.Checked = choices.DiagnosticLogging; performanceDisplay.Checked = choices.PerformanceDisplay;
         classicColor.Checked = choices.ClassicColor;
         nightCockpitLight.Checked = choices.NightCockpitLight;
+        ShowDifficulty(choices);
         textureFiltering.SelectedIndex = Math.Max(0, Array.IndexOf(TextureFilters.Ids, choices.TextureFiltering));
         if (choices.ValidForceFeedback)
         {
@@ -1106,6 +1113,10 @@ internal sealed partial class MainForm : LauncherForm
         tips.SetToolTip(launchMode, "Normal opens the game's menus. Practice starts the selected car and track on your own. Race adds computer-controlled opponents. Practice and Race apply to Launch VR and Launch.");
         tips.SetToolTip(car, "Your car for Practice or Race. The discipline after the name groups Same discipline opponents.");
         tips.SetToolTip(track, "The circuit or street route for Practice or Race.");
+        tips.SetToolTip(launcherDifficulty, "Off (default): Practice and Race use the game's default difficulty. On: they start with the choices below. Normal launches keep your save profile's difficulty.");
+        tips.SetToolTip(transmission, "The transmission for Practice and Race. H-pattern needs a shifter bound in Controls → Driving; with clutch needs Clutch bound.");
+        tips.SetToolTip(aiDifficulty, "How fast the computer-controlled opponents are in Race.");
+        tips.SetToolTip(flashbacks, "How many flashbacks you have in each session.");
         tips.SetToolTip(timeOfDay, "Practice and Race by day or at night. The game has night versions of most routes at Algarve, Austin, Brands Hatch, Hockenheim, Mont-Tremblant, Okutama, Sepang, Spa-Francorchamps and Yas Marina; other routes run by day.");
         tips.SetToolTip(laps, $"Laps for Practice or Race, 1–{RaceSession.MaxLaps}.");
         tips.SetToolTip(opponents, $"Race only: 1–{RaceSession.MaxOpponents} computer-controlled opponents. You start on pole.");

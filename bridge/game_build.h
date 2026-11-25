@@ -40,6 +40,17 @@ struct GameBuild {
     // argument, the stream, whose vtable +4 is Write(data, size) returning 0), +8 reads them
     // (stream, version); +0xC / +0x10 wrap both with a version byte, +0x14 returns it (4).
     UINT controlsSaveTable;
+    // Difficulty (difficulty.cpp). The profile option getters, __thiscall(accessor) returning an int,
+    // each starting with 9 bytes of position-independent code: ABS, traction control, stability
+    // control, cornering assist, steering assist (auto steer), damage, AI difficulty.
+    UINT difficultyGetters[7];
+    UINT flashbackCount;       // __cdecl(context): the race's flashbacks, starting with push ebp; mov ebp,esp; mov ecx,[abs32].
+    UINT transmissionReads[2]; // The gearbox setup's E8 calls to the profile store's find (transmission_type, _drag).
+    UINT keyboardAssists;      // The "je" that skips turning the assists on for a keyboard or tilt device.
+    // The race start's human path (__thiscall(race, int, int) ret 8) and its four E8 callers; the
+    // race's vehicle list lookup (__thiscall(list, index)); the car setup (__thiscall(race, human,
+    // vehicle) ret 8) and the AI level and damage setups (__thiscall(race)) the human path runs.
+    UINT humanStart, humanStartCalls[4], vehicleAt, carSetup, aiLevelSetup, damageSetup;
 };
 
 // The running game's build, or nullptr when it is not a supported one.

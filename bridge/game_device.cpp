@@ -190,6 +190,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID) {
         AutosportLog("Native install %s", adapterReady ? "complete" : "refused: this executable does not match its build");
         if (!adapterReady) return FALSE;
         AutosportConfigureForceFeedback(image, GetCommandLineW());
+        AutosportConfigureDifficulty(image, GetCommandLineW());
     }
     return TRUE;
 }

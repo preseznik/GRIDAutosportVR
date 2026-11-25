@@ -91,6 +91,8 @@ void AutosportConfigureCockpitLightProbe(ID3D11Device* device, const wchar_t* se
 void AutosportConfigureCockpitLight(ID3D11Device* device);
 // Launcher force feedback (force_feedback.cpp): -gasvrffb=STRENGTH,WEIGHT,VIBRATION, from DllMain.
 void AutosportConfigureForceFeedback(const BYTE* image, const wchar_t* commandLine);
+// Practice / Race: the player's car gets the difficulty settings, -gasvrdifficulty's to start with (difficulty.cpp).
+void AutosportConfigureDifficulty(const BYTE* image, const wchar_t* commandLine);
 void AutosportConfigureDeviceClaim(const BYTE* image, const wchar_t* commandLine, bool practice);
 extern "C" void AutosportLoadingExitedThunk();
 extern "C" void AutosportLoadingEnteredThunk();

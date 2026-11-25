@@ -186,6 +186,7 @@ internal static partial class VrPlaySession
          .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
          .. cockpitPack is not null ? new[] { "-gasvrcockpittextures=replace:" + cockpitPack } : [],
          "-gasvrseatkeys=" + choices.SeatKeys,
+         .. session && Difficulty.Argument(choices) is { } difficulty ? new[] { difficulty } : [],
          .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
          .. claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
@@ -195,6 +196,7 @@ internal static partial class VrPlaySession
     internal static string[] DesktopArguments(string id, Choices choices, IReadOnlyList<string>? claim = null) =>
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=desktop",
          .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
+         .. Difficulty.Argument(choices) is { } difficulty ? new[] { difficulty } : [],
          "-benchmarkAttract", SessionFile(id),
          .. claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
@@ -266,7 +268,7 @@ internal static partial class VrPlaySession
                "; system OpenXR runtime " + (system ?? "none") + "; OpenXR add-on layers " + (layers.Count == 0 ? "none" : string.Join(", ", layers)) +
                (disabled.Count > 0 ? " (" + disabled.Count + " disabled for this session)" : "") +
                $"; render scale {choices.VrRenderScale}%, HUD {(choices.HudFollowView ? "follows view" : "fixed")} at {choices.HudDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, " +
-               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}, {(choices.ClassicColor ? "classic" : "accurate")} colors, texture filtering {choices.TextureFiltering}, cockpit light at night {(choices.NightCockpitLight ? "on" : "off")}.";
+               $"seated screen {choices.ScreenDistance.ToString(System.Globalization.CultureInfo.InvariantCulture)} m, performance display {(choices.PerformanceDisplay ? "on" : "off")}, {(choices.ClassicColor ? "classic" : "accurate")} colors, texture filtering {choices.TextureFiltering}, cockpit light at night {(choices.NightCockpitLight ? "on" : "off")}, Practice / Race difficulty: {Difficulty.Summary(choices)}.";
     }
 
     // sessionXml builds the Practice / Race session file from the saved choices (null for Normal).
