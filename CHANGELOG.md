@@ -2,6 +2,7 @@
 
 ## 0.2.6
 
+- **Desktop graphics settings, VSync on.** **Graphics → Desktop** sets VSync (on by default), anti-aliasing and fullscreen or window for **Launch** on the desktop, Normal and Practice / Race. The launcher writes them into the game's own graphics settings just before the desktop launch, so the game no longer starts on the desktop without VSync after a VR session. **Launch VR** always runs without VSync, so the headset, not the monitor, sets the frame rate, and puts your own settings back afterwards.
 - **Race results stay on the VR screen.** In a Normal VR launch, after a race the results, the driver and team standings and the paddock menu jumped off the VR screen whenever the game cut to one of its replay cameras: they were then drawn across your whole view, twice their size and fixed to your head, with their edges out of sight. After a race they now stay on the VR screen until the next race starts. Career progress is saved after those screens, once you reach the paddock, so click through them before you quit.
 - **Every pause screen fits the VR screen.** In a race, the pause menu's own list fitted the screen, but the screens it opens (Options and its Controls screens, Rules, Difficulty and the confirmation dialogs) were drawn too large and cut off at both sides and the bottom. Every pause screen now shows whole, at any game resolution.
 

@@ -180,6 +180,7 @@ internal sealed partial class MainForm : LauncherForm
         graphics.Controls.Add(TextLabel("The headset shows the game's colors as a monitor does. Classic colors keeps the lighter, lower-contrast look of version 0.2.0 and earlier. Applies to the next VR launch."));
         Field(graphics, "Cockpit light at night", nightCockpitLight);
         graphics.Controls.Add(TextLabel("In night races the game draws everything inside the car that is not lit from outside pure black. On (default) keeps the dashboard, steering wheel, your arms and the seats faintly visible, lit by the night around you and a little more. Daytime races are unchanged. Applies to the next VR launch."));
+        InitializeDesktopGraphics(graphics);
         if (CockpitTexturePack.Current is { } pack)
         {
             Section(graphics, "Cockpit textures");
@@ -304,7 +305,12 @@ internal sealed partial class MainForm : LauncherForm
         }
         layout.SizeChanged += (_, _) => FitStatusLabels(); FitStatusLabels();
 
-        desktop.Click += async (_, _) => { if (Current.LaunchMode == "Normal") RunDesktop(); else await RunVrAsync(desktop: true); };
+        desktop.Click += async (_, _) =>
+        {
+            if (!SaveChoices(false)) return;
+            if (!DesktopGameIdle() || !ApplyDesktopGraphics()) return;
+            if (Current.LaunchMode == "Normal") RunDesktop(); else await RunVrAsync(desktop: true);
+        };
         vr.Click += async (_, _) => await RunVrAsync();
         save.Click += (_, _) => SaveChoices(true);
         recover.Click += async (_, _) => await RecoverAsync();
@@ -420,14 +426,14 @@ internal sealed partial class MainForm : LauncherForm
         Shown += async (_, _) => { if (!SelfTesting) await CheckUpdatesAtStartup(); };
     }
 
-    private Choices Current => WithDifficulty(new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
+    private Choices Current => WithDesktopGraphics(WithDifficulty(new(hudFollow.Checked, modernInterface.Checked, renderScale.Value, recenterKey, recenterModifiers, keepHorizonLevel.Checked,
         (launchMode.SelectedItem as Option)?.Id ?? "Normal", chosenCar, chosenTrack, (int)laps.Value, (int)opponents.Value,
         (opponentCars.SelectedItem as Option)?.Id ?? "same", vrCockpit.Checked,
         hudShow.Checked, hudDial.Checked, hudMinimap.Checked, hudCounters.Checked, hudPositions.Checked, hudDistance.Value, screenDistance.Value, intro3d.Checked, recenterDevice,
         newCockpitTextures.Checked, SeatKeys.Format(seatKeys), runtime.SelectedItem as string ?? OpenXrRuntimes.Default, skipIntro.Checked,
         ffbOverride.Checked, ffbStrength.Value, ffbWeight.Value, ffbVibration.Value, graphicsQuality, MsaaChoice,
         diagnosticLogging.Checked, performanceDisplay.Checked, classicColor.Checked,
-        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked, chosenTime));
+        (textureFiltering.SelectedItem as Option)?.Id ?? TextureFilters.Sharp, nightCockpitLight.Checked, chosenTime)));
 
     private void RefreshForceFeedback()
     {
@@ -521,6 +527,7 @@ internal sealed partial class MainForm : LauncherForm
         classicColor.Checked = choices.ClassicColor;
         nightCockpitLight.Checked = choices.NightCockpitLight;
         ShowDifficulty(choices);
+        ShowDesktopGraphics(choices);
         textureFiltering.SelectedIndex = Math.Max(0, Array.IndexOf(TextureFilters.Ids, choices.TextureFiltering));
         if (choices.ValidForceFeedback)
         {
@@ -904,6 +911,13 @@ internal sealed partial class MainForm : LauncherForm
             ending = false;
             if (!IsDisposed) EnableActions();
         }
+    }
+
+    // The game rewrites its graphics settings when it exits, so they are set only while it is closed.
+    private bool DesktopGameIdle()
+    {
+        try { VrPlaySession.EnsureIdle(); return true; }
+        catch (IOException error) { notice.Text = error.Message; return false; }
     }
 
     private void RunDesktop()

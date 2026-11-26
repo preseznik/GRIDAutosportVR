@@ -24,6 +24,11 @@ internal static class GraphicsCatalog
         [(GameSettings, "Game setting"), ("off", "Off"), ("2xmsaa", "2× MSAA"), ("4xmsaa", "4× MSAA"), ("8xmsaa", "8× MSAA")];
     private const string MultisamplingTarget = "graphics_card/resolution@multisampling";
     private const string FullscreenTarget = "graphics_card/resolution@fullscreen";
+    private const string VSyncTarget = "graphics_card/resolution@vsync";
+    // Graphics → Desktop → Display: the game's own choice, exclusive fullscreen or a window of the
+    // game's chosen size.
+    internal static readonly (string Id, string Label)[] Displays = [(GameSettings, "Game setting"), ("fullscreen", "Fullscreen"), ("window", "Window")];
+    internal static bool ValidDisplay(string id) => Displays.Any(d => d.Id == id);
 
     private sealed record Catalog(int Schema, string SourceOptionsSha256, GraphicsCategory[] Categories, GraphicsPreset[] Presets, MultisamplingChoice[] Multisampling);
     private static readonly Catalog catalog = Load();
@@ -185,14 +190,47 @@ internal static class GraphicsCatalog
                     Attribute(root, other)?.Remove();
             }
         if (msaa != GameSettings) Set(MultisamplingTarget, msaa);
+        var windowChanged = false;
         if (windowed && Attribute(root, FullscreenTarget) is { } fullscreen && !fullscreen.Value.Equals("false", StringComparison.OrdinalIgnoreCase))
-            fullscreen.Value = "false";
-        else if (values is null && msaa == GameSettings) return config;
+        { fullscreen.Value = "false"; windowChanged = true; }
+        // A VR session also runs without VSync, so the headset, not the monitor, sets the frame rate
+        // (Graphics → Desktop → VSync is on by default and is the player's own setting).
+        if (windowed && Attribute(root, VSyncTarget) is { } vsync && vsync.Value != "0")
+        { vsync.Value = "0"; windowChanged = true; }
+        if (!windowChanged && values is null && msaa == GameSettings) return config;
+        return Serialize(config, root);
+    }
+
+    private static byte[] Serialize(byte[] config, XElement root)
+    {
         var text = Encoding.UTF8.GetString(config);
         var declaration = text.StartsWith("<?xml", StringComparison.Ordinal) ? text[..(text.IndexOf("?>", StringComparison.Ordinal) + 2)] : "";
         var body = root.ToString(SaveOptions.DisableFormatting);
         var newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         return new UTF8Encoding(false).GetBytes(declaration + (declaration.Length > 0 ? newline : "") + body + (text.EndsWith('\n') ? newline : ""));
+    }
+
+    // Graphics → Desktop: the player's file with VSync, anti-aliasing and the display mode set for
+    // Launch on the desktop (Normal and Practice / Race). It is the game's own setting, kept after
+    // the session as if chosen in the game's menu; VR sessions stage their own copy and restore it.
+    internal static byte[] ApplyDesktop(byte[] config, bool vsync, string msaa, string display)
+    {
+        if (!ValidMsaa(msaa)) throw new ArgumentException("Unsupported desktop anti-aliasing.");
+        if (!ValidDisplay(display)) throw new ArgumentException("Unsupported desktop display mode.");
+        var root = Root(config);
+        var changed = false;
+        void Set(string target, string value)
+        {
+            var attribute = Attribute(root, target)
+                ?? throw new IOException("The game's graphics settings file has no " + target + " entry. Start GRID Autosport once from Steam.");
+            if (attribute.Value == value) return;
+            attribute.Value = value;
+            changed = true;
+        }
+        Set(VSyncTarget, vsync ? "1" : "0");
+        if (msaa != GameSettings) Set(MultisamplingTarget, msaa);
+        if (display != GameSettings) Set(FullscreenTarget, display == "fullscreen" ? "true" : "false");
+        return changed ? Serialize(config, root) : config;
     }
 
     // "Ultra, VR MSAA Off" for a session log or summary.

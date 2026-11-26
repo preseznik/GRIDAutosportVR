@@ -20,7 +20,8 @@ internal sealed record Choices(bool HudFollowView = false, bool ModernInterface 
     string TextureFiltering = TextureFilters.Sharp, bool NightCockpitLight = true, string TimeOfDay = "day",
     bool LauncherDifficulty = false, string Transmission = "automatic", bool Abs = true, bool TractionControl = true,
     bool StabilityControl = false, bool CorneringAssist = false, bool SteeringAssist = false, bool FullDamage = true,
-    int AiDifficulty = 2, int Flashbacks = 5)
+    int AiDifficulty = 2, int Flashbacks = 5,
+    bool DesktopVSync = true, string DesktopMsaa = GraphicsCatalog.GameSettings, string DesktopDisplay = GraphicsCatalog.GameSettings)
 {
     // Launcher force feedback (bridge/force_feedback.cpp): strength 0-100, wheel weight 1-100 and vibration 0-100 percent.
     internal const int FfbMinimumWeight = 1;
@@ -208,7 +209,10 @@ internal static class LauncherSettings
             ReadFlag(document, "stabilityControl", false, fileName), ReadFlag(document, "corneringAssist", false, fileName),
             ReadFlag(document, "steeringAssist", false, fileName), ReadFlag(document, "fullDamage", true, fileName),
             ReadNumber(document, "aiDifficulty", 2, Difficulty.MaxAi, fileName),
-            ReadNumber(document, "flashbacks", 5, Difficulty.MaxFlashbacks, fileName));
+            ReadNumber(document, "flashbacks", 5, Difficulty.MaxFlashbacks, fileName),
+            ReadFlag(document, "desktopVSync", true, fileName),
+            ReadText(document, "desktopMsaa", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidMsaa, fileName),
+            ReadText(document, "desktopDisplay", GraphicsCatalog.GameSettings, GraphicsCatalog.ValidDisplay, fileName));
     }
 
     public static void Save(Choices choices, string? fileName = null)
@@ -274,6 +278,10 @@ internal static class LauncherSettings
         if (!TextureFilters.Ids.Contains(choices.TextureFiltering)) throw new ArgumentException("Unsupported texture filtering.");
         document["textureFiltering"] = choices.TextureFiltering;
         document["nightCockpitLight"] = choices.NightCockpitLight;
+        if (!GraphicsCatalog.ValidMsaa(choices.DesktopMsaa) || !GraphicsCatalog.ValidDisplay(choices.DesktopDisplay)) throw new ArgumentException("Unsupported desktop graphics setting.");
+        document["desktopVSync"] = choices.DesktopVSync;
+        document["desktopMsaa"] = choices.DesktopMsaa;
+        document["desktopDisplay"] = choices.DesktopDisplay;
         if (choices.RecenterDevice is null) document.Remove("recenterDevice");
         else document["recenterDevice"] = JsonNode.Parse(DeviceRecenter.ToJson(choices.RecenterDevice));
         WriteAtomically(fileName, document.ToJsonString(Indented) + Environment.NewLine);

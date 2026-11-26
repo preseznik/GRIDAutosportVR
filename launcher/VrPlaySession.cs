@@ -49,7 +49,8 @@ internal static partial class VrPlaySession
     internal sealed record GraphicsPlan(string Path, byte[] Original, byte[] Staged, string Description);
 
     // A VR session's graphics: the chosen quality and anti-aliasing, and always a window instead of
-    // exclusive fullscreen (GraphicsCatalog.Apply), so a focus change cannot drop the eye resolution.
+    // exclusive fullscreen (GraphicsCatalog.Apply), so a focus change cannot drop the eye resolution,
+    // and VSync off, so the headset sets the frame rate.
     internal static GraphicsPlan? PlanGraphics(Choices choices, string? path = null)
     {
         var gameQuality = choices.GraphicsQuality.Length == 0 && choices.VrMsaa == GraphicsCatalog.GameSettings;
@@ -64,7 +65,7 @@ internal static partial class VrPlaySession
         var staged = GraphicsCatalog.Apply(original, choices.GraphicsQuality, choices.VrMsaa, windowed: true);
         if (staged.AsSpan().SequenceEqual(original)) return null;
         var description = GraphicsCatalog.Describe(choices.GraphicsQuality, choices.VrMsaa) +
-            (staged.AsSpan().SequenceEqual(quality) ? "" : "; the game runs in a window of its chosen size instead of fullscreen");
+            (staged.AsSpan().SequenceEqual(quality) ? "" : "; the game runs in a window of its chosen size, without VSync");
         return new GraphicsPlan(path, original, staged, description);
     }
     private static string FlowFile(string folder) => Path.Combine(folder, "system", "flow.bin");

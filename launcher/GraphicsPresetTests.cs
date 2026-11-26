@@ -147,11 +147,26 @@ internal static class GraphicsPresetTests
             "<resolution width=\"3840\" height=\"2160\" aspect=\"auto\" fullscreen=\"true\""));
         var windowed = VrPlaySession.PlanGraphics(new Choices(), fullscreenPath);
         Check(windowed is not null && Encoding.UTF8.GetString(windowed.Staged) == File.ReadAllText(fullscreenPath).Replace("fullscreen=\"true\"", "fullscreen=\"false\"") &&
-              windowed.Description == "the game's own quality settings; the game runs in a window of its chosen size instead of fullscreen", windowed?.Description ?? "no plan");
+              windowed.Description == "the game's own quality settings; the game runs in a window of its chosen size, without VSync", windowed?.Description ?? "no plan");
         var windowedLow = VrPlaySession.PlanGraphics(new Choices(GraphicsQuality: GraphicsCatalog.ApplyPreset(GraphicsCatalog.Potato, "off", 100).Quality, VrMsaa: "off"), fullscreenPath);
         Check(windowedLow is not null && Encoding.UTF8.GetString(windowedLow.Staged).Contains("width=\"3840\" height=\"2160\" aspect=\"auto\" fullscreen=\"false\" vsync=\"0\" multisampling=\"off\"") &&
               GraphicsCatalog.Read(windowedLow.Staged, out _)["Shadows"] == GraphicsCatalog.Preset("ultralow").Values["Shadows"]);
+        // A VR session runs without VSync whatever the player's own setting (Graphics → Desktop → VSync).
+        File.WriteAllText(fullscreenPath, originalText.Replace("vsync=\"0\"", "vsync=\"1\""));
+        var vsyncOff = VrPlaySession.PlanGraphics(new Choices(), fullscreenPath);
+        Check(vsyncOff is not null && Encoding.UTF8.GetString(vsyncOff.Staged) == File.ReadAllText(fullscreenPath).Replace("vsync=\"1\"", "vsync=\"0\""), vsyncOff?.Description ?? "no plan");
         File.Delete(fullscreenPath);
+        // Graphics → Desktop: VSync on by default, anti-aliasing and display mode only when chosen;
+        // nothing else in the file changes, and an unchanged file is returned as it is.
+        var desktop = GraphicsCatalog.ApplyDesktop(original, true, GraphicsCatalog.GameSettings, GraphicsCatalog.GameSettings);
+        Check(Encoding.UTF8.GetString(desktop) == originalText.Replace("fullscreen=\"false\" vsync=\"0\"", "fullscreen=\"false\" vsync=\"1\""), "desktop VSync");
+        Check(ReferenceEquals(GraphicsCatalog.ApplyDesktop(desktop, true, GraphicsCatalog.GameSettings, GraphicsCatalog.GameSettings), desktop), "desktop unchanged");
+        var desktopFull = Encoding.UTF8.GetString(GraphicsCatalog.ApplyDesktop(original, false, "4xmsaa", "fullscreen"));
+        Check(desktopFull.Contains("fullscreen=\"true\" vsync=\"0\" multisampling=\"4xmsaa\"") && desktopFull.Split('\n').Length == originalText.Split('\n').Length, "desktop fullscreen 4x");
+        Check(Encoding.UTF8.GetString(GraphicsCatalog.ApplyDesktop(Encoding.UTF8.GetBytes(desktopFull), true, GraphicsCatalog.GameSettings, "window")).Contains("fullscreen=\"false\" vsync=\"1\" multisampling=\"4xmsaa\""), "desktop window");
+        Check(Throws<ArgumentException>(() => GraphicsCatalog.ApplyDesktop(original, true, "16xmsaa", GraphicsCatalog.GameSettings)));
+        Check(Throws<ArgumentException>(() => GraphicsCatalog.ApplyDesktop(original, true, GraphicsCatalog.GameSettings, "borderless")));
+        Check(Throws<IOException>(() => GraphicsCatalog.ApplyDesktop("<hardware_settings_config />"u8.ToArray(), true, GraphicsCatalog.GameSettings, GraphicsCatalog.GameSettings)));
         Check(GraphicsCatalog.Describe(GraphicsCatalog.ApplyPreset(GraphicsCatalog.Balanced, "off", 100).Quality, "off") == "VR Balanced quality, VR anti-aliasing Off");
         Check(GraphicsCatalog.Describe(GraphicsCatalog.ApplyPreset("ultra", "game", 100).Quality, "game") == "Ultra quality");
     }
@@ -167,6 +182,13 @@ internal static class GraphicsPresetTests
         LauncherSettings.Save(new Choices(), path);
         Check(!File.ReadAllText(path).Contains("graphicsQuality") && LauncherSettings.Load(path) == new Choices());
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(VrMsaa: "cmaa"), path)));
+        // Graphics → Desktop round-trips; VSync is on by default.
+        Check(new Choices().DesktopVSync && LauncherSettings.Load(path).DesktopVSync, "desktop VSync default");
+        var desktopChoices = new Choices(DesktopVSync: false, DesktopMsaa: "2xmsaa", DesktopDisplay: "window");
+        LauncherSettings.Save(desktopChoices, path);
+        Check(LauncherSettings.Load(path) == desktopChoices && File.ReadAllText(path).Contains("\"desktopVSync\": false"), "desktop round-trip");
+        Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(DesktopDisplay: "borderless"), path)));
+        LauncherSettings.Save(new Choices(), path);
         Check(Throws<ArgumentException>(() => LauncherSettings.Save(new Choices(GraphicsQuality: "Shadows=ultra"), path)));
         foreach (var bad in new[] { "{\"graphicsQuality\": {\"Shadows\": \"ultra\"}}", "{\"graphicsQuality\": \"ultra\"}", "{\"vrMsaa\": \"16xcsaa\"}",
                      "{\"graphicsQuality\": " + System.Text.Json.JsonSerializer.Serialize(GraphicsCatalog.Decode(balanced.Quality)!.ToDictionary(p => p.Key, p => p.Key == "Crowd" ? "huge" : p.Value)) + "}" })
