@@ -210,8 +210,9 @@ internal static class Program
         VrPlaySession.Recover(folder);
         if (Installation.VrLaunchProblem(folder, null, renderer, desktop: true) is { } problem) throw new IOException(problem);
         var choices = LauncherSettings.Load();
-        if (choices.LaunchMode == "Normal") throw new IOException("Choose Practice or Race for a desktop session.");
-        return VrPlaySession.Run(folder!, renderer!, sessionXml: c => RaceSession.SessionXml(c, RaceSession.Load(folder!), Random.Shared.Next()), desktop: true);
+        // Normal on the desktop comes here only with a career profile (MainForm): the game's own menus.
+        return VrPlaySession.Run(folder!, renderer!, sessionXml: choices.LaunchMode == "Normal" ? null
+            : c => RaceSession.SessionXml(c, RaceSession.Load(folder!), Random.Shared.Next()), desktop: true);
     }
 
     private static int Inspect(string? folder, string? probe, string? renderer)

@@ -194,11 +194,13 @@ internal static partial class VrPlaySession
     // Desktop Launch with Practice / Race: the session file and the controller claim, while the game
     // renders on the desktop as it always does (-gasvrmode=desktop). The force feedback override
     // applies too; the VR-only choices (HUD, cockpit, seat, graphics preset) do not.
-    internal static string[] DesktopArguments(string id, Choices choices, IReadOnlyList<string>? claim = null) =>
+    // Normal play on the desktop runs through the launcher only for a career profile (session false):
+    // the game's own menus, with the VR renderer keeping the profile's saves.
+    internal static string[] DesktopArguments(string id, Choices choices, IReadOnlyList<string>? claim = null, bool session = true) =>
         ["-applaunch", Installation.AppId, "-gasvrplay=" + id, "-gasvrmode=desktop",
          .. choices.ForceFeedbackArgument is { } ffb ? new[] { ffb } : [],
-         .. Difficulty.Argument(choices) is { } difficulty ? new[] { difficulty } : [],
-         "-benchmarkAttract", SessionFile(id),
+         .. session && Difficulty.Argument(choices) is { } difficulty ? new[] { difficulty } : [],
+         .. session ? new[] { "-benchmarkAttract", SessionFile(id) } : [],
          .. claim is { Count: > 0 } ? new[] { "-gasvrdevice=" + string.Join(',', claim) } : []];
 
     // Practice / Race never shows the Press Start screen, where the game makes the device that
@@ -297,7 +299,12 @@ internal static partial class VrPlaySession
             var id = Guid.NewGuid().ToString("N");
             VrLaunchStatus.Report(VrLaunchStatus.Preparing, "Preparing the game files…", id);
             var session = sessionXml?.Invoke(choices);
-            if (desktop && session is null) throw new IOException("Launch on the desktop through the launcher needs Practice or Race.");
+            // Settings → Profile: a career profile's saves are kept by the VR renderer (profile_storage.cpp).
+            var profiles = ProfileService.Open();
+            var profileRequest = profiles.StorageRequest();
+            if (profileRequest is not null && !build.ThroughSteam)
+                throw new IOException("Career profiles need the Steam version of GRID Autosport. Choose Current game career in the Profile tab.");
+            if (desktop && session is null && profileRequest is null) throw new IOException("Launch on the desktop through the launcher needs Practice, Race or a career profile.");
             var controls = DrivingControls.Load();
             var inputs = SessionInputMaps.Plan(folder, controls);
             var claim = session is not null ? DeviceClaim(controls) : inputs.Count > 0 ? NormalClaim(controls) : null;
@@ -308,6 +315,11 @@ internal static partial class VrPlaySession
             try
             {
                 Stage(folder, Installation.RendererFor(build, bridgePath), id, session, inputs, graphics, build);
+                if (profileRequest is not null)
+                {
+                    File.WriteAllText(Path.Combine(SessionFolder(id), ProfileStorageRequest), profileRequest, new UTF8Encoding(false));
+                    Record(id, "Career profile " + profiles.Read(profiles.SelectedId()).Name + ": the game's saves stay in " + profileRequest.Split('\n')[1] + ".");
+                }
                 if (desktop) Record(id, "Desktop session: the game renders on the desktop; no headset.");
                 else
                 {
@@ -321,7 +333,7 @@ internal static partial class VrPlaySession
                 var start = build.ThroughSteam
                     ? new ProcessStartInfo(client!) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(client) }
                     : new ProcessStartInfo(Path.Combine(folder, build.Executable)) { UseShellExecute = false, WorkingDirectory = folder };
-                var arguments = desktop ? DesktopArguments(id, choices, claim) : SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack);
+                var arguments = desktop ? DesktopArguments(id, choices, claim, session is not null) : SteamArguments(id, choices, eyeSize, session is not null, claim, cockpitPack);
                 foreach (var arg in build.Arguments.Concat(arguments.Skip(build.ThroughSteam ? 0 : 2)))
                     start.ArgumentList.Add(arg);
                 if (cockpitNote is not null) Record(id, cockpitNote);
@@ -337,6 +349,7 @@ internal static partial class VrPlaySession
                 using var recenterWatch = !desktop && choices.RecenterDevice is { } recenterDevice
                     ? DeviceRecenter.Watch(SessionFolder(id), recenterDevice, message => Record(id, message)) : null;
                 var exitCode = WaitForGame(folder, id, requested, build, desktop);
+                if (profileRequest is not null) CheckProfileReceipt(id);
                 if (desktop) return exitCode;
                 try
                 {
@@ -354,6 +367,26 @@ internal static partial class VrPlaySession
                 if (File.Exists(Path.Combine(folder, Installation.PlayLease))) RestoreLease(folder);
             }
         });
+    }
+
+    internal const string ProfileStorageRequest = "profile-storage.request", ProfileStorageReceipt = "profile-storage.json";
+
+    // The VR renderer's account of the career profile's saves (bridge profile_storage.cpp): refused
+    // stops the game before it reads or writes any save, and is reported as the session's error.
+    private static void CheckProfileReceipt(string id)
+    {
+        var path = Path.Combine(SessionFolder(id), ProfileStorageReceipt);
+        if (!File.Exists(path) || new FileInfo(path).Length > 16384) { Record(id, "Career profile: the game did not use its saves this session."); return; }
+        var text = File.ReadAllText(path);
+        Record(id, "Career profile receipt: " + text.Trim());
+        using var receipt = System.Text.Json.JsonDocument.Parse(text);
+        var root = receipt.RootElement;
+        var phase = root.TryGetProperty("phase", out var p) ? p.GetString() : null;
+        var reason = root.TryGetProperty("reason", out var r) ? r.GetString() : null;
+        if (phase == "refused")
+            throw new IOException("The career profile could not be used (" + reason + "), so GRID Autosport was closed before it read or saved anything. Your saves are unchanged. Choose Current game career in the Profile tab, or send the session logs.");
+        if (root.TryGetProperty("writeFailures", out var failures) && failures.GetInt32() > 0)
+            throw new IOException("GRID Autosport could not save " + failures.GetInt32() + " time(s) into the career profile (" + reason + "). Send the session logs.");
     }
 
     public static bool Recover(string? gameFolder)

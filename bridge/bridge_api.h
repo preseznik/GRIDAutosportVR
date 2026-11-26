@@ -93,6 +93,9 @@ void AutosportConfigureCockpitLight(ID3D11Device* device);
 void AutosportConfigureForceFeedback(const BYTE* image, const wchar_t* commandLine);
 // Practice / Race: the player's car gets the difficulty settings, -gasvrdifficulty's to start with (difficulty.cpp).
 void AutosportConfigureDifficulty(const BYTE* image, const wchar_t* commandLine);
+// Career profiles (profile_storage.cpp): the game's Steam Cloud saves in the profile's folder when the
+// session folder asks for it. false: a request that cannot be honoured; the game must not run.
+bool AutosportAttachProfileStorage(const BYTE* image, const wchar_t* sessionFolder);
 void AutosportConfigureDeviceClaim(const BYTE* image, const wchar_t* commandLine, bool practice);
 extern "C" void AutosportLoadingExitedThunk();
 extern "C" void AutosportLoadingEnteredThunk();

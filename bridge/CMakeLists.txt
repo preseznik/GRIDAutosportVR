@@ -12,7 +12,7 @@ set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
 set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
 set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
 add_subdirectory("${OPENXR_SDK}" openxr-sdk EXCLUDE_FROM_ALL)
-set(GASXR_SOURCES game_build.cpp game_device.cpp native_ovr.cpp loading_overlay.cpp device_claim.cpp force_feedback.cpp cockpit_textures.cpp opponent_lod.cpp seat.cpp seat_panel.cpp xr_bridge.cpp eye_dump.cpp performance_display.cpp texture_filtering.cpp shadow_bias.cpp shadow_probe.cpp shadow_constants.cpp depth_precision.cpp cockpit_light_probe.cpp cockpit_light.cpp difficulty.cpp)
+set(GASXR_SOURCES game_build.cpp game_device.cpp native_ovr.cpp loading_overlay.cpp device_claim.cpp force_feedback.cpp cockpit_textures.cpp opponent_lod.cpp seat.cpp seat_panel.cpp xr_bridge.cpp eye_dump.cpp performance_display.cpp texture_filtering.cpp shadow_bias.cpp shadow_probe.cpp shadow_constants.cpp depth_precision.cpp cockpit_light_probe.cpp cockpit_light.cpp difficulty.cpp profile_storage.cpp)
 # The Steam build's renderer: gasxr.dll, which the staged VR executable imports instead of d3d11.dll.
 add_library(gasxr SHARED ${GASXR_SOURCES} gasxr.def)
 target_compile_features(gasxr PRIVATE cxx_std_17)

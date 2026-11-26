@@ -34,6 +34,7 @@ internal static class SelfTests
             CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
             VrLayerTests.Run(data, output, (condition, detail) => Check(condition, detail));
             GraphicsPresetTests.Run(data, output, (condition, detail) => Check(condition, detail));
+            ProfileTests.Run(data, (condition, detail) => Check(condition, detail));
             LaunchProgressTests.Run(output, (condition, detail) => Check(condition, detail));
             SimpleViewTests.Run(output, (condition, detail) => Check(condition, detail));
             UpdateTests.Run(output, (condition, detail) => Check(condition, detail));
@@ -536,14 +537,14 @@ internal static class SelfTests
     {
         LauncherSettings.SaveWindow(new LauncherWindow(AdvancedView: true));
         using var form = new MainForm(null, null, null) { ShowInactive = true, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000) };
-        Check(form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Controls", "Settings"]));
+        Check(form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Controls", "Settings", "Profile"]));
         foreach (var name in new[] { "LaunchDesktop", "LaunchVR", "SaveSettings", "RestoreOriginalFiles", "OpenLogs", "HelpAbout", "SessionStatus", "SessionNotice" })
             Check(form.Controls.Find(name, true).Length == 1, name);
         Check(!Find<Button>(form, "LaunchVR").Enabled && !Find<Button>(form, "LaunchDesktop").Enabled && !Find<Button>(form, "SaveSettings").Enabled);
         Check(!Find<Button>(form, "EndSession").Visible); // Only while a VR session runs.
         Check(Find<SelectableStatusText>(form, "SessionStatus").Text.Contains("Steam folder"));
         var sections = form.SectionHeaders.Select(h => h.Title).ToArray();
-        Check(sections.SequenceEqual(["Session", "Before you launch", "Practice and Race", "Graphics preset", "VR rendering", "Desktop", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Diagnostics", "Headset check", "VR compatibility", "Launcher preferences", "Play", "Performance", "Controls & comfort"]));
+        Check(sections.SequenceEqual(["Session", "Before you launch", "Practice and Race", "Graphics preset", "VR rendering", "Desktop", .. CockpitTexturePack.Current is null ? Array.Empty<string>() : ["Cockpit textures"], "VR HUD", "VR screen", "Quality settings", "Keyboard shortcuts", "Controller / wheel recenter", "Recenter alignment", "Driving controls", "Force feedback", "Seat position", "Seat keys", "Paths and runtime", "Diagnostics", "Headset check", "VR compatibility", "Launcher preferences", "Career profiles", "Play", "Performance", "Controls & comfort"]));
         Check(Find<Button>(form, "RecenterKey").Text == "F10" && Find<Label>(form, "RecenterHint").Text.Contains("Press F10"));
         Check(Find<Label>(form, "VrResolutionSummary").Text.Contains("Refresh headset"));
         { var runtimes = Find<ComboBox>(form, "VrRuntime"); Check(runtimes.GetItemText(OpenXrRuntimes.Default) == "OpenXR (system Default)" && runtimes.GetItemText(OpenXrRuntimes.Vdxr) == "VDXR"); }

@@ -86,6 +86,7 @@ internal sealed partial class MainForm : LauncherForm
         logs = Button("Open logs", "OpenLogs"), end = Button("End session", "EndSession");
     private bool ending;
     private bool desktopSession; // The running session is desktop Launch with Practice / Race.
+    private readonly ProfilePanel profiles = new(ProfileService.Open());
     // Launcher Practice / Race (RaceSession): the event the next Launch VR starts.
     private sealed record Option(string Id, string Label) { public override string ToString() => Label; }
     private readonly ComboBox launchMode = Choice("LaunchMode"), car = Choice("SessionCar"), track = Choice("SessionTrack"), opponentCars = Choice("OpponentCars"),
@@ -294,6 +295,13 @@ internal sealed partial class MainForm : LauncherForm
         settings.Controls.Add(defaults);
         settings.Controls.Add(TextLabel("Reset launcher choices. Save settings or launch to keep the reset. Game files and settings are unchanged."));
 
+        // Profile: separate careers (Profiles.cs, bridge profile_storage.cpp), as GRID2VR's Profile tab.
+        var profilePage = Page(Tabs, "Profile");
+        Section(profilePage, "Career profiles");
+        profilePage.Controls.Add(profiles);
+        Tabs.SelectedIndexChanged += (_, _) => { if (Tabs.SelectedTab?.Text == "Profile") profiles.Reload(); };
+        Shown += (_, _) => profiles.Reload();
+
         notice.Margin = new Padding(0, 10, 0, 8); layout.Controls.Add(notice);
         end.Visible = false;
         layout.Controls.Add(new LauncherFooter(desktop, vr, save, recover, logs, end));
@@ -309,7 +317,8 @@ internal sealed partial class MainForm : LauncherForm
         {
             if (!SaveChoices(false)) return;
             if (!DesktopGameIdle() || !ApplyDesktopGraphics()) return;
-            if (Current.LaunchMode == "Normal") RunDesktop(); else await RunVrAsync(desktop: true);
+            // Normal starts the unmodified game, unless a career profile is selected: its saves need the VR renderer.
+            if (Current.LaunchMode == "Normal" && !ProfileSelected()) RunDesktop(); else await RunVrAsync(desktop: true);
         };
         vr.Click += async (_, _) => await RunVrAsync();
         save.Click += (_, _) => SaveChoices(true);
@@ -638,6 +647,7 @@ internal sealed partial class MainForm : LauncherForm
         // Launch with Practice / Race stages the session as Launch VR does, without the headset check.
         var desktopProblem = Current.LaunchMode == "Normal" ? null : Installation.VrLaunchProblem(gameFolder, probePath, rendererPath, desktop: true) ?? SessionProblem();
         desktop.Enabled = idle && valid && recoveryError is null && !pending && desktopProblem is null;
+        profiles.SetIdle(idle && !pending);
         desktop.AccessibleDescription = desktopProblem ?? (Current.LaunchMode == "Normal" ? "Start the unmodified game on the desktop." : $"Start the {Current.LaunchMode} session on the desktop.");
         var problem = recoveryError ?? Installation.VrLaunchProblem(gameFolder, probePath, rendererPath) ?? SessionProblem();
         vr.Enabled = idle && problem is null;
@@ -770,7 +780,8 @@ internal sealed partial class MainForm : LauncherForm
         try
         {
             notice.Text = desktop
-                ? RaceSession.Summary(Current, catalog) + " The game starts on the desktop. Finish with Quit in the game's pause menu: the launcher then restores the original game files."
+                ? (Current.LaunchMode == "Normal" ? "The game starts on the desktop with your career profile. Exit the game as usual: the launcher then restores the original game files."
+                    : RaceSession.Summary(Current, catalog) + " The game starts on the desktop. Finish with Quit in the game's pause menu: the launcher then restores the original game files.")
                 : (Current.LaunchMode == "Normal" ? "" : RaceSession.Summary(Current, catalog) + " ") +
                   $"Checking the headset, then Steam opens the game. Put on your headset. Press {RecenterShortcut.Label(recenterKey, recenterModifiers)} in the game to recenter.";
             // An OpenXR add-on layer may block the headset check: name it, and with the player's
@@ -918,6 +929,12 @@ internal sealed partial class MainForm : LauncherForm
     {
         try { VrPlaySession.EnsureIdle(); return true; }
         catch (IOException error) { notice.Text = error.Message; return false; }
+    }
+
+    private static bool ProfileSelected()
+    {
+        try { return ProfileService.Open().SelectedId() != ProfileStore.CurrentCareer; }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException) { return true; }
     }
 
     private void RunDesktop()

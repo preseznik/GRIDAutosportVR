@@ -49,7 +49,7 @@ internal static class SimpleViewTests
             Check(asked == 1 && !form.AdvancedView && form.Tabs.TabPages.Count == 1 && Find<RenderScaleSlider>("VrRenderScale").Value == 120);
             confirm = true;
             form.SelectView(true);
-            Check(asked == 2 && form.AdvancedView && form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Controls", "Settings"]));
+            Check(asked == 2 && form.AdvancedView && form.Tabs.TabPages.Cast<TabPage>().Select(p => p.Text).SequenceEqual(["Launcher", "Graphics", "Controls", "Settings", "Profile"]));
             Check(LauncherSettings.LoadWindow().AdvancedView == true);
             // Every control is back in its Advanced place and order, shown, with the edit kept.
             var scaleRow = form.Controls.Find("VrRenderScaleRow", true).Single();

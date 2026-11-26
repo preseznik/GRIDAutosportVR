@@ -137,8 +137,8 @@ bool commandSession(wchar_t (&mode)[16], wchar_t (&seconds)[8]) {
                 wcsstr(bench + size, L" -benchmark")) return false;
             practiceSession = true;
         }
-        // A desktop session exists only for Practice / Race.
-        if (flatMode && !practiceSession) return false;
+        // A desktop session is Practice / Race, or Normal play with a career profile (profile_storage.cpp),
+        // which the launcher starts through Steam with its session folder.
         DWORD count = GetEnvironmentVariableW(L"LOCALAPPDATA", localData, ARRAYSIZE(localData));
         if (!count || count >= ARRAYSIZE(localData) || !AutosportPlayDirectory(token, localData, directory)) return false;
         const wchar_t* follow = wcsstr(cmd, L" -gasvrhudfollow=1");
@@ -180,6 +180,11 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID) {
         image = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
         wchar_t mode[16]{}, seconds[8]{};
         if (!supportedHost() || !commandSession(mode, seconds)) return TRUE;
+        // Before the game's entry point: its Steam Cloud saves in a career profile's folder, if asked.
+        if (regularPlay && !AutosportAttachProfileStorage(image, directory)) {
+            AutosportLog("Career profile could not be set up; GRID Autosport is closed before it reads any save");
+            TerminateProcess(GetCurrentProcess(), 0x47415350);
+        }
         headset = !wcscmp(mode, L"openxr");
         if (!headset && !desktopPlay && wcscmp(mode, L"capture")) return TRUE;
         if (*seconds) {
