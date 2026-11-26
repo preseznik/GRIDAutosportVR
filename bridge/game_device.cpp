@@ -2,6 +2,7 @@
 #include "bridge_api.h"
 #include "native_ovr.h"
 #include "play_session.h"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -424,38 +425,48 @@ void hookIntroVideoStates() {
 // Test only, never passed by the launcher: with -gasvrtestpad=1 controller 0 is a virtual
 // gamepad whose buttons the xr-sim harness sets by writing pad.txt (hex XINPUT_GAMEPAD
 // wButtons) into the session folder. The game reads the keyboard through Raw Input and
-// DirectInput, which a test cannot reach without taking the desktop's focus.
+// DirectInput, which a test cannot reach without taking the desktop's focus. Optional decimal
+// fields after the buttons set the triggers (0-255) and the left stick (-32768-32767), as
+// "BUTTONS LT RT LX LY", for a test that drives (capture/autodrive.py).
 using XInputGetStateFn = DWORD (WINAPI*)(DWORD, XINPUT_STATE*);
 using XInputGetCapabilitiesFn = DWORD (WINAPI*)(DWORD, DWORD, XINPUT_CAPABILITIES*);
 XInputGetStateFn stockXInputGetState;
 XInputGetCapabilitiesFn stockXInputGetCapabilities;
-WORD testPadButtons() {
+XINPUT_GAMEPAD testPadRead() {
     static ULONGLONG checked;
-    static WORD buttons;
+    static XINPUT_GAMEPAD pad;
     const ULONGLONG now = GetTickCount64();
-    if (now - checked < 30) return buttons;
+    if (now - checked < 15) return pad;
     checked = now;
     wchar_t path[MAX_PATH]{};
-    char text[16]{};
+    char text[64]{};
     DWORD read{};
     swprintf_s(path, L"%s\\pad.txt", directory);
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return buttons = 0;
+    if (file == INVALID_HANDLE_VALUE) return pad = {};
     ReadFile(file, text, sizeof(text) - 1, &read, nullptr);
     CloseHandle(file);
-    const WORD next = WORD(strtoul(text, nullptr, 16));
-    if (next != buttons) AutosportLog("Test pad buttons=%04x", next);
-    return buttons = next;
+    char* at = text;
+    XINPUT_GAMEPAD next{};
+    next.wButtons = WORD(strtoul(at, &at, 16));
+    long values[4]{};
+    for (long& value : values) value = strtol(at, &at, 10);
+    next.bLeftTrigger = BYTE(std::clamp(values[0], 0L, 255L));
+    next.bRightTrigger = BYTE(std::clamp(values[1], 0L, 255L));
+    next.sThumbLX = SHORT(std::clamp(values[2], -32768L, 32767L));
+    next.sThumbLY = SHORT(std::clamp(values[3], -32768L, 32767L));
+    if (next.wButtons != pad.wButtons) AutosportLog("Test pad buttons=%04x", next.wButtons);
+    return pad = next;
 }
 DWORD WINAPI testPadGetState(DWORD user, XINPUT_STATE* state) {
     if (user != 0 || !state) return stockXInputGetState(user, state);
     static DWORD packet;
-    static WORD last = 0xffff;
-    const WORD buttons = testPadButtons();
-    if (buttons != last) { last = buttons; ++packet; }
+    static XINPUT_GAMEPAD last{0xffff};
+    const XINPUT_GAMEPAD pad = testPadRead();
+    if (std::memcmp(&pad, &last, sizeof(pad))) { last = pad; ++packet; }
     *state = {};
     state->dwPacketNumber = packet;
-    state->Gamepad.wButtons = buttons;
+    state->Gamepad = pad;
     return ERROR_SUCCESS;
 }
 DWORD WINAPI testPadCapabilities(DWORD user, DWORD flags, XINPUT_CAPABILITIES* caps) {
@@ -711,7 +722,7 @@ void AutosportSampleVehicleCamera() {
         drivingSince = 0;
         if (driven && vehicleViews && (intro || viewIndex >= 0) && !raceOver) {
             raceOver = true;
-            AutosportLog("Race scene: the race is over (view %d%s); menus over the car are kept", viewIndex, intro ? ", intro shot" : "");
+            AutosportLog("Race scene: the race is over (view %d%s); results and menus on the seated screen", viewIndex, intro ? ", intro shot" : "");
         }
     }
     if (intro != introShot) {
@@ -764,10 +775,17 @@ bool AutosportRaceScene() { return phase.load() == Phase::Scene; }
 bool AutosportCarCameraLive() {
     return regularPlay && headset && phase.load() == Phase::Scene && vehicleViews && !introShot && !pauseMenu && drivingView && !raceOver && raceWithHud();
 }
+// Once the race is over the results, the standings and the paddock menu stay on the seated
+// screen until the next race start or StateLoading: the game shows them over a cycle of its own
+// shots of the car, and its replay cameras among them (views such as 13 and 19, not the player's
+// driving cameras) are not intro shots (+0x834 is set), so in 0.2.5 each of those flipped the
+// view to stereo and drew the menus head-locked and twice their size (user report, 26 Nov).
 bool AutosportFlatScreen() {
     const Phase current = phase.load();
     if (introVideo.load() || sceneVideo.load()) return true;
-    if (current != Phase::Startup) return current == Phase::Loading || (current == Phase::Scene && ((introShot && !AutosportPreRaceIntro3D()) || pauseMenu));
+    if (current != Phase::Startup)
+        return current == Phase::Loading ||
+               (current == Phase::Scene && ((introShot && !AutosportPreRaceIntro3D()) || pauseMenu || (raceOver && regularPlay && headset)));
     if (regularPlay) return true;
     // A benchmark can resume directly into a live race without another loading event.
     const BYTE* state = image + AutosportGameBuild()->benchmarkState;
