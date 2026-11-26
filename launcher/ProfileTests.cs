@@ -75,6 +75,24 @@ internal static class ProfileTests
         Reject(() => blocked.Select(ProfileStore.CurrentCareer), "switch while the game runs");
         check(store.SelectedId() == fresh.Id, "blocked changes change nothing");
 
+        // 100% complete career: a copy of the current career, completed in the staging folder before the
+        // profile exists; unavailable without the completer; the Steam career is never touched.
+        Reject(() => store.Create("NoCompleter", CareerStart.Completed), "completed without a completer");
+        string? completedIn = null;
+        var completing = new ProfileStore(data, () => { }, () => source, () => "13216522", remote =>
+        {
+            completedIn = remote;
+            File.WriteAllBytes(Path.Combine(remote, "savegame@profile0#QKRHMYXE"), [7, 7]);
+        });
+        var done = completing.Create("Complete1", CareerStart.Completed);
+        check(done.Kind == "completed" && completedIn != null && completedIn.Contains(".creating-") && done.FileCount == 2 &&
+              File.ReadAllBytes(Path.Combine(store.Root, done.Id, "remote", "savegame@profile0#QKRHMYXE")).SequenceEqual(new byte[] { 7, 7 }) &&
+              File.ReadAllBytes(sourceSave).SequenceEqual(original) && completing.SelectedId() == done.Id, "completed profile");
+        var failing = new ProfileStore(data, () => { }, () => source, () => "13216522", _ => throw new InvalidDataException("no"));
+        Reject(() => failing.Create("Complete2", CareerStart.Completed), "a completion that fails");
+        check(!Directory.EnumerateDirectories(store.Root, ".creating-*").Any() && completing.List().All(e => e.Info?.Name != "Complete2"), "failed completion leaves nothing");
+        completing.Select(fresh.Id); completing.Delete(done.Id);
+
         // Career details: the load menu's label, and reads that cannot start (no save, no game folder).
         var nine = CareerSaves.Parse("PLAYER ONE - GRID Autosport Career Races:  9, Online Races: 0");
         check(nine.CareerRaces == 9 && nine.OnlineRaces == 0 && nine.Text == "9 career races completed · 0 online", "career label");

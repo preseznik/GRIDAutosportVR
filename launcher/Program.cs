@@ -14,6 +14,7 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--self-test") return SelfTests.Run(args.Length > 1 ? args[1] : null);
         // The career reader's child process (CareerSaves.cs), started by the launcher with CFG off.
         if (args is ["--read-careers", var careerRequest]) return CareerSaves.Child(careerRequest);
+        if (args is ["--complete-career", var completeRequest]) return CareerSaves.CompleteChild(completeRequest);
         if (args is ["--discover", var discovered]) return Discover(discovered);
         if (args is ["--end-session", "--game-dir", var endGame])
         {

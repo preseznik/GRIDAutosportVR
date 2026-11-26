@@ -10,17 +10,24 @@ by matching GRID 2's routines (26 Nov 2026):
   checksum 0x879e70 / 0x879e80, memcpy thunk 0xf68b0c; imports CryptAcquireContextA 0xfc2028,
   CryptCreateHash 0xfc2020, CryptHashData 0xfc2024, CryptGetHashParam 0xfc201c,
   CryptDestroyHash 0xfc202c, CryptReleaseContext 0xfc2030, WriteFile 0xfc20ec,
-  QueryPerformanceCounter 0xfc22f8.
+  QueryPerformanceCounter 0xfc22f8. Writing: file encode 0xd753d0 (GRID 2 0xa7dfe0), directory writer
+  0xd7b240 (GRID 2 0x5a96c0; stop 0xd7b520 once the 416 encoded bytes are in the service buffer at
+  [service + 0x338] + 0x8000, size at [ebp - 8]; the label callbacks hang off [request + 0x6c]).
 """
 import hashlib
 import struct
+import zlib
 
 from unicorn import Uc, UC_ARCH_X86, UC_HOOK_CODE, UC_MODE_32
-from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP
+from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_EBP, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESP
 
 AVX_SHA256 = "c88929ba8ed5327799fb6f57dc7889b2f5e8baec47b92832038af913ff54fc48"
+VR_SHA256 = "9d3e8f9a36571e20707187f1da86967201ab74e72f9f72e8ec446f01dbe59856"  # d3d11 import renamed (VR session)
 NAMES = ("savegame@profile0#NXDTVPKI.LKR", "savegame@profile0#QKIGMYYI.LKR")
 DIRECTORY = "savegame@profile0#QKRHMYXE"
+FILE_IDS = (1838330113, 2210129629)
+PROFILE_CAPACITY = 262144
+PADDING = bytes([0xBE])
 
 
 def words(*values):
@@ -37,7 +44,7 @@ class StockReader:
 
     def __init__(self, executable):
         image = open(executable, "rb").read()
-        if hashlib.sha256(image).hexdigest() != AVX_SHA256:
+        if hashlib.sha256(image).hexdigest() not in (AVX_SHA256, VR_SHA256):
             raise ValueError("Unsupported GRIDAutosport_avx.exe for reading careers")
         self.vm = Uc(UC_ARCH_X86, UC_MODE_32)
         pe = struct.unpack_from("<I", image, 60)[0]
@@ -61,7 +68,9 @@ class StockReader:
         self.bind(0xfc201c, 5, self.hash_result)
         self.bind(0xfc202c, 1, lambda handle: int(handle == 2))
         self.bind(0xfc2030, 2, lambda handle, flags: int(handle == 1 and flags == 0))
-        self.bind(0xfc20ec, 5, self.refuse_write)
+        self.output = bytearray()
+        self.limit = 0
+        self.bind(0xfc20ec, 5, self.write_file)
         self.bind(0xfc22f8, 1, self.clock)
         self.bind(None, 3, self.copy_bytes, address=0xf68b0c, cdecl=True)
         allocator = self.owner + 0x1000
@@ -159,8 +168,33 @@ class StockReader:
         self.vm.mem_write(out, struct.pack("<Q", 123456789))
         return 1
 
-    def refuse_write(self, *_):
-        raise ValueError("The reader never writes files")
+    def write_file(self, handle, data, length, used, overlapped):
+        # Captured into memory: the codec never reaches a real file.
+        if (handle != 1 or length > 65536 or len(self.output) + length > self.limit
+                or self.word(overlapped + 8) != len(self.output)):
+            raise ValueError("Unexpected stock file write")
+        self.output.extend(self.vm.mem_read(data, length))
+        self.put(used, length)
+        return 1
+
+    def encode(self, source):
+        """The physical file for one logical save file, and its directory checksum."""
+        if not 32 < len(source) < PROFILE_CAPACITY:
+            raise ValueError("Invalid logical save size")
+        self.vm.mem_write(self.source, source)
+        self.output.clear()
+        self.limit = (len(source) + 15) & ~15
+        entry = self.owner + 0x3000
+        previous, used, record = entry + 0x100, entry + 0x104, entry + 0x200
+        self.vm.mem_write(entry, bytes(0x210))
+        self.put(entry + 0x2c, len(source))
+        self.put(record + 8, self.call(0x879e70, 0))
+        status = self.call(0xd753d0, self.service, 0, entry, record, previous, 0, 1,
+                           len(source), self.source, 0, used)
+        if status or self.word(used) != len(source) or len(self.output) != self.limit:
+            raise ValueError(f"Incomplete stock file write (status {status:#x}, used {self.word(used)}, "
+                             f"wrote {len(self.output)} of {self.limit})")
+        return bytes(self.output), self.word(record + 8)
 
 
 def read_chunks(reader, physical):
@@ -196,3 +230,137 @@ def directory_fields(reader, physical):
     if end is None:
         raise ValueError("Directory has no terminated label")
     return raw[:end].decode("utf-16-le"), list(struct.iter_unpack("<III", raw[0x188:]))
+
+
+def write_directory(writer, label, rows):
+    """The 416-byte directory for a UTF-16 label (with its terminator) and (id, size, checksum) rows."""
+    op = writer.owner + 0x5000
+    request, profile, vtable, vector, records = (op + i * 0x100 for i in range(1, 6))
+    writer.put(op, request)
+    writer.put(request + 0x6c, profile)  # GRID 2: + 0x70
+    writer.put(profile, vtable)
+
+    def copy_label(out):
+        # Autosport's string buffer is (capacity in characters, pointer); GRID 2 has a vtable first.
+        if writer.word(out) < len(label) // 2:
+            raise ValueError("Stock directory label buffer too small")
+        writer.vm.mem_write(writer.word(out + 4), label)
+        return 0
+
+    writer.put(vtable + 0x34, writer.bind(None, 1, copy_label))
+    writer.put(vtable + 0x38, writer.bind(None, 0, lambda: 1))
+    entries = b"".join(struct.pack("<III", *entry) for entry in rows)
+    writer.put(vector + 4, records)
+    writer.put(vector + 8, records + len(entries))
+    writer.vm.mem_write(records, entries)
+    writer.call(0xd7b240, writer.service, op, vector, until=0xd7b520)
+    size = writer.word(writer.vm.reg_read(UC_X86_REG_EBP) - 8)
+    if size != 416:
+        raise ValueError("Unexpected stock directory output size")
+    return bytes(writer.vm.mem_read(writer.word(writer.service + 0x338) + 0x8000, size))
+
+
+# The two career files hold the same component group: the progress file as one raw-deflate member and
+# its SHA-256, the settings file the same framing padded with 0xBE so both fill one 256 KiB buffer.
+def progress_file(member):
+    digest = hashlib.sha256(member).digest()
+    if not member or len(member) + len(digest) > PROFILE_CAPACITY:
+        raise ValueError("Progress file does not fit the retail profile buffer")
+    return member + digest
+
+
+def decode_logical_member(data, *, padded):
+    reader = zlib.decompressobj(-15)
+    try:
+        group = reader.decompress(data, 2 * 1024 * 1024)
+    except zlib.error as error:
+        raise ValueError("Invalid compressed profile member") from error
+    if not reader.eof:
+        raise ValueError("Expected one complete, bounded profile member")
+    member_size = len(data) - len(reader.unused_data)
+    checked = progress_file(data[:member_size])
+    tail = data[len(checked):]
+    if not data.startswith(checked) or (tail.strip(PADDING) if padded else tail):
+        raise ValueError("Profile checksum or padding differs from the stock format")
+    return group
+
+
+def encode_settings_file(group, progress_size):
+    checked = progress_file(zlib.compress(group, wbits=-15))
+    size = PROFILE_CAPACITY - progress_size
+    if progress_size <= 0 or len(checked) > size:
+        raise ValueError("Insufficient settings padding for the new progress file")
+    return checked.ljust(size, PADDING)
+
+
+def read_career(reader, folder):
+    """The load-menu label, directory rows and the two decoded groups of a normal career folder."""
+    from pathlib import Path
+    folder = Path(folder)
+    label, rows = directory_fields(reader, (folder / DIRECTORY).read_bytes())
+    if tuple(r[0] for r in rows) != FILE_IDS or sum(r[1] for r in rows) != PROFILE_CAPACITY:
+        raise ValueError("Unsupported career directory")
+    groups = []
+    for i, (name, (_, size, stored)) in enumerate(zip(NAMES, rows)):
+        logical = read_chunks(reader, (folder / name).read_bytes())[:size]
+        if checksum(reader, logical) != stored:
+            raise ValueError("Career file checksum disagrees with its directory")
+        groups.append(decode_logical_member(logical, padded=i == 1))
+    return label, rows, groups
+
+
+def compress_to_size(group, size):
+    """One raw-deflate member of exactly `size` bytes (GRID2VR's compress_to_size): a sync flush ends
+    on a byte boundary, and the final source bytes go in a stored block sized to make up the rest."""
+    for level in (6, 7, 8, 9):
+        member = zlib.compress(group, level=level, wbits=-15)
+        if len(member) == size:
+            return member
+        tail, tried = size - len(member), set()
+        for _ in range(16):
+            if not 0 < tail < len(group) or tail in tried:
+                break
+            tried.add(tail)
+            stream = zlib.compressobj(level, wbits=-15)
+            prefix = stream.compress(group[:-tail]) + stream.flush(zlib.Z_SYNC_FLUSH)
+            member = prefix + zlib.compress(group[-tail:], level=0, wbits=-15)
+            if len(member) == size:
+                return member
+            tail += size - len(member)
+    raise ValueError("Could not encode the career at a whole number of cipher blocks")
+
+
+def progress_member(group):
+    # The game's save codec takes whole 16-byte blocks; its own progress files always fill them.
+    member = zlib.compress(group, wbits=-15)
+    if (len(member) + 32) % 16 == 0:
+        return member
+    for size in range((len(member) + 32 + 15) // 16 * 16 - 32, len(member) + 32 * 16, 16):
+        try:
+            return compress_to_size(group, size)
+        except ValueError:
+            continue
+    raise ValueError("Could not encode the career at a whole number of cipher blocks")
+
+
+def write_career(writer, reader, label, groups):
+    """The three physical files for two groups and a label, each read back through the stock codec."""
+    progress = progress_file(progress_member(groups[0]))
+    frames = [progress, encode_settings_file(groups[1], len(progress))]
+    files, rows = {}, []
+    for i, (name, frame, file_id) in enumerate(zip(NAMES, frames, FILE_IDS)):
+        if decode_logical_member(frame, padded=i == 1) != groups[i]:
+            raise ValueError("Career group did not round-trip")
+        physical, digest = writer.encode(frame)
+        if read_chunks(reader, physical)[:len(frame)] != frame or checksum(reader, frame) != digest:
+            raise ValueError("Career file failed stock readback")
+        files[name] = physical
+        rows.append((file_id, len(frame), digest))
+    raw_label = (label + chr(0)).encode("utf-16-le")
+    if len(raw_label) > 256:
+        raise ValueError("Career label too long")
+    directory = write_directory(writer, raw_label, rows)
+    if directory_fields(reader, directory) != (label, rows):
+        raise ValueError("Career directory did not round-trip")
+    files[DIRECTORY] = directory
+    return files

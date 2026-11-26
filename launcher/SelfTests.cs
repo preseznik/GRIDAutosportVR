@@ -495,6 +495,16 @@ internal static class SelfTests
                 var read = CareerSaves.Read([career], real)[career];
                 Console.WriteLine("Career: " + (read.Summary?.Text ?? read.Error));
                 Check(read.Summary?.CareerRaces != null, read.Error);
+                // 100% complete career on a copy: written by the game's codec, read back with the same label.
+                var completed = Path.Combine(Path.GetTempPath(), "gasvr-completed-career-" + Environment.ProcessId);
+                Directory.CreateDirectory(completed);
+                foreach (var name in new[] { CareerCompletion.ProgressFile, CareerCompletion.SettingsFile, CareerSaves.Directory })
+                    File.Copy(Path.Combine(career, name), Path.Combine(completed, name), true);
+                CareerSaves.Complete(completed, real);
+                var after = CareerSaves.Read([completed], real)[completed];
+                Console.WriteLine("Completed career: " + (after.Summary?.Text ?? after.Error));
+                Check(after.Summary?.Label == read.Summary?.Label, after.Error);
+                if (Environment.GetEnvironmentVariable("GASVR_TEST_KEEP_COMPLETED") != "1") Directory.Delete(completed, true);
             }
         }
         var stockFlow = File.ReadAllBytes(Path.Combine(real, "system", "flow.bin"));

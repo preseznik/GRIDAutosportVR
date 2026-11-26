@@ -300,6 +300,7 @@ internal sealed partial class MainForm : LauncherForm
         Section(profilePage, "Career profiles");
         profilePage.Controls.Add(profiles);
         profiles.GameFolder = () => gameFolder;
+        ProfileService.GameFolder = () => gameFolder;
         Tabs.SelectedIndexChanged += (_, _) => { if (Tabs.SelectedTab?.Text == "Profile") profiles.Reload(); };
         Shown += (_, _) => profiles.Reload();
 

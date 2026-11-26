@@ -135,6 +135,51 @@ internal static partial class CareerSaves
         { return 1; }
     }
 
+    // A completed career (CareerCompletion) written in place over the copied career in `folder`.
+    internal static void Complete(string folder, string? gameFolder)
+    {
+        if (gameFolder == null) throw new IOException("Choose your GRID Autosport folder first.");
+        var self = Environment.ProcessPath ?? throw new IOException("The career writer cannot find the launcher.");
+        var path = Path.Combine(Path.GetTempPath(), $"gasvr-complete-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllBytes(path, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new Request(gameFolder, [folder])));
+            var code = ChildProcess.RunWithoutCfg(self, $"\"{self}\" --complete-career \"{path}\"", 120000);
+            var result = File.Exists(path + ".result") ? File.ReadAllText(path + ".result") : null;
+            if (code != 0 || result != "ok") throw new IOException(result ?? $"The career writer stopped (exit 0x{code:X}).");
+        }
+        finally
+        {
+            foreach (var file in new[] { path, path + ".tmp", path + ".result" })
+                try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    internal static int CompleteChild(string requestPath)
+    {
+        string result;
+        try
+        {
+            var request = System.Text.Json.JsonSerializer.Deserialize<Request>(File.ReadAllBytes(requestPath))
+                ?? throw new InvalidDataException("Empty career request.");
+            if (request.Folders is not [var folder]) throw new InvalidDataException("Invalid career request.");
+            ProfileStore.NoLinks(folder);
+            using var codec = StockSaveCodec.Open(request.Game);
+            CareerCompletion.CompleteFolder(codec, folder);
+            result = "ok";
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException
+            or System.Text.Json.JsonException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        { result = error.Message; }
+        try
+        {
+            File.WriteAllText(requestPath + ".tmp", result);
+            File.Move(requestPath + ".tmp", requestPath + ".result", true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return 2; }
+        return result == "ok" ? 0 : 1;
+    }
+
     static Dictionary<string, Label> RunChild(Request request)
     {
         var self = Environment.ProcessPath ?? throw new IOException("The career reader cannot find the launcher.");
@@ -219,7 +264,8 @@ internal static class ChildProcess
 internal sealed class StockSaveCodec : IDisposable
 {
     const ulong Owner = 0x20000000, Stack = 0x21017000, Stop = 0x22000000, Heap = 0x23000000, HeapEnd = 0x23080000, Source = 0x24000000;
-    const int RegEax = 19, RegEcx = 22, RegEip = 26, RegEsp = 30;
+    const int RegEax = 19, RegEbp = 20, RegEcx = 22, RegEip = 26, RegEsp = 30;
+    internal const int Capacity = 262144;
     // GRIDAutosport_avx.exe (Steam 2019 build), stock or with the VR session's renamed d3d11 import.
     static readonly string[] Executables = [GameBuilds.Steam.StockSha256, GameBuilds.Steam.VrSha256];
 
@@ -228,6 +274,11 @@ internal sealed class StockSaveCodec : IDisposable
     ulong heap = Heap, service;
     IncrementalHash? hash;
     Exception? failure;
+    // Encoding: the game's WriteFile calls land here, never in a file.
+    readonly List<byte> output = [];
+    int limit;
+    byte[] label = [];
+    ulong labelStubs;
 
     StockSaveCodec(Unicorn engine) { uc = engine; }
 
@@ -269,7 +320,7 @@ internal sealed class StockSaveCodec : IDisposable
         Bind(0xfc201c, 5, HashResult);
         Bind(0xfc202c, 1, a => a[0] == 2 ? 1u : 0u);
         Bind(0xfc2030, 2, a => a[0] == 1 && a[1] == 0 ? 1u : 0u);
-        Bind(0xfc20ec, 5, _ => throw new InvalidDataException("The career reader never writes files."));
+        Bind(0xfc20ec, 5, WriteFile);
         Bind(0xfc22f8, 1, a => { uc.Write(a[0], BitConverter.GetBytes(123456789UL)); return 1; });
         Bind(0, 3, CopyBytes, address: 0xf68b0c, cdecl: true);
         var allocator = Owner + 0x1000;
@@ -292,7 +343,9 @@ internal sealed class StockSaveCodec : IDisposable
     static InvalidDataException Invalid(string what) => new($"The game's save codec did not start ({what}).");
 
     // The load menu's label for a normal two-file career directory, after the game's own checksum.
-    internal string DirectoryLabel(byte[] physical)
+    internal string DirectoryLabel(byte[] physical) => ReadDirectory(physical).Label;
+
+    internal (string Label, (uint Id, uint Size, uint Checksum)[] Rows) ReadDirectory(byte[] physical)
     {
         if (physical.Length != 416) throw new InvalidDataException("This career's save directory has an unknown layout.");
         var raw = Decode(physical);
@@ -302,7 +355,80 @@ internal sealed class StockSaveCodec : IDisposable
         var end = -1;
         for (var i = 0; i < 256; i += 2) if (raw[i] == 0 && raw[i + 1] == 0) { end = i; break; }
         if (end < 0) throw new InvalidDataException("This career's save directory has no label.");
-        return Encoding.Unicode.GetString(raw, 0, end);
+        var rows = new (uint, uint, uint)[2];
+        for (var i = 0; i < 2; i++)
+            rows[i] = (BitConverter.ToUInt32(raw, 0x188 + 12 * i), BitConverter.ToUInt32(raw, 0x18c + 12 * i), BitConverter.ToUInt32(raw, 0x190 + 12 * i));
+        return (Encoding.Unicode.GetString(raw, 0, end), rows);
+    }
+
+    internal byte[] Read(byte[] physical, int size)
+    {
+        if (size <= 0 || size > physical.Length) throw new InvalidDataException("A career file is shorter than its directory says.");
+        return Decode(physical)[..size];
+    }
+
+    internal uint Checksum(byte[] data) => Checksum([data]);
+
+    // The physical file for one logical career file (whole 16-byte blocks), and its directory checksum.
+    internal (byte[] Physical, uint Checksum) Encode(byte[] source)
+    {
+        if (source.Length is <= 32 or >= Capacity || source.Length % 16 != 0) throw new InvalidDataException("Invalid career file size.");
+        uc.Write(Source, source);
+        output.Clear();
+        limit = source.Length;
+        var entry = Owner + 0x3000;
+        ulong previous = entry + 0x100, used = entry + 0x104, record = entry + 0x200;
+        uc.Write(entry, new byte[0x210]);
+        Put(entry + 0x2c, (uint)source.Length);
+        Put(record + 8, Call(0x879e70, 0, []));
+        var status = Call(0xd753d0, service, [0, (uint)entry, (uint)record, (uint)previous, 0, 1, (uint)source.Length, (uint)Source, 0, (uint)used]);
+        if (status != 0 || Word(used) != source.Length || output.Count != limit) throw new InvalidDataException("Incomplete career file write.");
+        return (output.ToArray(), Word(record + 8));
+    }
+
+    uint WriteFile(uint[] a)
+    {
+        var (handle, data, length, used, overlapped) = (a[0], a[1], a[2], a[3], a[4]);
+        if (handle != 1 || length > 65536 || output.Count + length > limit || Word(overlapped + 8) != output.Count)
+            throw new InvalidDataException("Unexpected career file write.");
+        var bytes = new byte[length]; uc.Read(data, bytes); output.AddRange(bytes);
+        Put(used, length);
+        return 1;
+    }
+
+    // The 416-byte directory for a label and the two files' (id, size, checksum), by the game's own writer.
+    internal byte[] WriteDirectory(string text, (uint Id, uint Size, uint Checksum)[] rows)
+    {
+        label = Encoding.Unicode.GetBytes(text + "\0");
+        if (label.Length > 256 || rows.Length != 2) throw new InvalidDataException("Career label too long.");
+        ulong op = Owner + 0x5000, request = op + 0x100, profile = op + 0x200, vtable = op + 0x300, vector = op + 0x400, records = op + 0x500;
+        if (labelStubs == 0)
+        {
+            // Autosport's string buffer is (capacity in characters, pointer); the profile is at request + 0x6c.
+            labelStubs = Bind(0, 1, a =>
+            {
+                if (Word(a[0]) < label.Length / 2) throw new InvalidDataException("Career label too long.");
+                uc.Write(Word(a[0] + 4), label);
+                return 0;
+            });
+            Put(vtable + 0x38, (uint)Bind(0, 0, _ => 1));
+        }
+        Put(vtable + 0x34, (uint)labelStubs);
+        Put(op, (uint)request); Put(request + 0x6c, (uint)profile); Put(profile, (uint)vtable);
+        var entries = new byte[12 * rows.Length];
+        for (var i = 0; i < rows.Length; i++)
+        {
+            BitConverter.TryWriteBytes(entries.AsSpan(12 * i), rows[i].Id);
+            BitConverter.TryWriteBytes(entries.AsSpan(12 * i + 4), rows[i].Size);
+            BitConverter.TryWriteBytes(entries.AsSpan(12 * i + 8), rows[i].Checksum);
+        }
+        uc.Write(records, entries);
+        Put(vector + 4, (uint)records); Put(vector + 8, (uint)(records + (ulong)entries.Length));
+        Call(0xd7b240, service, [(uint)op, (uint)vector], until: 0xd7b520);
+        if (Word(uc.Reg(RegEbp) - 8) != 416) throw new InvalidDataException("Unexpected career directory size.");
+        var directory = new byte[416];
+        uc.Read(Word(service + 0x338) + 0x8000, directory);
+        return directory;
     }
 
     byte[] Decode(byte[] physical)

@@ -157,19 +157,20 @@ internal sealed class CreateProfileForm : LauncherForm
     {
         Text = "Create new profile"; Font = new Font("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterParent; MinimizeBox = MaximizeBox = false;
-        ClientSize = new Size(440, 420); MinimumSize = new Size(400, 400);
+        ClientSize = new Size(460, 720); MinimumSize = new Size(420, 560);
         var body = new VerticalStack { Padding = new Padding(20) };
         var input = new TextBox { Name = "ProfileName", AccessibleName = "Profile name", MaxLength = 24 };
         var fresh = new RadioButton { Text = "Fresh career", AutoSize = true, Checked = true };
         var copy = new RadioButton { Text = "Copy current game career", AutoSize = true };
+        var completed = new RadioButton { Text = "100% complete career", AutoSize = true, Name = "CompletedCareer", Enabled = store.CanComplete };
         var hint = new Label { AutoSize = true, Text = "1–24 letters (A–Z) or numbers (0–9). No spaces or symbols.", Margin = new Padding(0, 8, 0, 10) };
-        var explanation = new Label { AutoSize = true, Text = "Creates a separate career and selects it for the next launch. A fresh career starts with no save: in the game choose Start new game. Copy current game career starts from a copy of your Steam career. Your existing saves are not changed.", Margin = new Padding(0, 12, 0, 12) };
+        var explanation = new Label { AutoSize = true, Text = "Creates a separate career and selects it for the next launch. A fresh career starts with no save: in the game choose Start new game. Copy current game career starts from a copy of your Steam career. 100% complete career copies it too, then wins every championship and cup and puts every discipline at the top level, so the GRID Grand Slam, Masters Trophy and Legends Series are open; your current season stays as it is. Your existing saves are not changed.", Margin = new Padding(0, 12, 0, 12) };
         var error = new Label { AutoSize = true, UseMnemonic = false };
         var submit = new Button { Text = "Create", AutoSize = true, Enabled = false };
         var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
         var buttons = new FlowLayoutPanel { AutoSize = true }; buttons.Controls.AddRange([submit, cancel]);
         body.Controls.AddRange([new Label { Text = "Profile name", AutoSize = true }, input, hint]);
-        body.Controls.AddRange([fresh, copy]);
+        body.Controls.AddRange([fresh, copy, completed]);
         body.Controls.AddRange([explanation, buttons, error]);
         Controls.Add(body); AutoScroll = true; AcceptButton = submit; CancelButton = cancel;
         input.TextChanged += (_, _) => submit.Enabled = ProfileStore.IsValidNewName(input.Text);
@@ -177,8 +178,10 @@ internal sealed class CreateProfileForm : LauncherForm
         {
             try
             {
-                var start = copy.Checked ? CareerStart.CopyCurrent : CareerStart.Fresh;
-                store.Create(input.Text, start);
+                var start = completed.Checked ? CareerStart.Completed : copy.Checked ? CareerStart.CopyCurrent : CareerStart.Fresh;
+                UseWaitCursor = true; submit.Enabled = false;
+                try { store.Create(input.Text, start); }
+                finally { UseWaitCursor = false; submit.Enabled = ProfileStore.IsValidNewName(input.Text); }
                 DialogResult = DialogResult.OK;
                 Close();
             }

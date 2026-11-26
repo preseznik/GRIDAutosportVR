@@ -27,11 +27,15 @@ internal sealed record ProfileInfo(
 }
 
 internal sealed record ProfileEntry(string Id, ProfileInfo? Info, string? Error);
-internal enum CareerStart { Fresh, CopyCurrent }
+internal enum CareerStart { Fresh, CopyCurrent, Completed }
 
-internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<string?> currentSaveRoot, Func<string?>? currentAccountId = null)
+// completeCareer turns the copied career in a new profile's staging remote folder into a completed one
+// (CareerCompletion through CareerSaves.Complete); without it "100% complete career" is unavailable.
+internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<string?> currentSaveRoot, Func<string?>? currentAccountId = null,
+    Action<string>? completeCareer = null)
 {
     internal const string CurrentCareer = "current";
+    internal bool CanComplete => completeCareer != null;
     internal const int MaxFiles = 64;
     internal const long MaxBytes = 64L * 1024 * 1024;
     // The bridge's profile-storage.request, written into a session folder for a managed profile.
@@ -158,7 +162,7 @@ internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<s
         var root = ProfileRoot(id);
         var info = ReadJson<ProfileInfo>(Path.Combine(root, "profile.json"));
         if (info.Schema != 1 || info.Id != id || !IsValidNewName(info.Name) ||
-            info.Kind is not ("fresh" or "copied") || info.CreatedUtc.Kind != DateTimeKind.Utc || info.CreatedUtc == default ||
+            info.Kind is not ("fresh" or "copied" or "completed") || info.CreatedUtc.Kind != DateTimeKind.Utc || info.CreatedUtc == default ||
             (info.AccountId != null && !ValidAccountId(info.AccountId)))
             throw new InvalidDataException("This profile has incompatible or damaged metadata.");
         foreach (var child in Directory.EnumerateFileSystemEntries(root))
@@ -258,12 +262,14 @@ internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<s
         {
             CareerStart.Fresh => null,
             CareerStart.CopyCurrent => currentSaveRoot() ?? throw new IOException("No local GRID Autosport Steam career was found to copy."),
+            CareerStart.Completed when completeCareer == null => throw new IOException("A 100% complete career needs the Steam version of GRID Autosport."),
+            CareerStart.Completed => currentSaveRoot() ?? throw new IOException("Start Career in GRID Autosport once and let it save, then create the 100% complete career."),
             _ => throw new ArgumentOutOfRangeException(nameof(start)),
         };
         var files = source == null ? [] : ScanRemote(source);
-        if (start == CareerStart.CopyCurrent && files.Count == 0) throw new IOException("The current game career has no save files to copy.");
+        if (start != CareerStart.Fresh && files.Count == 0) throw new IOException("The current game career has no save files to copy.");
         var id = Guid.NewGuid().ToString("N");
-        var info = new ProfileInfo(1, id, name, source == null ? "fresh" : "copied", DateTime.UtcNow) { AccountId = accountId };
+        var info = new ProfileInfo(1, id, name, start switch { CareerStart.Fresh => "fresh", CareerStart.Completed => "completed", _ => "copied" }, DateTime.UtcNow) { AccountId = accountId };
         var staging = Path.Combine(Root, ".creating-" + id);
         var destination = ProfileRoot(id);
         var owned = new List<string>();
@@ -287,6 +293,8 @@ internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<s
                 }
                 File.SetLastWriteTimeUtc(target, file.LastWriteUtc);
             }
+            // The copy becomes the completed career in place, before the profile exists.
+            if (start == CareerStart.Completed) completeCareer!(Path.Combine(staging, "remote"));
             if (AccountId() != accountId || (source != null && !string.Equals(currentSaveRoot(), source, StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("The active player changed while the profile was being created. Try again.");
             var metadata = Path.Combine(staging, "profile.json");
@@ -386,7 +394,11 @@ internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<s
 // The player's Steam account and save folder, and the checks before a profile change.
 internal static class ProfileService
 {
-    internal static ProfileStore Open() => new(LauncherSettings.DataDirectory, RequireClosed, CurrentSaveRoot, AccountId);
+    // The game folder for the career codec (set by the main window).
+    internal static Func<string?> GameFolder = () => null;
+
+    internal static ProfileStore Open() => new(LauncherSettings.DataDirectory, RequireClosed, CurrentSaveRoot, AccountId,
+        CareerSaves.UnicornPath() == null ? null : folder => CareerSaves.Complete(folder, GameFolder()));
 
     internal static string? AccountId()
     {
