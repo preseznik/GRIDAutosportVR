@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.6
+
+- **Every pause screen fits the VR screen.** In a race, the pause menu's own list fitted the screen, but the screens it opens (Options and its Controls screens, Rules, Difficulty and the confirmation dialogs) were drawn too large and cut off at both sides and the bottom. Every pause screen now shows whole, at any game resolution.
+
 ## 0.2.5
 
 - **Difficulty in Practice and Race.** Practice and Race load no save profile, and the game set up the player's car there as a computer-controlled one: your car drove with ABS only, and the game's Difficulty screen in the pause menu changed nothing. Your car now gets the game's difficulty settings (by default Medium AI, automatic transmission, ABS and traction control, full damage and 5 flashbacks). **Launcher → Difficulty** starts Practice and Race with your own transmission (automatic, manual, H-pattern shifter, with clutch), AI difficulty, damage, flashbacks and assists (ABS, traction control, stability control, cornering and steering assist), and the pause menu's Difficulty screen shows them; a change made there applies when the game restarts the event for it. Normal launches keep the difficulty from your save profile.
