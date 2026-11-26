@@ -193,6 +193,9 @@ internal sealed class ProfileStore(string dataRoot, Action requireClosed, Func<s
         return WithDetails(current, ScanRemote(source)) with { Status = "The game's normal Steam career, synced by Steam Cloud" };
     }
 
+    // The folder holding a career's save files (Steam's for the current career), for career details.
+    public string? SaveFolder(string id) => id == CurrentCareer ? currentSaveRoot() : Path.Combine(ProfileRoot(id), "remote");
+
     public string SelectedId()
     {
         NoLinks(selection);

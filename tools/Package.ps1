@@ -80,6 +80,9 @@ Invoke-Checked 'Configure driving-input' { cmake -S (Join-Path $root 'tools\driv
 Invoke-Checked 'Build driving-input' { cmake --build $drivingInput --config Release --target driving_input -- /m /v:minimal }
 Copy-Item -LiteralPath (Join-Path $drivingInput 'Release\driving_input.dll') -Destination $stage
 
+# The career reader's emulator (Unicorn, GPLv2) with its source and notice: Profile tab career details.
+Invoke-Checked 'Career reader runtime' { pwsh -NoProfile -File (Join-Path $root 'tools\Stage-CareerRuntime.ps1') -Destination "$stage\career" -Notices "$stage\licenses\Unicorn" }
+
 # Launcher, stamped for Help / About and future update checks.
 $publish = Join-Path $build 'launcher'
 if (Test-Path -LiteralPath $publish) { Remove-Item -LiteralPath $publish -Recurse -Force }

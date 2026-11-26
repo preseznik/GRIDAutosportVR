@@ -477,6 +477,26 @@ internal static class SelfTests
         var installed = RaceSession.Load(real);
         Console.WriteLine($"Installed: {installed.Cars.Count} cars, {installed.Tracks.Count} routes.");
         Check(installed.Cars.Count >= 80 && installed.Tracks.Count >= 100 && installed.Cars.All(c => c.Class != "Other"));
+        // Career details: the game's save codec starts from the real executable and rejects a damaged
+        // directory; with GASVR_TEST_CAREER (a save folder, read only) it reads that career's label.
+        if (CareerSaves.UnicornPath() == null) Console.WriteLine("Career reader checks skipped (run tools/Stage-CareerRuntime.ps1).");
+        else
+        {
+            var damagedCareer = Path.Combine(Path.GetTempPath(), "gasvr-damaged-career-" + Environment.ProcessId);
+            Directory.CreateDirectory(damagedCareer);
+            var damaged = new byte[416]; new Random(7).NextBytes(damaged);
+            File.WriteAllBytes(Path.Combine(damagedCareer, CareerSaves.Directory), damaged);
+            var rejected = CareerSaves.Read([damagedCareer], real)[damagedCareer];
+            Console.WriteLine("Damaged career: " + rejected.Error);
+            Check(rejected.Summary == null && rejected.Error != null && !rejected.Error.Contains("stopped"), rejected.Error);
+            Directory.Delete(damagedCareer, true);
+            if (Environment.GetEnvironmentVariable("GASVR_TEST_CAREER") is { Length: > 0 } career)
+            {
+                var read = CareerSaves.Read([career], real)[career];
+                Console.WriteLine("Career: " + (read.Summary?.Text ?? read.Error));
+                Check(read.Summary?.CareerRaces != null, read.Error);
+            }
+        }
         var stockFlow = File.ReadAllBytes(Path.Combine(real, "system", "flow.bin"));
         var guarded = PracticeFlow.Guarded(stockFlow);
         Check(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(guarded)) == PracticeFlow.GuardedSha256);

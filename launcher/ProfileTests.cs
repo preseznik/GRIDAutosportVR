@@ -75,6 +75,16 @@ internal static class ProfileTests
         Reject(() => blocked.Select(ProfileStore.CurrentCareer), "switch while the game runs");
         check(store.SelectedId() == fresh.Id, "blocked changes change nothing");
 
+        // Career details: the load menu's label, and reads that cannot start (no save, no game folder).
+        var nine = CareerSaves.Parse("PLAYER ONE - GRID Autosport Career Races:  9, Online Races: 0");
+        check(nine.CareerRaces == 9 && nine.OnlineRaces == 0 && nine.Text == "9 career races completed · 0 online", "career label");
+        check(CareerSaves.Parse("PLAYER ONE - GRID Autosport Career Races:  1, Online Races: 12").Text == "1 career race completed · 12 online", "one race");
+        check(CareerSaves.Parse("JOUEUR UN - GRID Autosport Courses : 3").Text == "JOUEUR UN - GRID Autosport Courses : 3", "unknown label shown as is");
+        var empty = Directory.CreateDirectory(Path.Combine(fixture, "career-empty")).FullName;
+        var reads = CareerSaves.Read([empty, source], null);
+        check(reads[empty] is (null, null) && reads[source] is (null, { } noGame) && noGame.Contains("GRID Autosport folder"),
+              "career reads without a game");
+
         check(ProfileService.RecentAccount("\"users\"\n{\n\t\"76561197973482250\"\n\t{\n\t\t\"AccountName\"\t\t\"x\"\n\t\t\"MostRecent\"\t\t\"1\"\n\t}\n}") == "13216522" &&
               ProfileService.RecentAccount("\"users\" { \"76561197973482250\" { \"MostRecent\" \"0\" } }") is null, "Steam's most recent login");
         store.Select(ProfileStore.CurrentCareer);

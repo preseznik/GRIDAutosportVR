@@ -14,9 +14,13 @@ internal sealed class ProfilePanel : VerticalStack
         IntegralHeight = false, DrawMode = DrawMode.OwnerDrawFixed };
     readonly Button use = Button("Use this profile", "UseProfile"), refresh = Button("Refresh", "RefreshProfiles"),
         create = Button("Create new profile…", "CreateProfile"), delete = Button("Delete profile…", "DeleteProfile");
-    readonly Label name = Label(""), status = Label(""), saved = Label(""), files = Label("");
+    readonly Label name = Label(""), status = Label(""), progress = Label(""), saved = Label(""), files = Label("");
     string selected = ProfileStore.CurrentCareer;
     bool idle;
+    // Career details (CareerSaves.cs), read off the UI thread per save folder.
+    internal Func<string?> GameFolder = () => null;
+    readonly Dictionary<string, string> careers = [];
+    int reading;
     sealed record Row(ProfileEntry Entry, bool Active)
     {
         public override string ToString() => (Entry.Info?.Name ?? (Entry.Id == ProfileStore.CurrentCareer ? "Current game career" : "Unavailable profile")) + (Active ? " — Active" : "");
@@ -29,6 +33,7 @@ internal sealed class ProfilePanel : VerticalStack
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 12) };
         buttons.Controls.AddRange([use, refresh, create, delete]); Controls.Add(buttons);
         Controls.Add(new SettingRow("Name", name)); Controls.Add(new SettingRow("Career", status));
+        Controls.Add(new SettingRow("Progress", progress));
         Controls.Add(new SettingRow("Last saved", saved)); Controls.Add(new SettingRow("Save files", files));
         Controls.Add(Label("Each profile is a separate GRID Autosport career with its own saves; graphics settings and launcher controls are shared. The selected profile is used by Launch VR and by Launch on the desktop, which then starts through the launcher too. Your current Steam career stays as it is and is used again when you choose Current game career."));
         Controls.Add(Label("A fresh career starts at the game's Load Saved Data screen with no save: choose Start new game. Profiles stay on this PC; they do not sync to Steam Cloud. Close GRID Autosport before switching, creating or deleting profiles."));
@@ -91,6 +96,7 @@ internal sealed class ProfilePanel : VerticalStack
             used.Text = "Used for all launches: " + (active?.Info?.Name ?? "Unavailable profile");
             message.Text = selectionError ?? active?.Error ?? "Profile changes apply immediately to the next launch.";
             Details();
+            ReadCareers(entries);
         }
         catch (Exception error) when (error is IOException or ArgumentException or UnauthorizedAccessException or JsonException)
         { used.Text = "Profile selection unavailable"; message.Text = error.Message; list.Items.Clear(); Details(); }
@@ -101,7 +107,32 @@ internal sealed class ProfilePanel : VerticalStack
         name.Text = info?.Name ?? ""; status.Text = info?.Status ?? row?.Entry.Error ?? "";
         saved.Text = info?.LastSavedUtc?.ToLocalTime().ToString("g") ?? (info == null ? "" : "Not saved yet");
         files.Text = info == null ? "" : $"{info.FileCount} files · {info.Bytes / 1024.0:N1} KiB";
+        progress.Text = info == null ? "" : careers.GetValueOrDefault(row!.Entry.Id) ?? (info.FileCount == 0 ? "No races yet" : "Reading…");
         Actions();
+    }
+
+    // Races completed, from each career's save directory; the game folder supplies the save codec.
+    void ReadCareers(IReadOnlyList<ProfileEntry> entries)
+    {
+        var folders = new Dictionary<string, string>();
+        foreach (var entry in entries.Where(e => e.Info is { FileCount: > 0 }))
+        {
+            try { if (store.SaveFolder(entry.Id) is { } folder) folders[entry.Id] = folder; }
+            catch (Exception error) when (error is IOException or InvalidDataException or ArgumentException) { careers[entry.Id] = error.Message; }
+        }
+        if (folders.Count == 0) return;
+        var game = GameFolder();
+        var ticket = ++reading;
+        Task.Run(() => CareerSaves.Read(folders.Values, game)).ContinueWith(task =>
+        {
+            if (ticket != reading || IsDisposed || !IsHandleCreated) return;
+            foreach (var (id, folder) in folders)
+                careers[id] = task.IsFaulted ? "Career details unavailable: " + task.Exception!.GetBaseException().Message
+                    : task.Result.TryGetValue(folder, out var read)
+                        ? read.Summary?.Text ?? (read.Error is { } error ? "Career details unavailable: " + error : "No races yet")
+                        : "Career details unavailable";
+            Details();
+        }, TaskScheduler.FromCurrentSynchronizationContext());
     }
     void DrawProfile(object? sender, DrawItemEventArgs e)
     {

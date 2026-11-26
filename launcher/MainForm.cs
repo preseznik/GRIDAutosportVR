@@ -299,6 +299,7 @@ internal sealed partial class MainForm : LauncherForm
         var profilePage = Page(Tabs, "Profile");
         Section(profilePage, "Career profiles");
         profilePage.Controls.Add(profiles);
+        profiles.GameFolder = () => gameFolder;
         Tabs.SelectedIndexChanged += (_, _) => { if (Tabs.SelectedTab?.Text == "Profile") profiles.Reload(); };
         Shown += (_, _) => profiles.Reload();
 
