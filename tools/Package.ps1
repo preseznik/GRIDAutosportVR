@@ -5,7 +5,7 @@ Builds a GRID Autosport VR release package: installer, portable ZIP and SHA256SU
 .DESCRIPTION
 Builds the 32-bit bridge (renderer\gasxr.dll) and OpenXR probe from source, publishes the launcher
 with its version, channel, build time and source revision stamped, stages them as
-GRIDAutosportVR\ with the README, CHANGELOG, OpenXR licenses and a package.json of SHA-256 hashes,
+GRIDAutosportVR\ with the README, CHANGELOG, CARS.txt (the car list), OpenXR licenses and a package.json of SHA-256 hashes,
 then writes GRIDAutosportVR-<version>.zip, GRIDAutosportVR-<version>-Setup.exe (Inno Setup 7) and
 SHA256SUMS.txt to artifacts\packages\<version>-<time>.
 
@@ -95,6 +95,8 @@ $stamped = (Get-Item -LiteralPath "$stage\GRIDAutosportVR.exe").VersionInfo.Prod
 if (-not $stamped.StartsWith($Version)) { throw "The launcher reports version '$stamped', not $Version." }
 
 Copy-Item -LiteralPath (Join-Path $root 'README.md'), (Join-Path $root 'CHANGELOG.md') -Destination $stage
+# CARS.txt: every car's name, game folder code, discipline and cockpit pack texture.
+Invoke-Checked 'Car list' { & "$stage\GRIDAutosportVR.exe" --write-car-list "$stage\CARS.txt" | Out-Null }
 # The OpenXR loader is linked into the bridge and probe.
 Copy-Item -LiteralPath (Join-Path $OpenXrSdk 'LICENSE') -Destination "$stage\licenses\OpenXR\LICENSE.txt"
 Get-ChildItem -LiteralPath (Join-Path $OpenXrSdk 'LICENSES') -File | Copy-Item -Destination "$stage\licenses\OpenXR"

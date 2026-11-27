@@ -32,6 +32,11 @@ internal static class SelfTests
             Application.SetColorMode(SystemColorMode.System);
             DrivingControlsTests.Run(data, (condition, detail) => Check(condition, detail));
             CockpitTexturePackTests.Run(data, (condition, detail) => Check(condition, detail));
+            var cars = CarList.Text().Split("\r\n");
+            Check(cars[0] == $"GRID Autosport VR car list: {RaceSession.Cars.Count} cars" && cars.Count(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"  [a-z0-9]{3}   ")) == RaceSession.Cars.Count,
+                "CARS.txt lists every car once");
+            Check(cars.Any(l => l.StartsWith("Alfa Romeo 4C ", StringComparison.Ordinal) && l.Contains("  a4p   Street", StringComparison.Ordinal) && l.EndsWith("  a4p.dds", StringComparison.Ordinal)) &&
+                  cars.Any(l => l.StartsWith("BMW 320 TC ", StringComparison.Ordinal) && l.EndsWith("  (original kept)", StringComparison.Ordinal)), "CARS.txt rows: name, code, discipline, pack texture");
             VrLayerTests.Run(data, output, (condition, detail) => Check(condition, detail));
             GraphicsPresetTests.Run(data, output, (condition, detail) => Check(condition, detail));
             ProfileTests.Run(data, (condition, detail) => Check(condition, detail));

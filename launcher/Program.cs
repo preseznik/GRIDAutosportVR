@@ -6,7 +6,7 @@ namespace GRIDAutosportVR;
 internal static class Program
 {
     private const string Usage = "Usage: GRIDAutosportVR.exe [--inspect] [--game-dir FOLDER] | --play-vr --game-dir FOLDER [--xr-layer-bypass B64] [--remember-xr-layers B64] | --restore-play --game-dir FOLDER | --self-test [OUTPUT]" +
-        " | --discover OUTPUT | --end-session --game-dir FOLDER | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | --write-input-maps --game-dir FOLDER --controls FILE OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
+        " | --discover OUTPUT | --end-session --game-dir FOLDER | --write-session --game-dir FOLDER [--settings FILE] OUTPUT | --write-input-maps --game-dir FOLDER --controls FILE OUTPUT | --write-car-list OUTPUT | (--check-install | --check-uninstall) --game FOLDER --error-log FILE";
 
     [STAThread]
     private static int Main(string[] args)
@@ -25,6 +25,12 @@ internal static class Program
         }
         if (args is ["--write-session", "--game-dir", var sessionGame, var sessionOut]) return WriteSession(sessionGame, null, sessionOut);
         if (args is ["--write-session", "--game-dir", var testGame, "--settings", var testSettings, var testOut]) return WriteSession(testGame, testSettings, testOut);
+        if (args is ["--write-car-list", var carListOut])
+        {
+            // CARS.txt for the release package (tools/Package.ps1).
+            try { CarList.Write(carListOut); return 0; }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Console.Error.WriteLine(error.Message); return 1; }
+        }
         if (args is ["--write-input-maps", "--game-dir", var mapsGame, "--controls", var mapsControls, var mapsOut])
         {
             // The input presets the next VR launch would stage for these driving controls; nothing is staged.

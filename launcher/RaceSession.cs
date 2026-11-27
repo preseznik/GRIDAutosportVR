@@ -49,6 +49,7 @@ internal static partial class RaceSession
     // Launcher names and disciplines for the installed car folders (cars/models/<id>); a folder
     // without an entry is listed by its id in Other. Disciplines only group Race opponents.
     internal static IEnumerable<KeyValuePair<string, string>> CarLabels => CarNames.Select(c => KeyValuePair.Create(c.Key, c.Value.Label));
+    internal static IReadOnlyDictionary<string, (string Label, string Class)> Cars => CarNames;
     private static readonly Dictionary<string, (string Label, string Class)> CarNames = new()
     {
         ["177"] = ("Aston Martin V12 Vantage #177", "Endurance"), ["240"] = ("Nissan 240SX (Yoshihara)", "Tuner"),
