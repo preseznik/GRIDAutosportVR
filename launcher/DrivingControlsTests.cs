@@ -127,14 +127,16 @@ internal static class DrivingControlsTests
             Action("Look Back", "<Axis id=\"di_button_11\" />") + Action("Look Down", "<Axis id=\"di_button_5\" />") + Action("Fe Menu Up", rz) +
             Action("Radio TeamMate Push", "<Axis id=\"di_button_5\" />") + Action("Radio TeamMate Drop", "<Axis id=\"di_button_4\" />") +
             Action("Clutch", "<Axis id=\"di_button_4\" />") + Action("Menu Left Shoulder", "<Axis id=\"di_button_4\" />") +
-            Action("Replay UI On Off", "<Axis id=\"di_button_4\" />")));
+            Action("Replay UI On Off", "<Axis id=\"di_button_4\" />") + Action("Menu Down", "<Axis id=\"di_y_axis\" type=\"biDirUpper\" />", "<Axis id=\"di_dpad_0_down\" />")));
+        File.WriteAllText(Path.Combine(input, "lg_momo_racing.xml"), Map("<ActionMap name=\"lg_momo_racing\" device_type=\"{CA03046D-0000-0000-0000-504944564944}\" priority=\"0\">", "Accelerate"));
+        File.WriteAllText(Path.Combine(input, "lg_driving_force_ex.xml"), Map("<ActionMap name=\"lg_driving_force_ex\" device_type=\"{C294046D-0000-0000-0000-504944564944}\" priority=\"3\">", "Accelerate"));
         const string pedals = "{B660044F-0000-0000-0000-504944564944}";
         File.WriteAllText(Path.Combine(input, "tm_t300rs.xml"), With(Map($"<ActionMap name=\"tm_t300_rs\" device_type_0=\"{Known}\" device_type_1=\"{pedals}\" priority=\"0\" shouldbindalldevicetypes=\"true\">"),
             Action("Accelerate", $"<Axis id=\"di_y_axis\" type=\"uniDirNeg\" deadzone=\"0.0\" saturation=\"1.0\" restricted_device=\"{Known}\" />",
                    $"<Axis id=\"di_x_axis_rotation\" type=\"uniDirNeg\" deadzone=\"0.0\" saturation=\"1.0\" restricted_device=\"{pedals}\" />") +
             Action("Look Up", $"<Axis id=\"di_y_axis_rotation\" type=\"biDirLower\" deadzone=\"0.1\" saturation=\"1.0\" restricted_device=\"{pedals}\" />",
                    "<Axis id=\"di_button_3\" />")));
-        var paths = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<dataset>\r\n" + string.Concat(new[] { "dinput_default", "keyboard", "tm_t300rs", "xinput_pad_0" }.Select(f =>
+        var paths = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<dataset>\r\n" + string.Concat(new[] { "dinput_default", "keyboard", "lg_driving_force_ex", "lg_momo_racing", "tm_t300rs", "xinput_pad_0" }.Select(f =>
             $"  <xmlreader processor=\"Input\" filename=\"input/{f}.xml\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"presets\" />\r\n")) +
             "  <xmlreader processor=\"InputStrings\" filename=\"input/strings.xml\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"strings\" />\r\n</dataset>\r\n";
         File.WriteAllText(Path.Combine(input, "paths.xml"), paths);
@@ -149,7 +151,7 @@ internal static class DrivingControlsTests
             Direct("Accelerate", Known, "di_y_axis", "uniDirNeg")];
         var changes = SessionInputMaps.Plan(game, controls);
         check(changes.Select(c => c.RelativePath).Order(StringComparer.Ordinal).SequenceEqual(
-            ["input/gasvr_device_0.xml", "input/keyboard.xml", "input/paths.xml", "input/tm_t300rs.xml", "input/xinput_pad_0.xml"]), "one change per bound family, plus the new preset");
+            ["input/keyboard.xml", "input/lg_momo_racing.xml", "input/tm_t300rs.xml", "input/xinput_pad_0.xml"]), "one change per bound family; an unknown wheel takes an old wheel's preset file, paths.xml unchanged");
         XElement Root(string path) => XDocument.Parse(Encoding.UTF8.GetString(changes.Single(c => c.RelativePath == path).Content)).Root!;
         XElement[] Axes(XElement map, string action) => map.Elements("Action").Single(a => (string?)a.Attribute("id") == action).Elements("Axis").ToArray();
         var pad = Root("input/xinput_pad_0.xml");
@@ -167,9 +169,10 @@ internal static class DrivingControlsTests
         var keys = Root("input/keyboard.xml");
         check(Axes(keys, "Look Back") is [var freedKey] && (string?)freedKey.Attribute("id") == "" &&
               Axes(keys, "Look Left") is [var lookKey] && (string?)lookKey.Attribute("id") == "vk_code_0x4A", "keyboard: a look key bound to Pause is cleared, other look keys stay");
-        var added = Root("input/gasvr_device_0.xml");
-        check((string?)added.Attribute("device_type") == Wheel && (string?)added.Attribute("priority") == "0" && (string?)added.Attribute("name") == "gasvr_device_0" &&
-              added.Attribute("shouldbindalldevicetypes") is null, "unknown wheel: new preset from di_default");
+        var added = Root("input/lg_momo_racing.xml");
+        check((string?)added.Attribute("device_type") == Wheel && (string?)added.Attribute("priority") == "0" && (string?)added.Attribute("name") == "lg_momo_racing" &&
+              added.Elements("Action").Count() > 2 && !added.Descendants("Axis").Any(a => a.Attribute("restricted_device") is not null),
+              "unknown wheel: dinput_default.xml's actions in the host file, which keeps its map name and takes the wheel's GUID");
         check(Axes(added, "Steer Left") is [var steer] && (string?)steer.Attribute("deadzone") == "0.05" && (string?)steer.Attribute("saturation") == "0.9" &&
               Axes(added, "Gear 1") is [var gear] && (string?)gear.Attribute("id") == "di_button_12" && Axes(added, "Accelerate") is [var unbound] && (string?)unbound.Attribute("id") == "",
               "new preset: bound actions written, an added action appended, the rest unbound");
@@ -184,14 +187,23 @@ internal static class DrivingControlsTests
               "wheel: in-race actions on the Gear Down paddle cleared, the other paddle's radio kept");
         check(Axes(added, "Menu Left Shoulder") is [var shoulder] && (string?)shoulder.Attribute("id") == "di_button_4" &&
               Axes(added, "Replay UI On Off") is [var replay] && (string?)replay.Attribute("id") == "di_button_4", "menu and replay actions keep a shared paddle");
-        check(Axes(added, "Fe Menu Up") is [var menu] && (string?)menu.Attribute("id") == "di_z_axis_rotation", "menu actions keep their shared inputs");
+        // The reported save prompt whose choices flickered: Menu Down on the accelerator's Y axis.
+        check(Axes(added, "Fe Menu Up") is [var menu] && (string?)menu.Attribute("id") == "" &&
+              Axes(added, "Menu Down") is [var menuDown] && (string?)menuDown.Attribute("id") == "di_dpad_0_down", "unknown wheel: menu actions lose their axes, the D-pad stays");
         check(!added.Elements("Action").Where(a => SessionInputMaps.LookAction((string)a.Attribute("id")!)).SelectMany(a => a.Elements("Axis"))
                   .Any(a => (string?)a.Attribute("id") == "di_z_axis_rotation"), "no look action left on the brake axis");
-        var newPaths = Encoding.ASCII.GetString(changes.Single(c => c.RelativePath == "input/paths.xml").Content);
-        var lines = newPaths.Split("\r\n");
-        check(newPaths.Replace("  <xmlreader processor=\"Input\" filename=\"input/gasvr_device_0.xml\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"presets\" />\r\n", "") == paths &&
-              Array.FindIndex(lines, l => l.Contains("gasvr_device_0")) == Array.FindIndex(lines, l => l.Contains("xinput_pad_0")) + 1, "paths.xml gains one line after the last preset");
-        check(SessionInputMaps.PresetFiles(newPaths).Contains("input/gasvr_device_0.xml"), "the added preset is listed");
+        // Two devices without a preset (a wheel base and separate pedals): one host file each.
+        const string loosePedals = "{1839ABCD-0000-0000-0000-504944564944}";
+        controls.Bindings = [Direct("Steer Left", Wheel, "di_x_axis", "biDirLower"), Direct("Accelerate", loosePedals, "di_y_axis", "uniDirNeg")];
+        var both = SessionInputMaps.Plan(game, controls).ToDictionary(c => c.RelativePath, c => XDocument.Parse(Encoding.UTF8.GetString(c.Content)).Root!);
+        check(both.Count == 2 && (string?)both["input/lg_momo_racing.xml"].Attribute("device_type") == Wheel && (string?)both["input/lg_driving_force_ex.xml"].Attribute("device_type") == loosePedals &&
+              (string?)both["input/lg_driving_force_ex.xml"].Attribute("name") == "lg_driving_force_ex", "two unknown devices: one host preset each");
+        // A bound device's own preset never hosts another.
+        controls.Bindings = [Direct("Steer Left", Wheel, "di_x_axis", "biDirLower"), new() { Action = "Accelerate", Device = "MOMO", DeviceId = "{99999999-2222-3333-4444-555555555555}",
+            DeviceType = "{CA03046D-0000-0000-0000-504944564944}", Input = "di_y_axis", Calibration = "uniDirNeg" }];
+        var momo = SessionInputMaps.Plan(game, controls).ToDictionary(c => c.RelativePath, c => XDocument.Parse(Encoding.UTF8.GetString(c.Content)).Root!);
+        check((string?)momo["input/lg_momo_racing.xml"].Attribute("device_type") == "{CA03046D-0000-0000-0000-504944564944}" &&
+              (string?)momo["input/lg_driving_force_ex.xml"].Attribute("device_type") == Wheel, "the MOMO's own preset stays the MOMO's; the next host takes the unknown wheel");
         check(!SessionInputMaps.ValidPath("input/../x.xml") && !SessionInputMaps.ValidPath("input/a b.xml") && SessionInputMaps.ValidPath("input/lg_g27.xml"), "preset paths are confined to input/");
         Directory.Delete(game, true);
     }
@@ -211,7 +223,7 @@ internal static class DrivingControlsTests
         var changes = SessionInputMaps.Plan(game, controls);
         check(changes.Any(c => c.RelativePath == "input/xinput_pad_0.xml") && changes.Any(c => c.RelativePath == "input/xinput_pad_1.xml") &&
               changes.Any(c => c.RelativePath == "input/keyboard.xml") && changes.Any(c => c.RelativePath == "input/keyboard_azerty.xml") &&
-              changes.Any(c => c.RelativePath == "input/gasvr_device_0.xml") && changes.Any(c => c.RelativePath == "input/paths.xml"), "real presets: pad, both keyboards, a new wheel preset");
+              changes.Any(c => c.RelativePath == "input/lg_momo_racing.xml") && !changes.Any(c => c.RelativePath == "input/paths.xml"), "real presets: pad, both keyboards, the wheel in the MOMO's preset file");
         const string id = "abcdefabcdefabcdefabcdefabcdef12";
         VrPlaySession.Stage(game, bridge, id, null, changes);
         foreach (var change in changes) check(File.ReadAllBytes(Path.Combine(game, change.RelativePath)).SequenceEqual(change.Content), "staged " + change.RelativePath);

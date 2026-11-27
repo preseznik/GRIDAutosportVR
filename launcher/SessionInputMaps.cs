@@ -10,15 +10,14 @@ namespace GRIDAutosportVR;
 // device family the matching stock preset is rewritten with the bound actions replaced, so no
 // competing map has to win a priority tie: keyboard.xml and keyboard_azerty.xml for the keyboard,
 // xinput_pad_0/1.xml for an Xbox pad, the wheel's own preset for a DirectInput device the game
-// knows. A DirectInput device without a preset (G29, G920, Fanatec DD...) gets a new preset made
-// from dinput_default.xml, listed after the last preset in paths.xml. VrPlaySession stages the
+// knows. A DirectInput device without a preset (G29, G920, Fanatec DD...) gets one made from
+// dinput_default.xml in place of an old wheel's shipped preset; paths.xml is never changed. VrPlaySession stages the
 // changed files under its recovery lease and restores the originals after the session, as DiRT3VR
 // does with its session action maps.
 internal static class SessionInputMaps
 {
     internal sealed record Change(string RelativePath, byte[] Content);
     internal const string PathsFile = "input/paths.xml";
-    private const string NewPresetPrefix = "input/gasvr_device_";
 
     public static List<Change> Plan(string gameFolder, DrivingControls controls)
     {
@@ -30,27 +29,14 @@ internal static class SessionInputMaps
         // well-formed XML; a preset the game parses leniently is skipped, never rewritten.
         var maps = PresetFiles(pathsText).Select(file => (File: file, Document: TryLoad(Path.Combine(gameFolder, file))))
             .Where(map => map.Document is not null).Select(map => (map.File, Document: map.Document!)).ToList();
-        var added = new List<string>();
+        var unknown = new List<IGrouping<string, DrivingBinding>>();
         foreach (var family in Effective(controls.Bindings).GroupBy(Family, StringComparer.OrdinalIgnoreCase))
         {
             var targets = maps.Where(map => DeviceTypes(map.Document.Root!).Contains(family.Key, StringComparer.OrdinalIgnoreCase)).ToList();
             if (targets.Count == 0)
             {
                 if (family.Key is "keyboard" or "xinput_pad") throw new IOException("The game's " + family.Key + " input preset is missing from input/paths.xml.");
-                var template = maps.FirstOrDefault(map => DeviceTypes(map.Document.Root!).Contains("di_default"));
-                if (template.Document is null) throw new IOException("The game's input/dinput_default.xml preset is missing; cannot add a preset for " + family.First().Device + ".");
-                var document = new XDocument(template.Document);
-                var root = document.Root!;
-                foreach (var attribute in root.Attributes().Where(a => a.Name.LocalName.StartsWith("device_type", StringComparison.Ordinal) ||
-                         a.Name.LocalName is "shouldbindalldevicetypes" or "name" or "priority").ToList()) attribute.Remove();
-                var file = NewPresetPrefix + added.Count.ToString(CultureInfo.InvariantCulture) + ".xml";
-                var kept = root.Attributes().ToList();
-                root.RemoveAttributes();
-                root.Add(new XAttribute("name", Path.GetFileNameWithoutExtension(file)), new XAttribute("device_type", family.Key), new XAttribute("priority", "0"), kept);
-                document.AddFirst(new XComment(" GRID Autosport VR: session preset for " + Sanitize(family.First().Device) + " "));
-                Apply(document, family);
-                changes.Add(new(file, Bytes(document)));
-                added.Add(file);
+                unknown.Add(family);
                 continue;
             }
             foreach (var target in targets)
@@ -60,7 +46,37 @@ internal static class SessionInputMaps
                 changes.Add(new(target.File, Bytes(document)));
             }
         }
-        if (added.Count > 0) changes.Add(new(PathsFile, Encoding.ASCII.GetBytes(InsertPresets(pathsText, added))));
+        // A DirectInput device the game ships no preset for gets one made from dinput_default.xml,
+        // written over the preset of an old wheel the game ships (HostPresets), which keeps its file
+        // and map name and takes the device's product GUID. A preset added to input/paths.xml under
+        // any other file name made every save of the career fail before a file was written ("Data
+        // save failed", then "autosave will be disabled"; xr-sim, 27 Nov: a stock preset under a new
+        // file name failed too), and the game's fallback di_default map does not answer the menus
+        // (Press Start, dialogs) on a wheel. A shipped name with a G29's GUID saved and ran the menus.
+        if (unknown.Count > 0)
+        {
+            var template = maps.FirstOrDefault(map => DeviceTypes(map.Document.Root!).Contains("di_default"));
+            if (template.Document is null) throw new IOException("The game's input/dinput_default.xml preset is missing; cannot bind " + unknown[0].First().Device + ".");
+            var bound = Effective(controls.Bindings).Select(Family).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var hosts = HostPresets.Select(name => maps.FirstOrDefault(map => (string?)map.Document.Root!.Attribute("name") == name &&
+                    DeviceTypes(map.Document.Root!).Count() == 1 && !DeviceTypes(map.Document.Root!).Any(bound.Contains)))
+                .Where(map => map.Document is not null).ToList();
+            if (hosts.Count < unknown.Count) throw new IOException("The game's input presets for older wheels are missing; cannot bind " + unknown[hosts.Count].First().Device + ".");
+            for (var i = 0; i < unknown.Count; i++)
+            {
+                var document = new XDocument(template.Document);
+                var root = document.Root!;
+                var name = (string)hosts[i].Document.Root!.Attribute("name")!;
+                var kept = root.Attributes().Where(a => !(a.Name.LocalName.StartsWith("device_type", StringComparison.Ordinal) ||
+                    a.Name.LocalName is "shouldbindalldevicetypes" or "name" or "priority")).ToList();
+                root.RemoveAttributes();
+                root.Add(new XAttribute("name", name), new XAttribute("device_type", unknown[i].Key), new XAttribute("priority", "0"), kept);
+                document.AddFirst(new XComment(" GRID Autosport VR: session preset for " + Sanitize(unknown[i].First().Device) + " (this file's own device is not bound) "));
+                MenusWithoutAxes(root);
+                Apply(document, unknown[i]);
+                changes.Add(new(hosts[i].File, Bytes(document)));
+            }
+        }
         // One file per path: a preset matched by two families (it cannot be today) would be ambiguous.
         if (changes.GroupBy(c => c.RelativePath, StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1))
             throw new IOException("Two bound devices map to the same game input preset. Bind one of them only.");
@@ -108,7 +124,7 @@ internal static class SessionInputMaps
     // binds; on a DirectInput device (a wheel, pedals) they also lose every axis, since its Z and Rz
     // are pedals more often than a stick, and head tracking does the looking in VR. Buttons stay
     // (Look Back on a wheel button). Menu, replay, spectator and frontend actions share inputs with
-    // driving by design and are left alone.
+    // driving by design and are left alone here (in a preset made from dinput_default.xml they have already lost their axes: MenusWithoutAxes).
     // Settings saved before 0.2.5 can bind one input to a driving action and to a team radio or
     // Instant Replay action (the Xbox preset's radio on RB / LB, then Gear Up / Down moved there):
     // the session preset keeps the driving action only.
@@ -150,6 +166,22 @@ internal static class SessionInputMaps
         }
     }
 
+    // dinput_default.xml (a gamepad's map) keeps the menus on its X and Y axes, which on a wheel are
+    // the steering and a pedal. A pedal at rest sits at one end of its range, so the game read Menu Up
+    // or Down as held: dialogs flickered between their choices and the save prompt's No could not be
+    // chosen. In a preset made from it, the menu, frontend, replay, spectator and YouTube actions
+    // lose every axis, as in the game's own wheel presets (D-pad and buttons).
+    private static void MenusWithoutAxes(XElement root)
+    {
+        foreach (var element in root.Elements("Action").Where(e => (string?)e.Attribute("id") is { } id && !RaceAction(id)).ToList())
+        {
+            var axes = element.Elements("Axis").Where(entry => entry.Attribute("type") is not null).ToList();
+            if (axes.Count == 0) continue;
+            axes.Remove();
+            if (!element.Elements("Axis").Any()) element.Add(new XElement("Axis", new XAttribute("id", "")));
+        }
+    }
+
     // The in-race look actions and the frontend's car view tweak (the same axes in the game's maps).
     internal static bool LookAction(string id) =>
         id.StartsWith("Look ", StringComparison.Ordinal) || id.StartsWith("Fe View Tweak ", StringComparison.Ordinal);
@@ -161,6 +193,10 @@ internal static class SessionInputMaps
         LookAction(id) || !(id.StartsWith("Menu ", StringComparison.Ordinal) || id.StartsWith("Fe ", StringComparison.Ordinal) ||
                             id.StartsWith("Replay ", StringComparison.Ordinal) || id.StartsWith("Spectator ", StringComparison.Ordinal) ||
                             id.StartsWith("Youtube ", StringComparison.Ordinal));
+
+    // Shipped single-device presets of wheels from before 2010, least likely to be connected, in the
+    // order they host a device without a preset. A bound device's own preset is never a host.
+    internal static readonly string[] HostPresets = ["lg_momo_racing", "lg_driving_force_ex", "lg_driving_force_pro", "tm_rgt_ffb_pro", "tm_f430_ffb", "lg_g25"];
 
     private static string Number(decimal value) => value.ToString("0.0###", CultureInfo.InvariantCulture);
     private static string Sanitize(string text) => new(text.Where(c => c >= ' ' && c < 127 && c != '-').ToArray());
@@ -184,16 +220,5 @@ internal static class SessionInputMaps
         using (var writer = XmlWriter.Create(stream, settings)) document.Save(writer);
         stream.Write("\r\n"u8);
         return stream.ToArray();
-    }
-
-    // After the last preset entry, keeping the stock file's text (and its preset order) intact.
-    internal static string InsertPresets(string pathsText, IReadOnlyList<string> files)
-    {
-        var lines = pathsText.Split('\n').ToList();
-        var last = lines.FindLastIndex(line => line.Contains("processor=\"Input\"", StringComparison.Ordinal) && line.Contains("userdata=\"presets\"", StringComparison.Ordinal));
-        if (last < 0) throw new IOException("input/paths.xml lists no input presets.");
-        lines.InsertRange(last + 1, files.Select(file =>
-            $"  <xmlreader processor=\"Input\" filename=\"{file}\" map=\"UPDATE\" pool=\"UPDATE_TEMPORARY\" userdata=\"presets\" />\r"));
-        return string.Join('\n', lines);
     }
 }

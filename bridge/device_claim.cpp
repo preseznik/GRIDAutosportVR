@@ -105,7 +105,14 @@ unsigned __fastcall saveBody(void* service, void*, void* stream) {
             return result;
         }
     }
-    return stockSaveBody(service, stream);
+    const unsigned result = stockSaveBody(service, stream);
+    // A new profile has no controls to read, but the game saves the player's own after the
+    // Autosave warning, before any race: those are the profile's controls, kept from here on, so
+    // the first race already gets the launcher's preset (it stayed unbound for that session).
+    bool keep;
+    { std::lock_guard lock(savedMutex); keep = !savedValid && !presetBound; }
+    if (result == 0 && keep) capture(service, "as first saved");
+    return result;
 }
 bool hookSavedControls() {
     const UINT table = AutosportGameBuild()->controlsSaveTable;
